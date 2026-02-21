@@ -1,0 +1,2068 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KICKS - 신발 전문 쇼핑몰</title>
+
+  <!-- Tailwind CSS CDN — 빌드 없이 CSS 유틸리티 클래스를 사용할 수 있게 해줘요 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React CDN — 빌드 도구 없이 React를 사용하기 위한 스크립트 -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+  <!-- Babel CDN — JSX 문법을 브라우저가 이해할 수 있게 변환해줘요 -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- 토스페이먼츠 결제 위젯 SDK — 결제 UI를 쉽게 만들어주는 라이브러리 -->
+  <script src="https://js.tosspayments.com/v2/standard"></script>
+
+  <!-- Tailwind 커스텀 설정 — 아디다스 스타일 폰트 및 색상 -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            // 볼드하고 스포티한 느낌의 폰트
+            sans: ['"Bebas Neue"', '"Noto Sans KR"', 'sans-serif'],
+            body: ['"Noto Sans KR"', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- 구글 폰트 로드 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet" />
+
+  <style>
+    /* 전체 페이지 기본 스타일 */
+    body {
+      margin: 0;                        /* 브라우저 기본 여백 제거 */
+      font-family: 'Noto Sans KR', sans-serif;  /* 한글 폰트 설정 */
+      background-color: #000;           /* 배경을 검정색으로 */
+      color: #fff;                      /* 글자를 흰색으로 */
+    }
+
+    /* 입력 필드에 포커스(클릭)했을 때 테두리 색상 */
+    input:focus {
+      outline: none;                    /* 기본 파란 테두리 제거 */
+      border-color: #fff;              /* 흰색 테두리로 변경 */
+    }
+  </style>
+</head>
+<body>
+  <!-- React가 렌더링할 루트 요소 -->
+  <div id="root"></div>
+
+  <!-- 여기서부터 React 코드 시작 -->
+  <script type="text/babel">
+    // React 훅 사용을 위한 가져오기
+    // useRef: DOM 요소나 값을 기억해두는 "메모지" 같은 훅 (위젯 참조에 사용)
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // ============================================
+    // 전역 로그아웃 핸들러
+    // ============================================
+    // API에서 401(로그인 필요) 응답이 오면 이 함수를 호출해서
+    // 자동으로 로그인 페이지로 돌려보내요.
+    // (비유: 놀이공원에서 팔찌가 없으면 입구로 다시 보내는 것!)
+    let globalLogoutHandler = null;
+
+    // 모든 API 호출에 사용할 공통 함수
+    // fetch()를 감싸서, 401 응답이 오면 자동으로 로그인 페이지로 이동
+    async function authFetch(url, options = {}) {
+      const res = await fetch(url, options);
+
+      // 401 = "로그인이 필요합니다" 응답
+      // 단, 로그인/회원가입 API는 제외 (로그인 실패 시 401이 올 수 있으니까)
+      if (res.status === 401 && !url.includes('/api/login') && !url.includes('/api/signup')) {
+        if (globalLogoutHandler) {
+          globalLogoutHandler();  // 로그인 페이지로 이동시키는 함수 호출
+        }
+      }
+
+      return res;  // 원래 응답을 그대로 돌려줌
+    }
+
+    // ============================================
+    // 로그인 폼 컴포넌트
+    // ============================================
+    // 비밀번호 보이기/숨기기 토글 아이콘 컴포넌트
+    // (눈 모양 아이콘을 클릭하면 비밀번호가 보였다/숨겨졌다 해요)
+    function PasswordToggle({ show, onClick }) {
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
+          tabIndex={-1}
+        >
+          {show ? (
+            // 눈 아이콘 (비밀번호 보이는 상태) — 클릭하면 숨김
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          ) : (
+            // 눈에 빗금 아이콘 (비밀번호 숨긴 상태) — 클릭하면 보임
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+            </svg>
+          )}
+        </button>
+      );
+    }
+
+    function LoginForm({ onSwitch, onLoginSuccess }) {
+      // 상태(state) = 변할 수 있는 데이터를 저장하는 상자
+      const [username, setUsername] = useState('');    // 아이디 입력값
+      const [password, setPassword] = useState('');    // 비밀번호 입력값
+      const [error, setError] = useState('');          // 에러 메시지
+      const [loading, setLoading] = useState(false);   // 로딩 중인지 여부
+      const [showPw, setShowPw] = useState(false);     // 비밀번호 보이기 여부
+
+      // 로그인 버튼을 눌렀을 때 실행되는 함수
+      // 흐름: 버튼 클릭 → handleLogin 실행 → 서버에 요청 → 응답 처리
+      const handleLogin = async (e) => {
+        e.preventDefault();          // 폼 기본 동작(페이지 새로고침) 방지
+        setError('');                // 이전 에러 메시지 지우기
+        setLoading(true);            // 로딩 시작
+
+        try {
+          // 서버의 로그인 API에 아이디/비밀번호를 보내요
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+          });
+
+          const data = await res.json();  // 서버 응답을 JSON으로 변환
+
+          if (!res.ok) {
+            // 서버가 에러를 보내면 에러 메시지를 화면에 표시
+            setError(data.error);
+          } else {
+            // 로그인 성공! 부모 컴포넌트에 알려줌
+            onLoginSuccess(data.user);
+          }
+        } catch (err) {
+          setError('서버 연결에 실패했습니다.');
+        } finally {
+          setLoading(false);  // 로딩 끝
+        }
+      };
+
+      return (
+        /* 전체 화면을 채우는 컨테이너 — 가로세로 중앙 정렬 */
+        <div className="min-h-screen flex items-center justify-center bg-black px-4">
+          {/* 로그인 카드 — 최대 너비 400px, 흰 테두리 */}
+          <div className="w-full max-w-md">
+
+            {/* 브랜드 로고 영역 */}
+            <div className="text-center mb-10">
+              {/* 큰 볼드 글씨로 브랜드명 표시 — Bebas Neue 폰트 */}
+              <h1 className="text-7xl font-bold tracking-wider" style={{ fontFamily: 'Bebas Neue' }}>
+                KICKS
+              </h1>
+              {/* 부제목 — 작은 글씨, 회색 */}
+              <p className="text-gray-400 mt-2 font-body text-sm tracking-widest uppercase">
+                Premium Footwear
+              </p>
+            </div>
+
+            {/* 로그인 폼 */}
+            <form onSubmit={handleLogin} className="space-y-5">
+              {/* 아이디 입력 필드 */}
+              <div>
+                <input
+                  type="text"
+                  placeholder="아이디"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full px-4 py-3 bg-transparent border-2 border-gray-600 text-white
+                             placeholder-gray-500 text-sm font-body tracking-wide
+                             transition-colors duration-200"
+                  /*
+                    bg-transparent: 배경을 투명하게
+                    border-2: 테두리 두께 2px
+                    border-gray-600: 테두리 색상 회색
+                    placeholder-gray-500: 힌트 텍스트 색상
+                    transition-colors: 색상 변경 시 부드럽게 전환
+                  */
+                />
+              </div>
+
+              {/* 비밀번호 입력 필드 — relative로 감싸서 눈 아이콘을 오른쪽에 배치 */}
+              <div className="relative">
+                <input
+                  type={showPw ? 'text' : 'password'}
+                  placeholder="비밀번호"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 pr-12 bg-transparent border-2 border-gray-600 text-white
+                             placeholder-gray-500 text-sm font-body tracking-wide
+                             transition-colors duration-200"
+                />
+                <PasswordToggle show={showPw} onClick={() => setShowPw(!showPw)} />
+              </div>
+
+              {/* 에러 메시지 — 에러가 있을 때만 표시 */}
+              {error && (
+                <p className="text-red-400 text-sm font-body">{error}</p>
+              )}
+
+              {/* 로그인 버튼 — 흰 배경에 검은 글씨 (아디다스 스타일) */}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                           hover:bg-gray-200 transition-colors duration-200 disabled:opacity-50"
+                /*
+                  bg-white: 배경 흰색
+                  text-black: 글자 검정
+                  font-bold: 굵은 글씨
+                  tracking-widest: 글자 간격 넓게 (스포티한 느낌)
+                  uppercase: 대문자로 표시
+                  hover:bg-gray-200: 마우스를 올리면 살짝 회색으로
+                  disabled:opacity-50: 비활성화 시 반투명
+                */
+              >
+                {loading ? '로그인 중...' : '로그인'}
+              </button>
+            </form>
+
+            {/* 회원가입 링크 */}
+            <div className="text-center mt-8">
+              <p className="text-gray-500 text-sm font-body">
+                아직 계정이 없으신가요?{' '}
+                <button
+                  onClick={onSwitch}
+                  className="text-white underline hover:text-gray-300 transition-colors"
+                >
+                  회원가입
+                </button>
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 회원가입 폼 컴포넌트
+    // ============================================
+    function SignupForm({ onSwitch, onSignupSuccess }) {
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+      const [passwordConfirm, setPasswordConfirm] = useState('');  // 비밀번호 확인
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [showPw, setShowPw] = useState(false);               // 비밀번호 보이기 여부
+      const [showPwConfirm, setShowPwConfirm] = useState(false); // 비밀번호 확인 보이기 여부
+
+      // 회원가입 버튼을 눌렀을 때 실행되는 함수
+      const handleSignup = async (e) => {
+        e.preventDefault();
+        setError('');
+
+        // 비밀번호 확인 — 두 비밀번호가 같은지 체크
+        if (password !== passwordConfirm) {
+          setError('비밀번호가 일치하지 않습니다.');
+          return;  // 여기서 멈춤, 서버에 요청하지 않음
+        }
+
+        setLoading(true);
+
+        try {
+          // 서버의 회원가입 API에 아이디/비밀번호를 보내요
+          const res = await fetch('/api/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            setError(data.error);
+          } else {
+            // 회원가입 성공! (서버에서 자동 로그인 처리됨)
+            onSignupSuccess(data.user);
+          }
+        } catch (err) {
+          setError('서버 연결에 실패했습니다.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-black px-4">
+          <div className="w-full max-w-md">
+
+            {/* 브랜드 로고 */}
+            <div className="text-center mb-10">
+              <h1 className="text-7xl font-bold tracking-wider" style={{ fontFamily: 'Bebas Neue' }}>
+                KICKS
+              </h1>
+              <p className="text-gray-400 mt-2 font-body text-sm tracking-widest uppercase">
+                Create Account
+              </p>
+            </div>
+
+            {/* 회원가입 폼 */}
+            <form onSubmit={handleSignup} className="space-y-5">
+              {/* 아이디 */}
+              <div>
+                <input
+                  type="text"
+                  placeholder="아이디 (3자 이상)"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full px-4 py-3 bg-transparent border-2 border-gray-600 text-white
+                             placeholder-gray-500 text-sm font-body tracking-wide
+                             transition-colors duration-200"
+                />
+              </div>
+
+              {/* 비밀번호 — relative로 감싸서 눈 아이콘 배치 */}
+              <div className="relative">
+                <input
+                  type={showPw ? 'text' : 'password'}
+                  placeholder="비밀번호 (4자 이상)"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 pr-12 bg-transparent border-2 border-gray-600 text-white
+                             placeholder-gray-500 text-sm font-body tracking-wide
+                             transition-colors duration-200"
+                />
+                <PasswordToggle show={showPw} onClick={() => setShowPw(!showPw)} />
+              </div>
+
+              {/* 비밀번호 확인 — 각각 독립적인 보이기/숨기기 토글 */}
+              <div className="relative">
+                <input
+                  type={showPwConfirm ? 'text' : 'password'}
+                  placeholder="비밀번호 확인"
+                  value={passwordConfirm}
+                  onChange={(e) => setPasswordConfirm(e.target.value)}
+                  className="w-full px-4 py-3 pr-12 bg-transparent border-2 border-gray-600 text-white
+                             placeholder-gray-500 text-sm font-body tracking-wide
+                             transition-colors duration-200"
+                />
+                <PasswordToggle show={showPwConfirm} onClick={() => setShowPwConfirm(!showPwConfirm)} />
+              </div>
+
+              {/* 에러 메시지 */}
+              {error && (
+                <p className="text-red-400 text-sm font-body">{error}</p>
+              )}
+
+              {/* 회원가입 버튼 */}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                           hover:bg-gray-200 transition-colors duration-200 disabled:opacity-50"
+              >
+                {loading ? '가입 중...' : '회원가입'}
+              </button>
+            </form>
+
+            {/* 로그인 페이지로 돌아가기 */}
+            <div className="text-center mt-8">
+              <p className="text-gray-500 text-sm font-body">
+                이미 계정이 있으신가요?{' '}
+                <button
+                  onClick={onSwitch}
+                  className="text-white underline hover:text-gray-300 transition-colors"
+                >
+                  로그인
+                </button>
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 가격을 "₩219,000" 형식으로 보여주는 함수
+    // ============================================
+    function formatPrice(price) {
+      return '₩' + price.toLocaleString('ko-KR');
+    }
+
+    // ============================================
+    // 상품 카드 컴포넌트 — 개별 상품 1개를 카드로 표시
+    // ============================================
+    function ProductCard({ product, onClick }) {
+      return (
+        // 카드 전체를 클릭할 수 있게 만듦
+        <div
+          onClick={() => onClick(product.id)}
+          className="group cursor-pointer"
+          /*
+            group: 이 요소 위에 마우스를 올리면 내부 자식들에게도 영향
+            cursor-pointer: 마우스 커서를 손가락 모양으로 변경
+          */
+        >
+          {/* 상품 이미지 영역 */}
+          <div className="aspect-square overflow-hidden bg-gray-900 mb-3">
+            {/*
+              aspect-square: 가로=세로 정사각형으로 만듦
+              overflow-hidden: 이미지가 영역 밖으로 나가면 잘라냄
+              bg-gray-900: 이미지 로딩 중일 때 보일 배경색
+            */}
+            <img
+              src={product.image}
+              alt={product.name}
+              className="w-full h-full object-cover
+                         group-hover:scale-105 transition-transform duration-300"
+              /*
+                w-full h-full: 영역을 꽉 채움
+                object-cover: 비율 유지하면서 영역을 채움 (잘릴 수 있음)
+                group-hover:scale-105: 부모에 마우스 올리면 5% 확대
+                transition-transform: 확대/축소가 부드럽게 변환
+              */
+            />
+          </div>
+
+          {/* 상품 정보 영역 */}
+          <div>
+            {/* 카테고리 태그 — 작은 회색 글씨 */}
+            <p className="text-gray-500 text-xs font-body tracking-wider uppercase mb-1">
+              {product.category}
+            </p>
+            {/* 상품 이름 — 흰색 볼드 */}
+            <h3 className="text-white font-bold font-body text-sm mb-1
+                           group-hover:underline">
+              {product.name}
+            </h3>
+            {/* 가격 — 흰색 */}
+            <p className="text-white font-body text-sm">
+              {formatPrice(product.price)}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 메인 페이지 — 상품 목록 표시
+    // ============================================
+    function MainPage({ user, onLogout, onProductClick, cartCount, onCartClick, onMyPageClick }) {
+      // 상품 목록 데이터를 저장할 상태
+      const [products, setProducts] = useState([]);
+      // 데이터를 불러오는 중인지 여부
+      const [loading, setLoading] = useState(true);
+
+      // 로그아웃 처리
+      const handleLogout = async () => {
+        await authFetch('/api/logout', { method: 'POST' });
+        onLogout();
+      };
+
+      // 컴포넌트가 처음 표시될 때 서버에서 상품 목록을 가져옴
+      // 흐름: 페이지 로드 → fetch 요청 → 서버 응답 → products 상태에 저장 → 화면 업데이트
+      useEffect(() => {
+        authFetch('/api/products')
+          .then(res => res.json())
+          .then(data => {
+            setProducts(data.products);  // 서버에서 받은 상품 목록을 저장
+          })
+          .catch(err => console.error('상품 로드 실패:', err))
+          .finally(() => setLoading(false));
+      }, []);
+
+      return (
+        <div className="min-h-screen bg-black">
+          {/* ===== 상단 네비게이션 바 ===== */}
+          <nav className="flex items-center justify-between px-8 py-4 border-b border-gray-800">
+            {/* 왼쪽: 브랜드 로고 */}
+            <h1 className="text-3xl font-bold tracking-wider" style={{ fontFamily: 'Bebas Neue' }}>
+              KICKS
+            </h1>
+            {/* 오른쪽: 장바구니 + 사용자 이름 + 로그아웃 버튼 */}
+            <div className="flex items-center gap-6">
+              {/* 마이페이지 버튼 — 사람 아이콘 */}
+              <button
+                onClick={onMyPageClick}
+                className="text-gray-300 hover:text-white transition-colors"
+                title="마이페이지"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </button>
+              {/* 장바구니 버튼 — 담은 상품 수를 빨간 배지로 표시 */}
+              <button
+                onClick={onCartClick}
+                className="relative text-gray-300 hover:text-white transition-colors"
+              >
+                {/* 장바구니 아이콘 (SVG) */}
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+                {/* 장바구니에 상품이 있을 때만 빨간 배지 표시 */}
+                {cartCount > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs
+                                   w-5 h-5 flex items-center justify-center font-body font-bold">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+              <span className="text-gray-400 text-sm font-body">
+                {user.username}님
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 border border-gray-600 text-sm text-gray-300
+                           hover:bg-white hover:text-black transition-colors duration-200
+                           tracking-wider uppercase font-body"
+              >
+                로그아웃
+              </button>
+            </div>
+          </nav>
+
+          {/* ===== 히어로 배너 (상단 큰 타이틀) ===== */}
+          <div className="px-8 py-12 border-b border-gray-800">
+            <h2 className="text-6xl font-bold tracking-wider mb-2" style={{ fontFamily: 'Bebas Neue' }}>
+              NEW ARRIVALS
+            </h2>
+            <p className="text-gray-400 font-body text-sm">
+              최신 신발 컬렉션을 만나보세요
+            </p>
+          </div>
+
+          {/* ===== 상품 목록 그리드 ===== */}
+          <div className="px-8 py-8">
+            {loading ? (
+              // 로딩 중일 때
+              <p className="text-gray-500 font-body text-sm text-center py-20">
+                상품을 불러오는 중...
+              </p>
+            ) : (
+              // 상품 카드들을 그리드(격자) 형태로 배치
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                {/*
+                  grid: 격자 레이아웃 사용
+                  grid-cols-2: 기본 2열 (모바일)
+                  md:grid-cols-3: 중간 화면 3열 (태블릿)
+                  lg:grid-cols-4: 큰 화면 4열 (노트북)
+                  xl:grid-cols-5: 아주 큰 화면 5열 (모니터)
+                  gap-6: 카드 사이 간격 24px
+                */}
+                {products.map(product => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    onClick={onProductClick}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 상품 상세 페이지 — 개별 상품 정보 + 사이즈 선택 + 장바구니 담기
+    // ============================================
+    function ProductDetailPage({ productId, user, onLogout, onBack, onAddToCart, cartCount, onCartClick }) {
+      const [product, setProduct] = useState(null);       // 상품 데이터
+      const [loading, setLoading] = useState(true);       // 로딩 중 여부
+      const [selectedSize, setSelectedSize] = useState(null);  // 선택한 사이즈
+      const [addedMessage, setAddedMessage] = useState('');    // "장바구니에 담겼습니다" 메시지
+
+      // 로그아웃 처리
+      const handleLogout = async () => {
+        await authFetch('/api/logout', { method: 'POST' });
+        onLogout();
+      };
+
+      // 페이지 로드 시 서버에서 상품 상세 정보 가져오기
+      // 흐름: 페이지 진입 → /api/products/3 요청 → 상품 데이터 수신 → 화면에 표시
+      useEffect(() => {
+        authFetch(`/api/products/${productId}`)
+          .then(res => res.json())
+          .then(data => setProduct(data.product))
+          .catch(err => console.error('상품 로드 실패:', err))
+          .finally(() => setLoading(false));
+      }, [productId]);
+
+      // 장바구니 담기 버튼 클릭 시
+      const handleAddToCart = () => {
+        if (!selectedSize) {
+          alert('사이즈를 선택해주세요!');
+          return;
+        }
+        // 부모(App)에게 "이 상품, 이 사이즈로 장바구니에 담아줘" 라고 알림
+        onAddToCart(product, selectedSize);
+        setAddedMessage('장바구니에 담았습니다!');
+        // 2초 후 메시지 사라짐
+        setTimeout(() => setAddedMessage(''), 2000);
+      };
+
+      // 로딩 중 화면
+      if (loading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-black">
+            <p className="text-gray-500 font-body text-sm">상품 정보를 불러오는 중...</p>
+          </div>
+        );
+      }
+
+      // 상품을 찾지 못한 경우
+      if (!product) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-black">
+            <div className="text-center">
+              <p className="text-gray-500 font-body text-sm mb-4">상품을 찾을 수 없습니다.</p>
+              <button onClick={onBack} className="text-white underline font-body text-sm">
+                목록으로 돌아가기
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-black">
+          {/* ===== 상단 네비게이션 바 ===== */}
+          <nav className="flex items-center justify-between px-8 py-4 border-b border-gray-800">
+            <h1
+              onClick={onBack}
+              className="text-3xl font-bold tracking-wider cursor-pointer"
+              style={{ fontFamily: 'Bebas Neue' }}
+            >
+              KICKS
+            </h1>
+            <div className="flex items-center gap-6">
+              {/* 장바구니 버튼 */}
+              <button
+                onClick={onCartClick}
+                className="relative text-gray-300 hover:text-white transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+                {cartCount > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs
+                                   w-5 h-5 flex items-center justify-center font-body font-bold">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+              <span className="text-gray-400 text-sm font-body">
+                {user.username}님
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 border border-gray-600 text-sm text-gray-300
+                           hover:bg-white hover:text-black transition-colors duration-200
+                           tracking-wider uppercase font-body"
+              >
+                로그아웃
+              </button>
+            </div>
+          </nav>
+
+          {/* ===== 뒤로가기 버튼 ===== */}
+          <div className="px-8 py-4">
+            <button
+              onClick={onBack}
+              className="text-gray-400 font-body text-sm hover:text-white transition-colors
+                         flex items-center gap-2"
+            >
+              {/* ← 화살표 */}
+              <span className="text-lg">&larr;</span>
+              목록으로 돌아가기
+            </button>
+          </div>
+
+          {/* ===== 상품 상세 콘텐츠 ===== */}
+          {/*
+            큰 화면(md 이상)에서는 이미지와 정보를 가로로 나란히 배치
+            작은 화면(모바일)에서는 세로로 쌓아서 배치
+          */}
+          <div className="px-8 pb-16 flex flex-col md:flex-row gap-8 md:gap-12">
+
+            {/* 왼쪽: 상품 이미지 (큰 화면에서 절반 차지) */}
+            <div className="md:w-1/2">
+              <div className="aspect-square overflow-hidden bg-gray-900">
+                <img
+                  src={product.image}
+                  alt={product.name}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            </div>
+
+            {/* 오른쪽: 상품 정보 (큰 화면에서 절반 차지) */}
+            <div className="md:w-1/2 flex flex-col justify-center">
+              {/* 카테고리 */}
+              <p className="text-gray-500 text-xs font-body tracking-wider uppercase mb-2">
+                {product.category}
+              </p>
+
+              {/* 상품 이름 — 크고 볼드하게 */}
+              <h2 className="text-4xl font-bold tracking-wider mb-4" style={{ fontFamily: 'Bebas Neue' }}>
+                {product.name}
+              </h2>
+
+              {/* 가격 — 크게 표시 */}
+              <p className="text-2xl font-bold font-body mb-6">
+                {formatPrice(product.price)}
+              </p>
+
+              {/* 상품 설명 */}
+              <p className="text-gray-400 font-body text-sm leading-relaxed mb-8">
+                {/*
+                  leading-relaxed: 줄 간격을 넓게 (읽기 편하도록)
+                */}
+                {product.description}
+              </p>
+
+              {/* ===== 사이즈 선택 영역 ===== */}
+              <div className="mb-8">
+                <p className="text-white font-body text-sm font-bold mb-3 tracking-wider uppercase">
+                  사이즈 선택
+                </p>
+                {/* 사이즈 버튼들을 격자로 배치 — 한 줄에 4~5개 */}
+                <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                  {product.sizes.map(size => (
+                    <button
+                      key={size}
+                      onClick={() => setSelectedSize(size)}
+                      className={`py-3 text-sm font-body border transition-colors duration-200
+                        ${selectedSize === size
+                          ? 'bg-white text-black border-white font-bold'
+                            /* 선택된 사이즈: 흰 배경, 검은 글씨 (강조) */
+                          : 'bg-transparent text-gray-300 border-gray-600 hover:border-white'
+                            /* 선택 안 된 사이즈: 투명 배경, 회색 테두리 */
+                        }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ===== 장바구니 담기 버튼 ===== */}
+              <button
+                onClick={handleAddToCart}
+                className="w-full py-4 bg-white text-black font-bold text-sm tracking-widest uppercase
+                           hover:bg-gray-200 transition-colors duration-200"
+              >
+                장바구니에 담기
+              </button>
+
+              {/* 장바구니 담기 성공 메시지 */}
+              {addedMessage && (
+                <p className="text-green-400 font-body text-sm text-center mt-3">
+                  {addedMessage}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 장바구니 페이지 — 담은 상품 목록, 수량 변경, 삭제, 총액
+    // ============================================
+    function CartPage({ user, cart, onLogout, onBack, onUpdateQuantity, onRemoveItem, onCheckout }) {
+      // 로그아웃 처리
+      const handleLogout = async () => {
+        await authFetch('/api/logout', { method: 'POST' });
+        onLogout();
+      };
+
+      // 총액 계산
+      // cart 배열의 각 아이템에서 (가격 x 수량)을 구해서 모두 더함
+      // reduce는 배열을 하나의 값으로 줄이는 함수예요
+      // (비유: 영수증의 모든 항목을 더해서 총액을 구하는 것!)
+      const totalPrice = cart.reduce(
+        (sum, item) => sum + item.product.price * item.quantity,
+        0  // 초기값 0원부터 시작
+      );
+
+      // 전체 상품 수 (수량 합계)
+      const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+      return (
+        <div className="min-h-screen bg-black">
+          {/* ===== 상단 네비게이션 바 ===== */}
+          <nav className="flex items-center justify-between px-8 py-4 border-b border-gray-800">
+            <h1
+              onClick={onBack}
+              className="text-3xl font-bold tracking-wider cursor-pointer"
+              style={{ fontFamily: 'Bebas Neue' }}
+            >
+              KICKS
+            </h1>
+            <div className="flex items-center gap-6">
+              <span className="text-gray-400 text-sm font-body">
+                {user.username}님
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 border border-gray-600 text-sm text-gray-300
+                           hover:bg-white hover:text-black transition-colors duration-200
+                           tracking-wider uppercase font-body"
+              >
+                로그아웃
+              </button>
+            </div>
+          </nav>
+
+          {/* ===== 페이지 타이틀 ===== */}
+          <div className="px-8 py-8 border-b border-gray-800">
+            <h2 className="text-5xl font-bold tracking-wider mb-1" style={{ fontFamily: 'Bebas Neue' }}>
+              YOUR BAG
+            </h2>
+            <p className="text-gray-400 font-body text-sm">
+              {totalItems > 0
+                ? `${totalItems}개의 상품이 담겨 있습니다`
+                : '장바구니가 비어 있습니다'}
+            </p>
+          </div>
+
+          {/* ===== 장바구니 콘텐츠 ===== */}
+          <div className="px-8 py-8 max-w-4xl">
+            {cart.length === 0 ? (
+              // 장바구니가 비어있을 때
+              <div className="text-center py-20">
+                <p className="text-gray-500 font-body text-sm mb-6">
+                  아직 담은 상품이 없어요.
+                </p>
+                <button
+                  onClick={onBack}
+                  className="px-8 py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                             hover:bg-gray-200 transition-colors duration-200"
+                >
+                  쇼핑하러 가기
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* 장바구니 아이템 목록 */}
+                <div className="space-y-6">
+                  {cart.map((item, index) => (
+                    // 각 장바구니 아이템 — 가로로 이미지 + 정보 + 수량 + 삭제 배치
+                    <div
+                      key={`${item.product.id}-${item.size}`}
+                      className="flex gap-6 pb-6 border-b border-gray-800"
+                    >
+                      {/* 상품 이미지 (작은 정사각형) */}
+                      <div className="w-24 h-24 flex-shrink-0 bg-gray-900 overflow-hidden">
+                        {/*
+                          w-24 h-24: 96px x 96px 크기
+                          flex-shrink-0: 화면이 줄어들어도 이미지 크기는 유지
+                        */}
+                        <img
+                          src={item.product.image}
+                          alt={item.product.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+
+                      {/* 상품 정보 — 이름, 사이즈, 가격 */}
+                      <div className="flex-1 min-w-0">
+                        {/* flex-1: 남은 공간을 모두 차지, min-w-0: 텍스트가 넘치면 잘라냄 */}
+                        <h3 className="text-white font-bold font-body text-sm mb-1">
+                          {item.product.name}
+                        </h3>
+                        <p className="text-gray-500 font-body text-xs mb-2">
+                          사이즈: {item.size}
+                        </p>
+                        <p className="text-white font-body text-sm font-bold">
+                          {formatPrice(item.product.price)}
+                        </p>
+                      </div>
+
+                      {/* 수량 조절 영역 */}
+                      <div className="flex items-center gap-3">
+                        {/* 수량 감소 버튼 (-) */}
+                        <button
+                          onClick={() => onUpdateQuantity(index, item.quantity - 1)}
+                          className="w-8 h-8 border border-gray-600 text-gray-300 flex items-center justify-center
+                                     hover:bg-white hover:text-black transition-colors duration-200 text-sm"
+                        >
+                          -
+                        </button>
+
+                        {/* 현재 수량 표시 */}
+                        <span className="text-white font-body text-sm w-8 text-center">
+                          {item.quantity}
+                        </span>
+
+                        {/* 수량 증가 버튼 (+) */}
+                        <button
+                          onClick={() => onUpdateQuantity(index, item.quantity + 1)}
+                          className="w-8 h-8 border border-gray-600 text-gray-300 flex items-center justify-center
+                                     hover:bg-white hover:text-black transition-colors duration-200 text-sm"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      {/* 소계 (가격 x 수량) */}
+                      <div className="flex items-center w-28 justify-end">
+                        <span className="text-white font-body text-sm font-bold">
+                          {formatPrice(item.product.price * item.quantity)}
+                        </span>
+                      </div>
+
+                      {/* 삭제 버튼 (X) */}
+                      <div className="flex items-center">
+                        <button
+                          onClick={() => onRemoveItem(index)}
+                          className="text-gray-500 hover:text-red-400 transition-colors text-lg"
+                          title="삭제"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ===== 총액 및 결제 버튼 영역 ===== */}
+                <div className="mt-8 pt-6 border-t border-gray-600">
+                  {/* 총액 표시 */}
+                  <div className="flex justify-between items-center mb-8">
+                    <span className="text-white font-body text-lg font-bold tracking-wider uppercase">
+                      합계
+                    </span>
+                    <span className="text-white text-2xl font-bold font-body">
+                      {formatPrice(totalPrice)}
+                    </span>
+                  </div>
+
+                  {/* 버튼 2개: 쇼핑 계속 / 결제하기 */}
+                  <div className="flex gap-4">
+                    <button
+                      onClick={onBack}
+                      className="flex-1 py-4 border border-gray-600 text-gray-300 font-bold text-sm
+                                 tracking-widest uppercase hover:bg-gray-900 transition-colors duration-200"
+                    >
+                      쇼핑 계속하기
+                    </button>
+                    <button
+                      onClick={onCheckout}
+                      className="flex-1 py-4 bg-white text-black font-bold text-sm tracking-widest uppercase
+                                 hover:bg-gray-200 transition-colors duration-200"
+                    >
+                      결제하기
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 마이페이지 — 회원 정보, 주문 내역, 비밀번호 변경
+    // ============================================
+    function MyPage({ user, onLogout, onBack, cartCount, onCartClick }) {
+      // 탭 상태: 'orders'(주문 내역), 'info'(회원 정보), 'password'(비밀번호 변경)
+      const [tab, setTab] = useState('orders');
+      // 주문 내역 데이터
+      const [orders, setOrders] = useState([]);
+      const [ordersLoading, setOrdersLoading] = useState(true);
+      // 회원 상세 정보
+      const [userInfo, setUserInfo] = useState(null);
+      // 비밀번호 변경 폼
+      const [currentPassword, setCurrentPassword] = useState('');
+      const [newPassword, setNewPassword] = useState('');
+      const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
+      const [passwordMsg, setPasswordMsg] = useState('');
+      const [passwordError, setPasswordError] = useState('');
+      // 비밀번호 보이기/숨기기 — 각 필드마다 독립적으로 제어
+      const [showCurPw, setShowCurPw] = useState(false);          // 현재 비밀번호
+      const [showNewPw, setShowNewPw] = useState(false);          // 새 비밀번호
+      const [showNewPwConfirm, setShowNewPwConfirm] = useState(false); // 새 비밀번호 확인
+
+      // 로그아웃 처리
+      const handleLogout = async () => {
+        await authFetch('/api/logout', { method: 'POST' });
+        onLogout();
+      };
+
+      // 페이지 로드 시 주문 내역 + 회원 정보 불러오기
+      useEffect(() => {
+        // 주문 내역 조회
+        authFetch('/api/orders')
+          .then(res => res.json())
+          .then(data => setOrders(data.orders || []))
+          .catch(err => console.error('주문 내역 로드 실패:', err))
+          .finally(() => setOrdersLoading(false));
+
+        // 회원 정보 조회
+        authFetch('/api/me')
+          .then(res => res.json())
+          .then(data => setUserInfo(data.user))
+          .catch(err => console.error('회원 정보 로드 실패:', err));
+      }, []);
+
+      // 비밀번호 변경 처리
+      const handlePasswordChange = async (e) => {
+        e.preventDefault();
+        setPasswordMsg('');
+        setPasswordError('');
+
+        if (newPassword !== newPasswordConfirm) {
+          setPasswordError('새 비밀번호가 일치하지 않습니다.');
+          return;
+        }
+
+        try {
+          const res = await authFetch('/api/me/password', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ currentPassword, newPassword })
+          });
+          const data = await res.json();
+
+          if (res.ok) {
+            setPasswordMsg('비밀번호가 변경되었습니다!');
+            setCurrentPassword('');
+            setNewPassword('');
+            setNewPasswordConfirm('');
+          } else {
+            setPasswordError(data.error);
+          }
+        } catch (err) {
+          setPasswordError('서버 연결에 실패했습니다.');
+        }
+      };
+
+      // 날짜를 보기 좋게 변환하는 함수
+      const formatDate = (dateStr) => {
+        if (!dateStr) return '-';
+        const d = new Date(dateStr);
+        return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+      };
+
+      // 주문 상태를 한글로 변환
+      const statusLabel = (status) => {
+        switch(status) {
+          case 'paid': return '결제 완료';
+          case 'pending': return '결제 대기';
+          default: return status;
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-black">
+          {/* ===== 상단 네비게이션 바 ===== */}
+          <nav className="flex items-center justify-between px-8 py-4 border-b border-gray-800">
+            <h1
+              onClick={onBack}
+              className="text-3xl font-bold tracking-wider cursor-pointer"
+              style={{ fontFamily: 'Bebas Neue' }}
+            >
+              KICKS
+            </h1>
+            <div className="flex items-center gap-6">
+              {/* 장바구니 버튼 */}
+              <button
+                onClick={onCartClick}
+                className="relative text-gray-300 hover:text-white transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+                {cartCount > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs
+                                   w-5 h-5 flex items-center justify-center font-body font-bold">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+              <span className="text-gray-400 text-sm font-body">
+                {user.username}님
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 border border-gray-600 text-sm text-gray-300
+                           hover:bg-white hover:text-black transition-colors duration-200
+                           tracking-wider uppercase font-body"
+              >
+                로그아웃
+              </button>
+            </div>
+          </nav>
+
+          {/* ===== 페이지 타이틀 ===== */}
+          <div className="px-8 py-8 border-b border-gray-800">
+            <h2 className="text-5xl font-bold tracking-wider mb-1" style={{ fontFamily: 'Bebas Neue' }}>
+              MY PAGE
+            </h2>
+            <p className="text-gray-400 font-body text-sm">
+              주문 내역과 회원 정보를 확인하세요
+            </p>
+          </div>
+
+          {/* ===== 탭 메뉴 ===== */}
+          <div className="flex border-b border-gray-800">
+            {[
+              { key: 'orders', label: '주문 내역' },
+              { key: 'info', label: '회원 정보' },
+              { key: 'password', label: '비밀번호 변경' }
+            ].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`px-8 py-4 font-body text-sm tracking-wider uppercase transition-colors
+                  ${tab === t.key
+                    ? 'text-white border-b-2 border-white font-bold'
+                    : 'text-gray-500 hover:text-gray-300'
+                  }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ===== 탭 콘텐츠 ===== */}
+          <div className="px-8 py-8 max-w-4xl">
+
+            {/* --- 주문 내역 탭 --- */}
+            {tab === 'orders' && (
+              <div>
+                {ordersLoading ? (
+                  <p className="text-gray-500 font-body text-sm text-center py-10">
+                    주문 내역을 불러오는 중...
+                  </p>
+                ) : orders.length === 0 ? (
+                  <div className="text-center py-20">
+                    <p className="text-gray-500 font-body text-sm mb-6">
+                      아직 주문 내역이 없어요.
+                    </p>
+                    <button
+                      onClick={onBack}
+                      className="px-8 py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                                 hover:bg-gray-200 transition-colors duration-200"
+                    >
+                      쇼핑하러 가기
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {orders.map((order) => (
+                      <div key={order.order_id || order.id}
+                           className="border border-gray-800 p-6">
+                        {/* 주문 헤더 */}
+                        <div className="flex justify-between items-center mb-4">
+                          <div>
+                            <p className="text-white font-body text-sm font-bold">
+                              주문번호: {order.order_id}
+                            </p>
+                            <p className="text-gray-500 font-body text-xs mt-1">
+                              {formatDate(order.created_at)}
+                            </p>
+                          </div>
+                          <span className={`px-3 py-1 text-xs font-body font-bold tracking-wider uppercase
+                            ${order.status === 'paid'
+                              ? 'bg-green-900/30 text-green-400 border border-green-800'
+                              : 'bg-yellow-900/30 text-yellow-400 border border-yellow-800'
+                            }`}>
+                            {statusLabel(order.status)}
+                          </span>
+                        </div>
+                        {/* 주문 정보 */}
+                        <div className="flex justify-between items-center pt-4 border-t border-gray-800">
+                          <div className="text-gray-400 font-body text-sm">
+                            {order.method && <span>{order.method} · </span>}
+                            <span>{formatPrice(order.total_amount)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* --- 회원 정보 탭 --- */}
+            {tab === 'info' && (
+              <div className="border border-gray-800 p-8 max-w-md">
+                <h3 className="text-xl font-bold tracking-wider mb-6" style={{ fontFamily: 'Bebas Neue' }}>
+                  ACCOUNT INFO
+                </h3>
+                {userInfo ? (
+                  <div className="space-y-4">
+                    <div className="flex justify-between py-3 border-b border-gray-800">
+                      <span className="text-gray-500 font-body text-sm">아이디</span>
+                      <span className="text-white font-body text-sm font-bold">{userInfo.username}</span>
+                    </div>
+                    <div className="flex justify-between py-3 border-b border-gray-800">
+                      <span className="text-gray-500 font-body text-sm">가입일</span>
+                      <span className="text-white font-body text-sm">{formatDate(userInfo.created_at)}</span>
+                    </div>
+                    <div className="flex justify-between py-3">
+                      <span className="text-gray-500 font-body text-sm">총 주문 수</span>
+                      <span className="text-white font-body text-sm font-bold">{orders.length}건</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-500 font-body text-sm">정보를 불러오는 중...</p>
+                )}
+              </div>
+            )}
+
+            {/* --- 비밀번호 변경 탭 --- */}
+            {tab === 'password' && (
+              <div className="max-w-md">
+                <h3 className="text-xl font-bold tracking-wider mb-6" style={{ fontFamily: 'Bebas Neue' }}>
+                  CHANGE PASSWORD
+                </h3>
+                <form onSubmit={handlePasswordChange} className="space-y-5">
+                  <div>
+                    <label className="text-gray-400 font-body text-xs tracking-wider uppercase block mb-2">
+                      현재 비밀번호
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showCurPw ? 'text' : 'password'}
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full px-4 py-3 pr-12 bg-transparent border-2 border-gray-600 text-white
+                                   placeholder-gray-500 text-sm font-body tracking-wide
+                                   transition-colors duration-200"
+                        placeholder="현재 비밀번호 입력"
+                      />
+                      <PasswordToggle show={showCurPw} onClick={() => setShowCurPw(!showCurPw)} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-gray-400 font-body text-xs tracking-wider uppercase block mb-2">
+                      새 비밀번호
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showNewPw ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full px-4 py-3 pr-12 bg-transparent border-2 border-gray-600 text-white
+                                   placeholder-gray-500 text-sm font-body tracking-wide
+                                   transition-colors duration-200"
+                        placeholder="새 비밀번호 (4자 이상)"
+                      />
+                      <PasswordToggle show={showNewPw} onClick={() => setShowNewPw(!showNewPw)} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-gray-400 font-body text-xs tracking-wider uppercase block mb-2">
+                      새 비밀번호 확인
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showNewPwConfirm ? 'text' : 'password'}
+                        value={newPasswordConfirm}
+                        onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                        className="w-full px-4 py-3 pr-12 bg-transparent border-2 border-gray-600 text-white
+                                   placeholder-gray-500 text-sm font-body tracking-wide
+                                   transition-colors duration-200"
+                        placeholder="새 비밀번호 다시 입력"
+                      />
+                      <PasswordToggle show={showNewPwConfirm} onClick={() => setShowNewPwConfirm(!showNewPwConfirm)} />
+                    </div>
+                  </div>
+
+                  {/* 성공/에러 메시지 */}
+                  {passwordMsg && (
+                    <p className="text-green-400 text-sm font-body">{passwordMsg}</p>
+                  )}
+                  {passwordError && (
+                    <p className="text-red-400 text-sm font-body">{passwordError}</p>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="w-full py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                               hover:bg-gray-200 transition-colors duration-200"
+                  >
+                    비밀번호 변경
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 결제 페이지 — 토스페이먼츠 위젯으로 결제 진행
+    // ============================================
+    // 이 페이지에서는:
+    // 1. 주문 요약(장바구니 상품 목록 + 총액)을 보여주고
+    // 2. 토스페이먼츠 결제 위젯(카드/계좌이체 등 선택 UI)을 표시하고
+    // 3. "결제하기" 버튼을 누르면 토스페이먼츠 결제창이 열려요
+    function CheckoutPage({ user, cart, onLogout, onBack }) {
+      // ---------- 토스페이먼츠 위젯 관련 참조(ref) ----------
+      // useRef는 "메모지"처럼 값을 기억해두는 공간이에요.
+      // 일반 변수와 다르게, 컴포넌트가 다시 그려져도(re-render) 값이 유지돼요.
+      const widgetsRef = useRef(null);       // 토스페이먼츠 위젯 인스턴스를 저장
+      const isRenderedRef = useRef(false);   // 위젯이 이미 렌더링되었는지 여부 (중복 렌더링 방지!)
+
+      // ---------- 상태(state) ----------
+      const [loading, setLoading] = useState(true);   // 위젯 로딩 중 여부
+      const [error, setError] = useState('');          // 에러 메시지
+
+      // 총액 계산 — 장바구니의 모든 상품 (가격 x 수량)을 합산
+      const totalPrice = cart.reduce(
+        (sum, item) => sum + item.product.price * item.quantity,
+        0
+      );
+
+      // 로그아웃 처리
+      const handleLogout = async () => {
+        await authFetch('/api/logout', { method: 'POST' });
+        onLogout();
+      };
+
+      // ---------- 토스페이먼츠 위젯 초기화 및 렌더링 ----------
+      // 이 useEffect는 페이지가 처음 표시될 때 한 번만 실행돼요.
+      // 흐름:
+      //   1. TossPayments SDK 초기화 (클라이언트 키로)
+      //   2. widgets 객체 생성 (비회원 결제 모드)
+      //   3. 결제 금액 설정
+      //   4. 결제 수단 선택 위젯 렌더링 (카드, 계좌이체 등)
+      //   5. 이용약관 동의 위젯 렌더링
+      useEffect(() => {
+        const initWidget = async () => {
+          try {
+            // 토스페이먼츠 테스트용 클라이언트 키 (결제위젯 전용 키)
+            // (test_ 로 시작하는 키는 실제 결제가 되지 않아요 — 안심하세요!)
+            // ⚠️ 중요: 결제위젯용 키와 일반 결제창용 키가 다릅니다!
+            const clientKey = 'test_gck_docs_Ovk5rk1EwkEbP0W43n07xlzm';
+
+            // 1단계: TossPayments SDK 초기화
+            const tossPayments = TossPayments(clientKey);
+
+            // 2단계: 위젯 인스턴스 생성
+            // ANONYMOUS = 비회원 결제 (로그인 없이도 결제 가능)
+            const widgets = tossPayments.widgets({
+              customerKey: TossPayments.ANONYMOUS
+            });
+
+            // 위젯 인스턴스를 ref에 저장 (나중에 결제 요청할 때 사용)
+            widgetsRef.current = widgets;
+
+            // 3단계: 결제 금액 설정
+            // ⚠️ setAmount는 renderPaymentMethods보다 반드시 먼저 호출해야 해요!
+            await widgets.setAmount({
+              currency: 'KRW',        // 통화: 한국 원화
+              value: totalPrice       // 금액: 장바구니 총액
+            });
+
+            // 4단계: 결제 UI + 이용약관 동시 렌더링
+            // Promise.all로 동시에 렌더링하면 더 빠릅니다 (공식 권장 패턴)
+            if (!isRenderedRef.current) {
+              await Promise.all([
+                // 결제 수단 선택 위젯 (카드, 계좌이체, 간편결제 등)
+                widgets.renderPaymentMethods({
+                  selector: '#payment-method',
+                  variantKey: 'DEFAULT'
+                }),
+                // 이용약관 동의 위젯
+                widgets.renderAgreement({
+                  selector: '#agreement',
+                  variantKey: 'AGREEMENT'
+                })
+              ]);
+
+              // 렌더링 완료 표시 — 다시 렌더링하지 않도록!
+              isRenderedRef.current = true;
+            }
+
+            setLoading(false);
+          } catch (err) {
+            console.error('토스페이먼츠 위젯 초기화 실패:', err);
+            setError('결제 위젯을 불러오는 데 실패했습니다. 페이지를 새로고침해주세요.');
+            setLoading(false);
+          }
+        };
+
+        // 장바구니가 비어있으면 위젯을 초기화하지 않음
+        if (cart.length > 0 && totalPrice > 0) {
+          initWidget();
+        } else {
+          setLoading(false);
+        }
+      }, []); // 빈 배열 = 컴포넌트가 처음 마운트될 때 한 번만 실행
+
+      // ---------- 결제하기 버튼 클릭 ----------
+      // 토스페이먼츠에 결제를 요청하는 함수
+      // 성공하면: successUrl로 리다이렉트 (paymentKey, orderId, amount가 전달됨)
+      // 실패하면: failUrl로 리다이렉트
+      const handlePayment = async () => {
+        if (!widgetsRef.current) {
+          setError('결제 위젯이 준비되지 않았습니다.');
+          return;
+        }
+
+        try {
+          // 고유한 주문 ID 생성
+          // Date.now() = 현재 시간 밀리초 + 랜덤 문자열 → 중복 방지
+          const orderId = 'KICKS_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+
+          // 1단계: 서버에 주문 먼저 생성
+          // (결제 전에 주문을 만들어야 나중에 결제 승인 시 주문과 연결할 수 있어요)
+          await authFetch('/api/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId })
+          });
+
+          // 주문 상품명 만들기
+          // 장바구니 첫 번째 상품 이름 + "외 N건" 형식
+          const orderName = cart.length === 1
+            ? cart[0].product.name
+            : `${cart[0].product.name} 외 ${cart.length - 1}건`;
+
+          // 2단계: 토스페이먼츠에 결제 요청!
+          // 이 함수가 호출되면 토스페이먼츠 결제창이 열려요
+          await widgetsRef.current.requestPayment({
+            orderId: orderId,                              // 고유 주문 ID
+            orderName: orderName,                          // 주문명 (상품명)
+            successUrl: window.location.origin + '/success', // 결제 성공 시 이동할 URL
+            failUrl: window.location.origin + '/fail',       // 결제 실패 시 이동할 URL
+            customerName: user.username,                   // 구매자 이름
+          });
+        } catch (err) {
+          // 사용자가 결제를 취소하거나 에러가 발생한 경우
+          if (err.code === 'USER_CANCEL') {
+            // 사용자가 직접 취소한 경우 — 아무것도 안 함 (정상적인 상황)
+            console.log('사용자가 결제를 취소했습니다.');
+          } else if (err.code === 'INVALID_CARD_COMPANY') {
+            setError('지원하지 않는 카드사입니다. 다른 카드를 사용해주세요.');
+          } else {
+            // 그 외 에러
+            setError(err.message || '결제 중 오류가 발생했습니다.');
+            console.error('결제 에러:', err);
+          }
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-black">
+          {/* ===== 상단 네비게이션 바 ===== */}
+          <nav className="flex items-center justify-between px-8 py-4 border-b border-gray-800">
+            <h1
+              onClick={() => onBack('main')}
+              className="text-3xl font-bold tracking-wider cursor-pointer"
+              style={{ fontFamily: 'Bebas Neue' }}
+            >
+              KICKS
+            </h1>
+            <div className="flex items-center gap-6">
+              <span className="text-gray-400 text-sm font-body">
+                {user.username}님
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 border border-gray-600 text-sm text-gray-300
+                           hover:bg-white hover:text-black transition-colors duration-200
+                           tracking-wider uppercase font-body"
+              >
+                로그아웃
+              </button>
+            </div>
+          </nav>
+
+          {/* ===== 뒤로가기 버튼 ===== */}
+          <div className="px-8 py-4">
+            <button
+              onClick={() => onBack('cart')}
+              className="text-gray-400 font-body text-sm hover:text-white transition-colors
+                         flex items-center gap-2"
+            >
+              <span className="text-lg">&larr;</span>
+              장바구니로 돌아가기
+            </button>
+          </div>
+
+          {/* ===== 페이지 타이틀 ===== */}
+          <div className="px-8 pb-6">
+            <h2 className="text-5xl font-bold tracking-wider" style={{ fontFamily: 'Bebas Neue' }}>
+              CHECKOUT
+            </h2>
+            <p className="text-gray-400 font-body text-sm mt-1">
+              주문 내용을 확인하고 결제를 진행해주세요
+            </p>
+          </div>
+
+          {/* ===== 메인 콘텐츠: 주문 요약 + 결제 위젯 ===== */}
+          <div className="px-8 pb-16 flex flex-col lg:flex-row gap-8 max-w-6xl">
+
+            {/* ===== 왼쪽: 주문 요약 ===== */}
+            <div className="lg:w-2/5">
+              <div className="border border-gray-800 p-6">
+                <h3 className="text-xl font-bold tracking-wider mb-4" style={{ fontFamily: 'Bebas Neue' }}>
+                  ORDER SUMMARY
+                </h3>
+
+                {/* 주문 상품 목록 */}
+                <div className="space-y-4 mb-6">
+                  {cart.map((item, index) => (
+                    <div
+                      key={`${item.product.id}-${item.size}`}
+                      className="flex gap-4 pb-4 border-b border-gray-800"
+                    >
+                      {/* 상품 이미지 (작은 썸네일) */}
+                      <div className="w-16 h-16 flex-shrink-0 bg-gray-900 overflow-hidden">
+                        <img
+                          src={item.product.image}
+                          alt={item.product.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      {/* 상품 정보 */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-body text-sm font-bold truncate">
+                          {item.product.name}
+                        </p>
+                        <p className="text-gray-500 font-body text-xs">
+                          사이즈: {item.size} / 수량: {item.quantity}
+                        </p>
+                      </div>
+                      {/* 소계 */}
+                      <div className="flex items-center">
+                        <span className="text-white font-body text-sm">
+                          {formatPrice(item.product.price * item.quantity)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 총 결제 금액 */}
+                <div className="flex justify-between items-center pt-2">
+                  <span className="text-white font-body font-bold tracking-wider uppercase">
+                    총 결제 금액
+                  </span>
+                  <span className="text-white text-xl font-bold font-body">
+                    {formatPrice(totalPrice)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* ===== 오른쪽: 토스페이먼츠 결제 위젯 ===== */}
+            <div className="lg:w-3/5">
+              {/* 장바구니가 비어있을 때 */}
+              {cart.length === 0 ? (
+                <div className="text-center py-20">
+                  <p className="text-gray-500 font-body text-sm mb-4">
+                    장바구니가 비어있습니다.
+                  </p>
+                  <button
+                    onClick={() => onBack('main')}
+                    className="px-8 py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                               hover:bg-gray-200 transition-colors duration-200"
+                  >
+                    쇼핑하러 가기
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* 로딩 중일 때 안내 메시지 */}
+                  {loading && (
+                    <p className="text-gray-500 font-body text-sm text-center py-10">
+                      결제 위젯을 불러오는 중...
+                    </p>
+                  )}
+
+                  {/* 에러 메시지 */}
+                  {error && (
+                    <div className="bg-red-900/30 border border-red-500 p-4 mb-4">
+                      <p className="text-red-400 font-body text-sm">{error}</p>
+                    </div>
+                  )}
+
+                  {/* ---- 토스페이먼츠 결제 수단 선택 위젯이 여기에 렌더링됩니다 ---- */}
+                  {/* 이 div 안에 카드 결제, 계좌이체, 간편결제 등의 UI가 자동으로 그려져요 */}
+                  <div id="payment-method" className="mb-4"></div>
+
+                  {/* ---- 토스페이먼츠 이용약관 동의 위젯이 여기에 렌더링됩니다 ---- */}
+                  <div id="agreement" className="mb-6"></div>
+
+                  {/* 결제하기 버튼 */}
+                  <button
+                    onClick={handlePayment}
+                    disabled={loading}
+                    className="w-full py-4 bg-white text-black font-bold text-sm tracking-widest uppercase
+                               hover:bg-gray-200 transition-colors duration-200 disabled:opacity-50"
+                  >
+                    {loading ? '준비 중...' : `${formatPrice(totalPrice)} 결제하기`}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 결제 성공 페이지 — 결제가 완료된 후 표시되는 화면
+    // ============================================
+    // 토스페이먼츠에서 결제 성공 시 successUrl로 리다이렉트하면
+    // 서버가 결제를 승인(confirm)한 후 이 페이지를 보여줘요.
+    function PaymentSuccessPage({ onGoHome }) {
+      // URL에서 결제 정보 파라미터 가져오기
+      // (서버에서 리다이렉트할 때 쿼리 파라미터로 전달)
+      const [paymentInfo, setPaymentInfo] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        // 현재 페이지 URL에서 결제 정보 파라미터 추출
+        const urlParams = new URLSearchParams(window.location.search);
+        const paymentKey = urlParams.get('paymentKey');
+        const orderId = urlParams.get('orderId');
+        const amount = urlParams.get('amount');
+
+        if (paymentKey && orderId && amount) {
+          // 서버에 결제 승인 요청
+          // (중요! 결제 승인은 반드시 서버에서 해야 합니다 — 보안!)
+          fetch('/api/payments/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentKey, orderId, amount: Number(amount) })
+          })
+            .then(res => res.json())
+            .then(data => {
+              if (data.error) {
+                setError(data.error);
+              } else {
+                setPaymentInfo(data);
+              }
+            })
+            .catch(() => setError('결제 승인 중 오류가 발생했습니다.'))
+            .finally(() => setLoading(false));
+        } else {
+          setError('결제 정보가 올바르지 않습니다.');
+          setLoading(false);
+        }
+      }, []);
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-black px-4">
+          <div className="w-full max-w-md text-center">
+            {loading ? (
+              <p className="text-gray-500 font-body text-sm">결제를 확인하고 있습니다...</p>
+            ) : error ? (
+              /* 결제 실패 시 */
+              <>
+                <div className="text-6xl mb-6">&#10060;</div>
+                <h2 className="text-4xl font-bold tracking-wider mb-4" style={{ fontFamily: 'Bebas Neue' }}>
+                  PAYMENT FAILED
+                </h2>
+                <p className="text-red-400 font-body text-sm mb-8">{error}</p>
+                <button
+                  onClick={onGoHome}
+                  className="px-8 py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                             hover:bg-gray-200 transition-colors duration-200"
+                >
+                  홈으로 돌아가기
+                </button>
+              </>
+            ) : (
+              /* 결제 성공 시 */
+              <>
+                <div className="text-6xl mb-6">&#9989;</div>
+                <h2 className="text-4xl font-bold tracking-wider mb-4" style={{ fontFamily: 'Bebas Neue' }}>
+                  PAYMENT COMPLETE
+                </h2>
+                <p className="text-gray-400 font-body text-sm mb-2">
+                  결제가 성공적으로 완료되었습니다!
+                </p>
+
+                {/* 결제 상세 정보 */}
+                {paymentInfo && (
+                  <div className="border border-gray-800 p-6 mt-6 mb-8 text-left">
+                    <div className="space-y-3">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500 font-body text-sm">주문번호</span>
+                        <span className="text-white font-body text-sm">{paymentInfo.orderId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500 font-body text-sm">결제 금액</span>
+                        <span className="text-white font-body text-sm font-bold">
+                          {formatPrice(paymentInfo.totalAmount || paymentInfo.amount)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500 font-body text-sm">결제 수단</span>
+                        <span className="text-white font-body text-sm">{paymentInfo.method || '카드'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500 font-body text-sm">승인 상태</span>
+                        <span className="text-green-400 font-body text-sm font-bold">승인 완료</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={onGoHome}
+                  className="px-8 py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                             hover:bg-gray-200 transition-colors duration-200"
+                >
+                  쇼핑 계속하기
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 결제 실패 페이지 — 결제가 실패했을 때 표시되는 화면
+    // ============================================
+    // 토스페이먼츠에서 결제 실패 시 failUrl로 리다이렉트되면 이 페이지를 보여줘요
+    function PaymentFailPage({ onGoHome }) {
+      // URL에서 에러 정보 가져오기
+      const urlParams = new URLSearchParams(window.location.search);
+      const errorCode = urlParams.get('code') || '알 수 없음';
+      const errorMessage = urlParams.get('message') || '결제 처리 중 문제가 발생했습니다.';
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-black px-4">
+          <div className="w-full max-w-md text-center">
+            <div className="text-6xl mb-6">&#10060;</div>
+            <h2 className="text-4xl font-bold tracking-wider mb-4" style={{ fontFamily: 'Bebas Neue' }}>
+              PAYMENT FAILED
+            </h2>
+            <p className="text-gray-400 font-body text-sm mb-2">
+              결제가 실패했습니다. 다시 시도해주세요.
+            </p>
+
+            {/* 에러 상세 정보 */}
+            <div className="border border-gray-800 p-6 mt-6 mb-8 text-left">
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-body text-sm">에러 코드</span>
+                  <span className="text-red-400 font-body text-sm">{errorCode}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-body text-sm">에러 내용</span>
+                  <span className="text-red-400 font-body text-sm">{errorMessage}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <button
+                onClick={() => history.back()}
+                className="flex-1 py-3 border border-gray-600 text-gray-300 font-bold text-sm
+                           tracking-widest uppercase hover:bg-gray-900 transition-colors duration-200"
+              >
+                다시 시도
+              </button>
+              <button
+                onClick={onGoHome}
+                className="flex-1 py-3 bg-white text-black font-bold text-sm tracking-widest uppercase
+                           hover:bg-gray-200 transition-colors duration-200"
+              >
+                홈으로 돌아가기
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // 앱 최상위 컴포넌트 — 페이지 전환을 관리
+    // ============================================
+    function App() {
+      // 현재 페이지 상태: 'login', 'signup', 'main', 'detail'
+      const [page, setPage] = useState('login');
+      // 로그인된 사용자 정보
+      const [user, setUser] = useState(null);
+      // 초기 로딩 상태 (서버에 로그인 확인 중)
+      const [checking, setChecking] = useState(true);
+      // 현재 보고 있는 상품 ID (상세 페이지에서 사용)
+      const [selectedProductId, setSelectedProductId] = useState(null);
+      // 장바구니 데이터 — [{product, size, quantity}] 형태로 저장
+      const [cart, setCart] = useState([]);
+
+      // 로그아웃 처리 함수 — useCallback으로 감싸서 안정적으로 유지
+      const handleLogout = useCallback(() => {
+        setUser(null);
+        setPage('login');
+      }, []);
+
+      // 전역 로그아웃 핸들러 연결
+      // → 어디서든 401 응답이 오면 이 함수가 호출되어 로그인 페이지로 이동
+      useEffect(() => {
+        globalLogoutHandler = handleLogout;
+      }, [handleLogout]);
+
+      // 컴포넌트가 처음 표시될 때 서버에 로그인 상태를 확인
+      // (새로고침해도 세션이 유지되는지 체크)
+      // + 결제 완료 후 리다이렉트된 경우 URL 경로를 확인해서 해당 페이지로 이동
+      useEffect(() => {
+        // 현재 URL 경로 확인 — 결제 성공/실패 리다이렉트 처리
+        const currentPath = window.location.pathname;
+
+        fetch('/api/me')
+          .then(res => {
+            if (res.ok) return res.json();
+            throw new Error('not logged in');
+          })
+          .then(data => {
+            // 이미 로그인 되어 있으면
+            setUser(data.user);
+
+            // 결제 성공/실패 페이지로 리다이렉트된 경우 해당 페이지 표시
+            if (currentPath === '/success') {
+              setPage('paymentSuccess');
+            } else if (currentPath === '/fail') {
+              setPage('paymentFail');
+            } else {
+              setPage('main');
+            }
+
+            // 로그인된 사용자의 장바구니를 서버에서 불러옴
+            loadCart();
+          })
+          .catch(() => {
+            // 로그인 안 되어 있어도 결제 결과 페이지는 보여줘야 해요
+            if (currentPath === '/success') {
+              setPage('paymentSuccess');
+            } else if (currentPath === '/fail') {
+              setPage('paymentFail');
+            }
+            // 그 외에는 로그인 페이지에 머무름
+          })
+          .finally(() => {
+            setChecking(false);
+          });
+      }, []);
+
+      // 서버 확인 중일 때 보여줄 로딩 화면
+      if (checking) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-black">
+            <p className="text-gray-500 font-body text-sm">로딩 중...</p>
+          </div>
+        );
+      }
+
+      // 서버에서 장바구니 데이터를 불러오는 함수
+      // (비유: 편의점 사물함에서 내 장바구니를 꺼내오는 것!)
+      // 로그인 후, 장바구니 변경 후 등 여러 곳에서 호출돼요
+      const loadCart = async () => {
+        try {
+          const res = await authFetch('/api/cart');
+          if (res.ok) {
+            const data = await res.json();
+            setCart(data.cart);  // 서버에서 받은 장바구니로 화면 업데이트
+          }
+        } catch (err) {
+          console.error('장바구니 로드 실패:', err);
+        }
+      };
+
+      // 로그인/회원가입 성공 시 호출되는 함수
+      const handleAuthSuccess = (userData) => {
+        setUser(userData);
+        setPage('main');
+        // 로그인 성공 후 서버에서 장바구니를 불러옴
+        // (이전에 담아둔 상품이 있을 수 있으니까!)
+        setTimeout(() => loadCart(), 100);
+      };
+
+      // 장바구니에 상품 추가하는 함수
+      // 서버 API를 호출해서 장바구니를 서버에 저장해요
+      // 흐름: 버튼 클릭 → POST /api/cart → 서버에 저장 → 장바구니 다시 불러오기
+      const handleAddToCart = async (product, size) => {
+        try {
+          const res = await authFetch('/api/cart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId: product.id, size })
+          });
+          if (res.ok) {
+            await loadCart();  // 서버에서 최신 장바구니 다시 불러오기
+          }
+        } catch (err) {
+          console.error('장바구니 추가 실패:', err);
+        }
+      };
+
+      // 장바구니 수량 변경 함수
+      // (비유: 장바구니에서 "이거 2개로 바꿔주세요" 하는 것)
+      // 흐름: +/- 버튼 클릭 → PUT /api/cart/:index → 서버에서 수량 변경 → 다시 불러오기
+      const handleUpdateQuantity = async (index, newQuantity) => {
+        try {
+          if (newQuantity < 1) {
+            // 수량이 0 이하면 삭제
+            await handleRemoveItem(index);
+            return;
+          }
+          const res = await authFetch(`/api/cart/${index}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quantity: newQuantity })
+          });
+          if (res.ok) {
+            await loadCart();  // 최신 장바구니 다시 불러오기
+          }
+        } catch (err) {
+          console.error('수량 변경 실패:', err);
+        }
+      };
+
+      // 장바구니에서 상품 삭제 함수
+      // 흐름: X 버튼 클릭 → DELETE /api/cart/:index → 서버에서 삭제 → 다시 불러오기
+      const handleRemoveItem = async (index) => {
+        try {
+          const res = await authFetch(`/api/cart/${index}`, {
+            method: 'DELETE'
+          });
+          if (res.ok) {
+            await loadCart();
+          }
+        } catch (err) {
+          console.error('상품 삭제 실패:', err);
+        }
+      };
+
+      // 장바구니 전체 상품 종류 수 (배지에 표시)
+      const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+      // 현재 page 상태에 따라 다른 컴포넌트를 보여줌
+      // (마치 페이지를 이동하는 것처럼!)
+      switch (page) {
+        case 'signup':
+          return (
+            <SignupForm
+              onSwitch={() => setPage('login')}
+              onSignupSuccess={handleAuthSuccess}
+            />
+          );
+        case 'detail':
+          return (
+            <ProductDetailPage
+              productId={selectedProductId}
+              user={user}
+              onLogout={handleLogout}
+              onBack={() => setPage('main')}
+              onAddToCart={handleAddToCart}
+              cartCount={cartCount}
+              onCartClick={() => setPage('cart')}
+            />
+          );
+        case 'cart':
+          return (
+            <CartPage
+              user={user}
+              cart={cart}
+              onLogout={handleLogout}
+              onBack={() => setPage('main')}
+              onUpdateQuantity={handleUpdateQuantity}
+              onRemoveItem={handleRemoveItem}
+              onCheckout={() => {
+                // 결제 페이지로 이동!
+                setPage('checkout');
+              }}
+            />
+          );
+        case 'checkout':
+          // 결제 페이지 — 토스페이먼츠 위젯으로 결제 진행
+          return (
+            <CheckoutPage
+              user={user}
+              cart={cart}
+              onLogout={handleLogout}
+              onBack={(target) => setPage(target || 'cart')}
+            />
+          );
+        case 'paymentSuccess':
+          // 결제 성공 페이지 — 토스페이먼츠에서 리다이렉트 후 표시
+          return (
+            <PaymentSuccessPage
+              onGoHome={async () => {
+                // 서버 장바구니 비우기 (결제 완료했으니까!)
+                await authFetch('/api/cart', { method: 'DELETE' });
+                setCart([]);
+                // URL을 깨끗하게 정리하고 메인 페이지로 이동
+                window.history.replaceState({}, '', '/');
+                setPage('main');
+              }}
+            />
+          );
+        case 'paymentFail':
+          // 결제 실패 페이지
+          return (
+            <PaymentFailPage
+              onGoHome={() => {
+                // URL을 깨끗하게 정리하고 메인 페이지로 이동
+                window.history.replaceState({}, '', '/');
+                setPage('main');
+              }}
+            />
+          );
+        case 'mypage':
+          return (
+            <MyPage
+              user={user}
+              onLogout={handleLogout}
+              onBack={() => setPage('main')}
+              cartCount={cartCount}
+              onCartClick={() => setPage('cart')}
+            />
+          );
+        case 'main':
+          return (
+            <MainPage
+              user={user}
+              onLogout={handleLogout}
+              onProductClick={(id) => {
+                setSelectedProductId(id);
+                setPage('detail');
+              }}
+              cartCount={cartCount}
+              onCartClick={() => setPage('cart')}
+              onMyPageClick={() => setPage('mypage')}
+            />
+          );
+        default:
+          return (
+            <LoginForm
+              onSwitch={() => setPage('signup')}
+              onLoginSuccess={handleAuthSuccess}
+            />
+          );
+      }
+    }
+
+    // ============================================
+    // React 앱을 화면에 표시 (렌더링)
+    // ============================================
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
