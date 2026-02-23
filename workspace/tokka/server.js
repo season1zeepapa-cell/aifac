@@ -240,7 +240,7 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 // 6. 유저 API (/api/users)
 // ============================================================
 
-// 유저 검색 (닉네임 또는 이메일)
+// 유저 검색 (닉네임 또는 이메일) - AI 유저 제외
 app.get('/api/users/search', authMiddleware, async (req, res) => {
   try {
     const { q } = req.query;
@@ -259,7 +259,7 @@ app.get('/api/users/search', authMiddleware, async (req, res) => {
       result = await pool.query(
         `SELECT id, email, nickname, profile_image, status_message
          FROM users
-         WHERE id != $1
+         WHERE id != $1 AND (is_ai IS NULL OR is_ai = FALSE)
          ${excludeFriends.replace(/\$USERIDX/g, '$1')}
          ORDER BY created_at DESC
          LIMIT 50`,
@@ -270,7 +270,7 @@ app.get('/api/users/search', authMiddleware, async (req, res) => {
       result = await pool.query(
         `SELECT id, email, nickname, profile_image, status_message
          FROM users
-         WHERE (nickname ILIKE $1 OR email ILIKE $1) AND id != $2
+         WHERE (nickname ILIKE $1 OR email ILIKE $1) AND id != $2 AND (is_ai IS NULL OR is_ai = FALSE)
          ${excludeFriends.replace(/\$USERIDX/g, '$2')}
          ORDER BY nickname ASC
          LIMIT 20`,
