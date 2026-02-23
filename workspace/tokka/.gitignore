@@ -1,0 +1,13 @@
+# Vercel
+.vercel
+
+# 환경변수
+.env
+.env.local
+.env.production
+
+# 의존성
+node_modules/
+
+# 업로드 파일
+uploads/

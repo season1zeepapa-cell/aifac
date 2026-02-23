@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>할 일 관리</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* 체크박스 커스텀 애니메이션 */
+    .todo-enter {
+      animation: slideIn 0.3s ease-out;
+    }
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .todo-remove {
+      animation: slideOut 0.25s ease-in forwards;
+    }
+    @keyframes slideOut {
+      from {
+        opacity: 1;
+        transform: translateX(0);
+      }
+      to {
+        opacity: 0;
+        transform: translateX(30px);
+      }
+    }
+    /* 부드러운 취소선 전환 */
+    .line-through-transition {
+      transition: all 0.3s ease;
+    }
+    /* 페이드인 애니메이션 */
+    .fade-in {
+      animation: fadeIn 0.3s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    /* 스피너 애니메이션 */
+    .spinner {
+      border: 3px solid rgba(99, 102, 241, 0.2);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-50 via-white to-purple-50 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React 훅 구조분해
+    // ========================================
+    const { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } = React;
+
+    // ========================================
+    // API 통신 유틸리티
+    // ========================================
+    const API_BASE = '/api';
+
+    // API 요청을 보내는 범용 함수
+    // - endpoint: API 경로 (예: '/todos')
+    // - options: fetch 옵션 (method, body 등)
+    // - token: JWT 인증 토큰 (로그인 후 받은 토큰)
+    async function apiRequest(endpoint, options = {}, token = null) {
+      const headers = { 'Content-Type': 'application/json' };
+
+      // 토큰이 있으면 Authorization 헤더에 추가
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers: { ...headers, ...options.headers },
+      });
+
+      const data = await response.json();
+
+      // 서버에서 실패 응답을 보내면 에러를 던짐
+      if (!data.success) {
+        throw new Error(data.message || '요청에 실패했습니다');
+      }
+
+      return data.data;
+    }
+
+    // ========================================
+    // 인증 컨텍스트
+    // ========================================
+    // 앱 전체에서 로그인 상태를 공유하기 위한 React Context
+    const AuthContext = createContext(null);
+
+    function AuthProvider({ children }) {
+      // 토큰과 사용자 정보를 localStorage에서 복원
+      const [token, setToken] = useState(() => localStorage.getItem('todo_token'));
+      const [user, setUser] = useState(() => {
+        try {
+          const stored = localStorage.getItem('todo_user');
+          return stored ? JSON.parse(stored) : null;
+        } catch {
+          return null;
+        }
+      });
+
+      // 로그인 처리: 토큰과 사용자 정보를 저장
+      const login = useCallback((newToken, newUser) => {
+        setToken(newToken);
+        setUser(newUser);
+        localStorage.setItem('todo_token', newToken);
+        localStorage.setItem('todo_user', JSON.stringify(newUser));
+      }, []);
+
+      // 로그아웃 처리: 토큰과 사용자 정보를 삭제
+      const logout = useCallback(() => {
+        setToken(null);
+        setUser(null);
+        localStorage.removeItem('todo_token');
+        localStorage.removeItem('todo_user');
+      }, []);
+
+      return (
+        <AuthContext.Provider value={{ token, user, login, logout }}>
+          {children}
+        </AuthContext.Provider>
+      );
+    }
+
+    // 인증 컨텍스트를 쉽게 사용하기 위한 커스텀 훅
+    function useAuth() {
+      return useContext(AuthContext);
+    }
+
+    // ========================================
+    // 디자인 시스템 컴포넌트
+    // ========================================
+
+    // 버튼 컴포넌트 - variant, size 지원
+    function Button({ children, onClick, variant = 'primary', size = 'md', disabled = false, className = '', type = 'button' }) {
+      const baseClasses = 'inline-flex items-center justify-center font-medium rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
+
+      const variantClasses = {
+        primary: 'bg-indigo-500 hover:bg-indigo-600 text-white focus:ring-indigo-400 shadow-md shadow-indigo-200 hover:shadow-lg hover:shadow-indigo-200',
+        secondary: 'bg-gray-100 hover:bg-gray-200 text-gray-700 focus:ring-gray-300',
+        danger: 'bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-600 focus:ring-red-300',
+        ghost: 'bg-transparent hover:bg-gray-100 text-gray-500 focus:ring-gray-200',
+      };
+
+      const sizeClasses = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-sm',
+        lg: 'px-6 py-3 text-base',
+      };
+
+      return (
+        <button
+          type={type}
+          onClick={onClick}
+          disabled={disabled}
+          className={`${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    // 입력 필드 컴포넌트
+    function Input({ value, onChange, onKeyDown, placeholder, className = '', type = 'text', ...rest }) {
+      return (
+        <input
+          type={type}
+          value={value}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          className={`w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent transition-all duration-200 ${className}`}
+          {...rest}
+        />
+      );
+    }
+
+    // 체크박스 컴포넌트
+    function Checkbox({ checked, onChange }) {
+      return (
+        <button
+          onClick={onChange}
+          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 cursor-pointer flex-shrink-0 ${
+            checked
+              ? 'bg-indigo-500 border-indigo-500 scale-110'
+              : 'border-gray-300 hover:border-indigo-400 hover:scale-105'
+          }`}
+          aria-label={checked ? '완료 취소' : '완료 표시'}
+        >
+          {checked && (
+            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </button>
+      );
+    }
+
+    // 필터 탭 컴포넌트
+    function FilterTab({ label, active, count, onClick }) {
+      return (
+        <button
+          onClick={onClick}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
+            active
+              ? 'bg-indigo-500 text-white shadow-md shadow-indigo-200'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+          }`}
+        >
+          {label}
+          {count !== undefined && (
+            <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+              active ? 'bg-indigo-400 text-white' : 'bg-gray-200 text-gray-500'
+            }`}>
+              {count}
+            </span>
+          )}
+        </button>
+      );
+    }
+
+    // 로딩 스피너 컴포넌트
+    function LoadingSpinner({ message = '로딩 중...' }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+          <div className="spinner mb-4"></div>
+          <p className="text-sm">{message}</p>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 로그인/회원가입 페이지 컴포넌트
+    // ========================================
+    function AuthPage() {
+      // 로그인 모드와 회원가입 모드를 전환하는 상태
+      const [isLogin, setIsLogin] = useState(true);
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [confirmPassword, setConfirmPassword] = useState('');
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const { login } = useAuth();
+
+      // 폼 제출 처리 (로그인 또는 회원가입)
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+
+        // 회원가입일 때 비밀번호 확인 체크
+        if (!isLogin && password !== confirmPassword) {
+          setError('비밀번호가 일치하지 않습니다');
+          return;
+        }
+
+        setLoading(true);
+
+        try {
+          // 로그인이면 /api/login, 회원가입이면 /api/register 호출
+          const endpoint = isLogin ? '/login' : '/register';
+          const result = await apiRequest(endpoint, {
+            method: 'POST',
+            body: JSON.stringify({ email, password }),
+          });
+
+          // 성공하면 토큰과 사용자 정보를 저장
+          login(result.token, result.user);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // 로그인 ↔ 회원가입 모드 전환
+      const toggleMode = () => {
+        setIsLogin(!isLogin);
+        setError('');
+        setConfirmPassword('');
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center py-8 px-4">
+          <div className="w-full max-w-md fade-in">
+            {/* 로고 및 제목 */}
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-100 rounded-2xl mb-4">
+                <svg className="w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
+              </div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
+                오늘의 할 일
+              </h1>
+              <p className="text-gray-400 text-sm">
+                {isLogin ? '로그인하여 할 일을 관리하세요' : '계정을 만들어 시작하세요'}
+              </p>
+            </div>
+
+            {/* 인증 폼 카드 */}
+            <div className="bg-white rounded-2xl shadow-lg shadow-gray-200/50 p-8 border border-gray-100">
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {/* 이메일 입력 */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">이메일</label>
+                  <Input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="example@email.com"
+                    required
+                  />
+                </div>
+
+                {/* 비밀번호 입력 */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">비밀번호</label>
+                  <Input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="6자 이상 입력"
+                    required
+                    minLength={6}
+                  />
+                </div>
+
+                {/* 비밀번호 확인 (회원가입 모드에서만) */}
+                {!isLogin && (
+                  <div className="fade-in">
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">비밀번호 확인</label>
+                    <Input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="비밀번호를 다시 입력"
+                      required
+                      minLength={6}
+                    />
+                  </div>
+                )}
+
+                {/* 에러 메시지 */}
+                {error && (
+                  <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm fade-in">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {error}
+                  </div>
+                )}
+
+                {/* 제출 버튼 */}
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  size="lg"
+                  className="w-full"
+                >
+                  {loading ? (
+                    <div className="flex items-center gap-2">
+                      <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }}></div>
+                      <span>처리 중...</span>
+                    </div>
+                  ) : (
+                    isLogin ? '로그인' : '회원가입'
+                  )}
+                </Button>
+              </form>
+
+              {/* 모드 전환 링크 */}
+              <div className="mt-6 text-center">
+                <button
+                  onClick={toggleMode}
+                  className="text-sm text-gray-500 hover:text-indigo-600 transition-colors cursor-pointer"
+                >
+                  {isLogin ? (
+                    <>계정이 없으신가요? <span className="font-medium text-indigo-500">회원가입</span></>
+                  ) : (
+                    <>이미 계정이 있으신가요? <span className="font-medium text-indigo-500">로그인</span></>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 할 일 항목 컴포넌트
+    // ========================================
+    function TodoItem({ todo, onToggle, onDelete }) {
+      const [removing, setRemoving] = useState(false);
+
+      // 삭제 시 애니메이션 후 실제 삭제 처리
+      const handleDelete = useCallback(() => {
+        setRemoving(true);
+        setTimeout(() => onDelete(todo.id), 250);
+      }, [todo.id, onDelete]);
+
+      return (
+        <div
+          className={`group flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-100 hover:border-indigo-100 hover:shadow-md hover:shadow-indigo-50 transition-all duration-200 ${
+            removing ? 'todo-remove' : 'todo-enter'
+          }`}
+        >
+          {/* 완료 토글 체크박스 */}
+          <Checkbox checked={todo.completed} onChange={() => onToggle(todo.id, !todo.completed)} />
+
+          {/* 할 일 텍스트 */}
+          <span
+            className={`flex-1 line-through-transition text-base ${
+              todo.completed
+                ? 'line-through text-gray-400'
+                : 'text-gray-700'
+            }`}
+          >
+            {todo.text}
+          </span>
+
+          {/* 생성 시간 */}
+          <span className="text-xs text-gray-300 hidden sm:block">
+            {new Date(todo.createdAt).toLocaleDateString('ko-KR', {
+              month: 'short',
+              day: 'numeric',
+            })}
+          </span>
+
+          {/* 삭제 버튼 - 호버 시 나타남 */}
+          <button
+            onClick={handleDelete}
+            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all duration-200 cursor-pointer"
+            aria-label="삭제"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 빈 상태 컴포넌트
+    // ========================================
+    function EmptyState({ filter }) {
+      const messages = {
+        all: { icon: '📝', title: '아직 할 일이 없습니다', sub: '위 입력창에 새로운 할 일을 추가해 보세요!' },
+        active: { icon: '🎉', title: '모든 할 일을 완료했습니다!', sub: '잘하셨습니다! 새로운 할 일을 추가해 보세요.' },
+        completed: { icon: '⏳', title: '완료된 항목이 없습니다', sub: '할 일을 완료하면 여기에 표시됩니다.' },
+      };
+
+      const msg = messages[filter];
+
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+          <span className="text-5xl mb-4">{msg.icon}</span>
+          <p className="text-lg font-medium text-gray-500 mb-1">{msg.title}</p>
+          <p className="text-sm">{msg.sub}</p>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 메인 Todo 페이지 컴포넌트
+    // ========================================
+    function TodoPage() {
+      const { token, user, logout } = useAuth();
+
+      // 할 일 목록 상태 (서버에서 로드)
+      const [todos, setTodos] = useState([]);
+      // 입력 필드 상태
+      const [inputValue, setInputValue] = useState('');
+      // 현재 필터 상태: 'all' | 'active' | 'completed'
+      const [filter, setFilter] = useState('all');
+      // 로딩 상태
+      const [loading, setLoading] = useState(true);
+      // 에러 상태
+      const [error, setError] = useState('');
+      // 입력 필드 참조
+      const inputRef = useRef(null);
+
+      // 서버에서 할 일 목록 불러오기
+      const fetchTodos = useCallback(async () => {
+        try {
+          const data = await apiRequest('/todos', {}, token);
+          setTodos(data);
+          setError('');
+        } catch (err) {
+          // 토큰이 만료되었으면 로그아웃 처리
+          if (err.message.includes('토큰')) {
+            logout();
+            return;
+          }
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [token, logout]);
+
+      // 컴포넌트가 처음 렌더링될 때 할 일 목록 로드
+      useEffect(() => {
+        fetchTodos();
+      }, [fetchTodos]);
+
+      // 필터링된 할 일 목록 (메모이제이션)
+      const filteredTodos = useMemo(() => {
+        switch (filter) {
+          case 'active':
+            return todos.filter(t => !t.completed);
+          case 'completed':
+            return todos.filter(t => t.completed);
+          default:
+            return todos;
+        }
+      }, [todos, filter]);
+
+      // 통계 계산 (메모이제이션)
+      const stats = useMemo(() => ({
+        total: todos.length,
+        active: todos.filter(t => !t.completed).length,
+        completed: todos.filter(t => t.completed).length,
+      }), [todos]);
+
+      // 할 일 추가
+      const addTodo = useCallback(async () => {
+        const text = inputValue.trim();
+        if (!text) return;
+
+        try {
+          const newTodo = await apiRequest('/todos', {
+            method: 'POST',
+            body: JSON.stringify({ text }),
+          }, token);
+
+          // 서버에서 반환된 새 할 일을 목록 맨 앞에 추가
+          setTodos(prev => [newTodo, ...prev]);
+          setInputValue('');
+          inputRef.current?.focus();
+        } catch (err) {
+          setError(err.message);
+        }
+      }, [inputValue, token]);
+
+      // 할 일 완료 토글
+      const toggleTodo = useCallback(async (id, completed) => {
+        try {
+          const updated = await apiRequest(`/todos/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ completed }),
+          }, token);
+
+          // 서버에서 반환된 업데이트된 항목으로 교체
+          setTodos(prev =>
+            prev.map(todo => todo.id === id ? updated : todo)
+          );
+        } catch (err) {
+          setError(err.message);
+        }
+      }, [token]);
+
+      // 할 일 삭제
+      const deleteTodo = useCallback(async (id) => {
+        try {
+          await apiRequest(`/todos/${id}`, {
+            method: 'DELETE',
+          }, token);
+
+          setTodos(prev => prev.filter(todo => todo.id !== id));
+        } catch (err) {
+          setError(err.message);
+        }
+      }, [token]);
+
+      // 완료된 항목 모두 삭제
+      const clearCompleted = useCallback(async () => {
+        try {
+          await apiRequest('/todos/completed', {
+            method: 'DELETE',
+          }, token);
+
+          setTodos(prev => prev.filter(todo => !todo.completed));
+        } catch (err) {
+          setError(err.message);
+        }
+      }, [token]);
+
+      // 엔터 키로 할 일 추가
+      const handleKeyDown = useCallback((e) => {
+        if (e.key === 'Enter') {
+          addTodo();
+        }
+      }, [addTodo]);
+
+      if (loading) {
+        return <LoadingSpinner message="할 일 목록을 불러오는 중..." />;
+      }
+
+      return (
+        <div className="min-h-screen py-8 px-4 sm:py-12 fade-in">
+          <div className="max-w-xl mx-auto">
+
+            {/* 헤더 영역 */}
+            <header className="text-center mb-8 relative">
+              {/* 로그아웃 버튼 (우측 상단) */}
+              <div className="absolute right-0 top-0 flex items-center gap-2">
+                <span className="text-xs text-gray-400 hidden sm:block">{user?.email}</span>
+                <button
+                  onClick={logout}
+                  className="text-xs text-gray-400 hover:text-red-500 transition-colors cursor-pointer flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  로그아웃
+                </button>
+              </div>
+
+              <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
+                오늘의 할 일
+              </h1>
+              <p className="text-gray-400 text-sm">
+                {new Date().toLocaleDateString('ko-KR', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  weekday: 'long',
+                })}
+              </p>
+            </header>
+
+            {/* 에러 메시지 */}
+            {error && (
+              <div className="flex items-center gap-2 p-3 mb-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm fade-in">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {error}
+                <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-600 cursor-pointer">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )}
+
+            {/* 입력 영역 */}
+            <div className="flex gap-2 mb-6">
+              <Input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="새로운 할 일을 입력하세요..."
+                className="shadow-sm"
+                ref={inputRef}
+              />
+              <Button
+                onClick={addTodo}
+                disabled={!inputValue.trim()}
+                size="md"
+                className="whitespace-nowrap px-5"
+              >
+                <svg className="w-5 h-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                추가
+              </Button>
+            </div>
+
+            {/* 필터 영역 */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex gap-1 bg-gray-50 rounded-lg p-1">
+                <FilterTab
+                  label="전체"
+                  count={stats.total}
+                  active={filter === 'all'}
+                  onClick={() => setFilter('all')}
+                />
+                <FilterTab
+                  label="진행중"
+                  count={stats.active}
+                  active={filter === 'active'}
+                  onClick={() => setFilter('active')}
+                />
+                <FilterTab
+                  label="완료"
+                  count={stats.completed}
+                  active={filter === 'completed'}
+                  onClick={() => setFilter('completed')}
+                />
+              </div>
+
+              {/* 완료 항목 일괄 삭제 */}
+              {stats.completed > 0 && (
+                <button
+                  onClick={clearCompleted}
+                  className="text-xs text-gray-400 hover:text-red-500 transition-colors duration-200 cursor-pointer"
+                >
+                  완료 항목 삭제
+                </button>
+              )}
+            </div>
+
+            {/* 할 일 목록 */}
+            <div className="space-y-2 mb-6">
+              {filteredTodos.length === 0 ? (
+                <EmptyState filter={filter} />
+              ) : (
+                filteredTodos.map(todo => (
+                  <TodoItem
+                    key={todo.id}
+                    todo={todo}
+                    onToggle={toggleTodo}
+                    onDelete={deleteTodo}
+                  />
+                ))
+              )}
+            </div>
+
+            {/* 하단 상태 표시 */}
+            {stats.total > 0 && (
+              <div className="text-center">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-100 shadow-sm">
+                  <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></div>
+                  <span className="text-sm text-gray-500">
+                    남은 할 일 <span className="font-bold text-indigo-600">{stats.active}</span>개
+                  </span>
+                  {stats.total > 0 && (
+                    <span className="text-xs text-gray-300 ml-1">
+                      / 총 {stats.total}개
+                    </span>
+                  )}
+                </div>
+
+                {/* 진행률 바 */}
+                {stats.total > 0 && (
+                  <div className="mt-3 mx-auto max-w-xs">
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${(stats.completed / stats.total) * 100}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0}% 완료
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 메인 App 컴포넌트 (라우팅)
+    // ========================================
+    function App() {
+      const { token } = useAuth();
+
+      // 토큰이 있으면 할 일 페이지, 없으면 로그인 페이지 표시
+      return token ? <TodoPage /> : <AuthPage />;
+    }
+
+    // ========================================
+    // 렌더링
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    );
+  </script>
+</body>
+</html>

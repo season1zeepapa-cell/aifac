@@ -1,0 +1,17 @@
+{
+  "name": "todo-app-01",
+  "version": "1.0.0",
+  "description": "풀스택 Todo 앱 - PostgreSQL + JWT 인증",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
+  }
+}
