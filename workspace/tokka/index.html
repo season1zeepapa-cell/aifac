@@ -425,6 +425,9 @@
           method: 'POST',
           body: JSON.stringify({ email, password, nickname }),
         });
+        // 회원가입 성공 시 바로 로그인 상태로 전환
+        setToken(data.token);
+        setUser(data.user);
         return data;
       }, []);
 
@@ -884,6 +887,7 @@
       const { navigate } = useRouter();
       const [email, setEmail] = useState('');
       const [password, setPassword] = useState('');
+      const [showPassword, setShowPassword] = useState(false);
       const [submitting, setSubmitting] = useState(false);
 
       const handleSubmit = async (e) => {
@@ -925,12 +929,31 @@
               onChange={e => setEmail(e.target.value)}
               autoFocus
             />
-            <Input
-              type="password"
-              placeholder="비밀번호"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-            />
+            <div className="relative">
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="비밀번호"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="pr-12"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+              >
+                {showPassword ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                )}
+              </button>
+            </div>
             <Button variant="primary" size="full" type="submit" disabled={submitting}>
               {submitting ? '로그인 중...' : '로그인'}
             </Button>
@@ -957,6 +980,7 @@
       const { navigate } = useRouter();
       const [email, setEmail] = useState('');
       const [password, setPassword] = useState('');
+      const [showPassword, setShowPassword] = useState(false);
       const [nickname, setNickname] = useState('');
       const [submitting, setSubmitting] = useState(false);
 
@@ -973,8 +997,8 @@
         setSubmitting(true);
         try {
           await doRegister(email, password, nickname);
-          showToast('회원가입이 완료되었습니다! 로그인해주세요.', 'success');
-          navigate('login');
+          showToast('회원가입이 완료되었습니다!', 'success');
+          navigate('friends');
         } catch (err) {
           showToast(err.message, 'error');
         } finally {
@@ -997,12 +1021,31 @@
               onChange={e => setEmail(e.target.value)}
               autoFocus
             />
-            <Input
-              type="password"
-              placeholder="비밀번호 (6자 이상)"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-            />
+            <div className="relative">
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="비밀번호 (6자 이상)"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="pr-12"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+              >
+                {showPassword ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                )}
+              </button>
+            </div>
             <Input
               placeholder="닉네임"
               value={nickname}
@@ -2438,6 +2481,86 @@
       const [blockedUsers, setBlockedUsers] = useState([]);
       const [loadingBlocked, setLoadingBlocked] = useState(false);
 
+      // 비밀번호 변경 상태
+      const [showPasswordChange, setShowPasswordChange] = useState(false);
+      const [currentPassword, setCurrentPassword] = useState('');
+      const [newPassword, setNewPassword] = useState('');
+      const [confirmPassword, setConfirmPassword] = useState('');
+      const [showCurrentPw, setShowCurrentPw] = useState(false);
+      const [showNewPw, setShowNewPw] = useState(false);
+      const [showConfirmPw, setShowConfirmPw] = useState(false);
+      const [changingPassword, setChangingPassword] = useState(false);
+
+      // 비밀번호 변경 핸들러
+      const handlePasswordChange = async () => {
+        if (!currentPassword || !newPassword || !confirmPassword) {
+          showToast('모든 항목을 입력해주세요.', 'error');
+          return;
+        }
+        if (newPassword.length < 6) {
+          showToast('새 비밀번호는 6자 이상이어야 합니다.', 'error');
+          return;
+        }
+        if (newPassword !== confirmPassword) {
+          showToast('새 비밀번호가 일치하지 않습니다.', 'error');
+          return;
+        }
+        setChangingPassword(true);
+        try {
+          await apiFetch('/users/password', {
+            method: 'PUT',
+            body: JSON.stringify({ currentPassword, newPassword }),
+          });
+          showToast('비밀번호가 변경되었습니다.', 'success');
+          setShowPasswordChange(false);
+          setCurrentPassword('');
+          setNewPassword('');
+          setConfirmPassword('');
+        } catch (err) {
+          showToast(err.message, 'error');
+        } finally {
+          setChangingPassword(false);
+        }
+      };
+
+      // 회원 탈퇴 상태
+      const [showWithdraw, setShowWithdraw] = useState(false);
+      const [withdrawReasons, setWithdrawReasons] = useState([]);
+      const [withdrawing, setWithdrawing] = useState(false);
+
+      const WITHDRAW_REASONS = [
+        { id: 'not_useful', label: '서비스가 유용하지 않아요' },
+        { id: 'too_complex', label: '사용이 어려워요' },
+        { id: 'privacy', label: '개인정보가 걱정돼요' },
+        { id: 'other_service', label: '다른 서비스를 사용해요' },
+        { id: 'temporary', label: '잠시 쉬고 싶어요' },
+        { id: 'other', label: '기타' },
+      ];
+
+      const toggleWithdrawReason = (reasonId) => {
+        setWithdrawReasons(prev => 
+          prev.includes(reasonId) 
+            ? prev.filter(r => r !== reasonId)
+            : [...prev, reasonId]
+        );
+      };
+
+      const handleWithdraw = async () => {
+        setWithdrawing(true);
+        try {
+          await apiFetch('/users/account', {
+            method: 'DELETE',
+            body: JSON.stringify({ reasons: withdrawReasons }),
+          });
+          showToast('회원 탈퇴가 완료되었습니다. 이용해주셔서 감사합니다.', 'success');
+          logout();
+        } catch (err) {
+          showToast(err.message, 'error');
+        } finally {
+          setWithdrawing(false);
+        }
+      };
+
       // 테마 변경
       const handleThemeChange = (themeId) => {
         applyTheme(themeId);
@@ -2693,6 +2816,21 @@
                   </button>
                   <div className="h-px bg-gray-200 mx-4" />
                   <button
+                    onClick={() => setShowPasswordChange(true)}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <div className="w-9 h-9 bg-green-100 dark:bg-green-900/50 rounded-xl flex items-center justify-center">
+                      <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">비밀번호 변경</span>
+                    <svg className="w-5 h-5 text-gray-300 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                  <div className="h-px bg-gray-200 mx-4" />
+                  <button
                     onClick={() => { setShowBlocked(true); fetchBlockedUsers(); }}
                     className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-gray-100 transition-colors"
                   >
@@ -2709,8 +2847,8 @@
                 </div>
               </div>
 
-              {/* 로그아웃 */}
-              <div className="mt-4 mx-4 mb-8">
+              {/* 로그아웃 & 회원탈퇴 */}
+              <div className="mt-4 mx-4 mb-4">
                 <button
                   onClick={logout}
                   className="w-full flex items-center gap-3 px-4 py-3.5 bg-gray-50 rounded-2xl hover:bg-red-50 transition-colors"
@@ -2721,6 +2859,16 @@
                     </svg>
                   </div>
                   <span className="text-sm font-medium text-red-500">로그아웃</span>
+                </button>
+              </div>
+
+              {/* 회원 탈퇴 */}
+              <div className="mx-4 mb-8">
+                <button
+                  onClick={() => setShowWithdraw(true)}
+                  className="w-full flex items-center justify-center py-3 text-gray-400 text-xs hover:text-red-400 transition-colors"
+                >
+                  회원 탈퇴
                 </button>
               </div>
 
@@ -2770,6 +2918,192 @@
                         ))}
                       </div>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 비밀번호 변경 모달 */}
+            {showPasswordChange && (
+              <div className="absolute inset-0 bg-black/40 z-50 flex items-end justify-center" onClick={() => setShowPasswordChange(false)}>
+                <div className="bg-white dark:bg-gray-900 w-full rounded-t-2xl flex flex-col sheet-up" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-4 py-3.5 border-b border-gray-100 dark:border-gray-700">
+                    <h3 className="font-bold text-gray-900 dark:text-white text-base">비밀번호 변경</h3>
+                    <button onClick={() => setShowPasswordChange(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="p-5 pb-8 space-y-4">
+                    {/* 현재 비밀번호 */}
+                    <div className="relative">
+                      <input
+                        type={showCurrentPw ? 'text' : 'password'}
+                        placeholder="현재 비밀번호"
+                        value={currentPassword}
+                        onChange={e => setCurrentPassword(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-xl text-sm pr-12 border-none"
+                        style={{ outline: 'none' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPw(!showCurrentPw)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                      >
+                        {showCurrentPw ? (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {/* 새 비밀번호 */}
+                    <div className="relative">
+                      <input
+                        type={showNewPw ? 'text' : 'password'}
+                        placeholder="새 비밀번호 (6자 이상)"
+                        value={newPassword}
+                        onChange={e => setNewPassword(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-xl text-sm pr-12 border-none"
+                        style={{ outline: 'none' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPw(!showNewPw)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                      >
+                        {showNewPw ? (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {/* 새 비밀번호 확인 */}
+                    <div className="relative">
+                      <input
+                        type={showConfirmPw ? 'text' : 'password'}
+                        placeholder="새 비밀번호 확인"
+                        value={confirmPassword}
+                        onChange={e => setConfirmPassword(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-xl text-sm pr-12 border-none"
+                        style={{ outline: 'none' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPw(!showConfirmPw)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                      >
+                        {showConfirmPw ? (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {/* 변경 버튼 */}
+                    <button
+                      onClick={handlePasswordChange}
+                      disabled={changingPassword}
+                      className="w-full py-3 bg-pink-main text-white rounded-xl font-semibold text-sm hover:bg-pink-dark disabled:opacity-50 transition-colors"
+                    >
+                      {changingPassword ? '변경 중...' : '비밀번호 변경'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 회원 탈퇴 모달 */}
+            {showWithdraw && (
+              <div className="absolute inset-0 bg-black/40 z-50 flex items-end justify-center" onClick={() => setShowWithdraw(false)}>
+                <div className="bg-white dark:bg-gray-900 w-full rounded-t-2xl flex flex-col sheet-up max-h-[85vh]" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-4 py-3.5 border-b border-gray-100 dark:border-gray-700">
+                    <h3 className="font-bold text-gray-900 dark:text-white text-base">회원 탈퇴</h3>
+                    <button onClick={() => setShowWithdraw(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="p-5 pb-8 space-y-5 overflow-y-auto">
+                    {/* 경고 안내 */}
+                    <div className="bg-red-50 dark:bg-red-900/30 rounded-xl p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 bg-red-100 dark:bg-red-800 rounded-full flex items-center justify-center flex-shrink-0">
+                          <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-red-600 dark:text-red-400 text-sm">탈퇴 시 삭제되는 정보</p>
+                          <ul className="mt-2 text-xs text-red-500 dark:text-red-300 space-y-1">
+                            <li>• 모든 친구 등록 정보</li>
+                            <li>• 모든 채팅방 및 대화 기록</li>
+                            <li>• 프로필 정보 및 계정</li>
+                          </ul>
+                          <p className="mt-2 text-xs text-red-400">삭제된 데이터는 복구할 수 없습니다.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 탈퇴 사유 설문 */}
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">탈퇴 사유를 알려주세요 (선택)</p>
+                      <div className="space-y-2">
+                        {WITHDRAW_REASONS.map(reason => (
+                          <label
+                            key={reason.id}
+                            className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${
+                              withdrawReasons.includes(reason.id)
+                                ? 'bg-pink-50 dark:bg-pink-900/30 border-2 border-pink-main'
+                                : 'bg-gray-50 dark:bg-gray-800 border-2 border-transparent'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={withdrawReasons.includes(reason.id)}
+                              onChange={() => toggleWithdrawReason(reason.id)}
+                              className="w-4 h-4 rounded border-gray-300 text-pink-main focus:ring-pink-main"
+                            />
+                            <span className="text-sm text-gray-700 dark:text-gray-300">{reason.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 버튼 영역 */}
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        onClick={() => setShowWithdraw(false)}
+                        className="flex-1 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-xl font-semibold text-sm hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        취소
+                      </button>
+                      <button
+                        onClick={handleWithdraw}
+                        disabled={withdrawing}
+                        className="flex-1 py-3 bg-red-500 text-white rounded-xl font-semibold text-sm hover:bg-red-600 disabled:opacity-50 transition-colors"
+                      >
+                        {withdrawing ? '처리 중...' : '탈퇴하기'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

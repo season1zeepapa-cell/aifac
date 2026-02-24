@@ -330,6 +330,90 @@ app.put('/api/users/profile', authMiddleware, async (req, res) => {
   }
 });
 
+// 비밀번호 변경
+app.put('/api/users/password', authMiddleware, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.id;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: '현재 비밀번호와 새 비밀번호를 입력해주세요.' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: '새 비밀번호는 6자 이상이어야 합니다.' });
+    }
+
+    // 현재 비밀번호 확인
+    const userResult = await pool.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: '유저를 찾을 수 없습니다.' });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, userResult.rows[0].password_hash);
+    if (!valid) {
+      return res.status(401).json({ success: false, message: '현재 비밀번호가 일치하지 않습니다.' });
+    }
+
+    // 새 비밀번호 해싱 후 저장
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+      [newPasswordHash, userId]
+    );
+
+    res.json({ success: true, message: '비밀번호가 변경되었습니다.' });
+  } catch (err) {
+    console.error('비밀번호 변경 오류:', err.message);
+    res.status(500).json({ success: false, message: '서버 오류가 발생했습니다.' });
+  }
+});
+
+// 회원 탈퇴
+app.delete('/api/users/account', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { reasons } = req.body; // 탈퇴 사유 배열
+
+    // 1. 탈퇴 설문 저장 (익명, 회원 정보와 분리)
+    if (reasons && Array.isArray(reasons) && reasons.length > 0) {
+      await pool.query(
+        'INSERT INTO withdrawal_surveys (reasons) VALUES ($1)',
+        [reasons]
+      );
+    }
+
+    // 2. 사용자의 메시지 삭제
+    await pool.query('DELETE FROM messages WHERE sender_id = $1', [userId]);
+
+    // 3. 채팅방 멤버에서 제거
+    await pool.query('DELETE FROM chat_room_members WHERE user_id = $1', [userId]);
+
+    // 4. 친구 관계 삭제 (양방향)
+    await pool.query(
+      'DELETE FROM friendships WHERE user_id = $1 OR friend_id = $1',
+      [userId]
+    );
+
+    // 5. 빈 채팅방 정리 (멤버가 없는 채팅방 삭제)
+    await pool.query(`
+      DELETE FROM chat_rooms WHERE id IN (
+        SELECT cr.id FROM chat_rooms cr
+        LEFT JOIN chat_room_members crm ON crm.room_id = cr.id AND crm.left_at IS NULL
+        GROUP BY cr.id
+        HAVING COUNT(crm.id) = 0
+      )
+    `);
+
+    // 6. 사용자 계정 삭제
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    res.json({ success: true, message: '회원 탈퇴가 완료되었습니다.' });
+  } catch (err) {
+    console.error('회원 탈퇴 오류:', err.message);
+    res.status(500).json({ success: false, message: '서버 오류가 발생했습니다.' });
+  }
+});
+
 // 프로필 이미지 업로드 (Supabase Storage)
 app.post('/api/users/profile-image', authMiddleware, (req, res) => {
   upload.single('image')(req, res, async (err) => {

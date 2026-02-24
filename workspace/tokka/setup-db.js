@@ -111,6 +111,13 @@ END $$;
 
 -- AI 페르소나 인덱스
 CREATE INDEX IF NOT EXISTS idx_users_is_ai ON users(is_ai) WHERE is_ai = TRUE;
+
+-- 6. 탈퇴 설문 테이블 (회원 정보와 분리하여 익명 저장)
+CREATE TABLE IF NOT EXISTS withdrawal_surveys (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  reasons TEXT[] DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 `;
 
 // RLS 정책 SQL (멱등성 보장 - DROP IF EXISTS 후 재생성)
