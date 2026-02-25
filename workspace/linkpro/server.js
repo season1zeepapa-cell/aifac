@@ -14,7 +14,11 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 // ------------------------------------------------------------
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = (process.env.JWT_SECRET || 'linkpro-dev-secret').trim();
+const JWT_SECRET = (process.env.JWT_SECRET || '').trim();
+
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET 환경변수가 설정되지 않았습니다.');
+}
 
 // PostgreSQL 연결 풀 (Supabase)
 const pool = new Pool({
@@ -32,6 +36,16 @@ app.use(express.static(path.join(__dirname)));
 // DB 초기화 - Lazy Init 패턴 (서버리스 cold start 대응)
 // ------------------------------------------------------------
 let dbInitialized = false;
+const ALLOWED_THEMES = new Set(['default', 'ocean', 'sunset', 'forest', 'midnight', 'candy']);
+
+function isValidHttpUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 async function initDB() {
   if (dbInitialized) return;
@@ -119,9 +133,11 @@ function authMiddleware(req, res, next) {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, username } = req.body;
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    const normalizedUsername = (username || '').trim().toLowerCase();
 
     // 입력값 검증
-    if (!email || !password || !username) {
+    if (!normalizedEmail || !password || !normalizedUsername) {
       return res.status(400).json({ success: false, message: 'email, password, username은 필수입니다.' });
     }
 
@@ -129,35 +145,44 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ success: false, message: '비밀번호는 6자 이상이어야 합니다.' });
     }
 
-    // username 형식 검증 (영문 소문자, 숫자, 하이픈, 언더스코어만 허용)
-    if (!/^[a-z0-9_-]+$/.test(username)) {
-      return res.status(400).json({ success: false, message: 'username은 영문 소문자, 숫자, 하이픈, 언더스코어만 사용할 수 있습니다.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ success: false, message: '유효한 이메일 형식이 아닙니다.' });
     }
 
-    // 이메일/username 중복 체크
-    const existingUser = await pool.query(
-      'SELECT id FROM linkpro_users WHERE email = $1 OR username = $2',
-      [email, username]
-    );
-    if (existingUser.rows.length > 0) {
-      return res.status(409).json({ success: false, message: '이미 사용 중인 이메일 또는 username입니다.' });
+    // username 형식 검증 (영문 소문자, 숫자, 하이픈, 언더스코어만 허용)
+    if (!/^[a-z0-9_-]+$/.test(normalizedUsername)) {
+      return res.status(400).json({ success: false, message: 'username은 영문 소문자, 숫자, 하이픈, 언더스코어만 사용할 수 있습니다.' });
     }
 
     // 비밀번호 해싱
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // 사용자 생성
-    const userResult = await pool.query(
-      'INSERT INTO linkpro_users (email, password_hash, username) VALUES ($1, $2, $3) RETURNING id, email, username, created_at',
-      [email, passwordHash, username]
-    );
-    const user = userResult.rows[0];
+    let user;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // 기본 프로필 자동 생성
-    await pool.query(
-      'INSERT INTO linkpro_profiles (user_id, display_name) VALUES ($1, $2)',
-      [user.id, username]
-    );
+      const userResult = await client.query(
+        'INSERT INTO linkpro_users (email, password_hash, username) VALUES ($1, $2, $3) RETURNING id, email, username, created_at',
+        [normalizedEmail, passwordHash, normalizedUsername]
+      );
+      user = userResult.rows[0];
+
+      await client.query(
+        'INSERT INTO linkpro_profiles (user_id, display_name) VALUES ($1, $2)',
+        [user.id, normalizedUsername]
+      );
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      if (txErr.code === '23505') {
+        return res.status(409).json({ success: false, message: '이미 사용 중인 이메일 또는 username입니다.' });
+      }
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     // JWT 토큰 발급
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
@@ -179,15 +204,16 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = (email || '').trim().toLowerCase();
 
-    if (!email || !password) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ success: false, message: 'email과 password는 필수입니다.' });
     }
 
     // 사용자 조회
     const userResult = await pool.query(
       'SELECT id, email, username, password_hash, created_at FROM linkpro_users WHERE email = $1',
-      [email]
+      [normalizedEmail]
     );
     if (userResult.rows.length === 0) {
       return res.status(401).json({ success: false, message: '이메일 또는 비밀번호가 일치하지 않습니다.' });
@@ -261,6 +287,16 @@ app.get('/api/profile', authMiddleware, async (req, res) => {
 app.put('/api/profile', authMiddleware, async (req, res) => {
   try {
     const { display_name, bio, avatar_url, theme } = req.body;
+    const nextTheme = typeof theme === 'string' ? theme.trim().toLowerCase() : theme;
+    const nextAvatarUrl = typeof avatar_url === 'string' ? avatar_url.trim() : avatar_url;
+
+    if (nextTheme != null && !ALLOWED_THEMES.has(nextTheme)) {
+      return res.status(400).json({ success: false, message: '지원하지 않는 테마입니다.' });
+    }
+
+    if (nextAvatarUrl && !isValidHttpUrl(nextAvatarUrl)) {
+      return res.status(400).json({ success: false, message: 'avatar_url은 http(s) URL이어야 합니다.' });
+    }
 
     const result = await pool.query(
       `UPDATE linkpro_profiles
@@ -270,7 +306,7 @@ app.put('/api/profile', authMiddleware, async (req, res) => {
            theme = COALESCE($4, theme)
        WHERE user_id = $5
        RETURNING id, user_id, display_name, bio, avatar_url, theme, created_at`,
-      [display_name, bio, avatar_url, theme, req.userId]
+      [display_name, bio, nextAvatarUrl, nextTheme, req.userId]
     );
 
     if (result.rows.length === 0) {
@@ -307,9 +343,15 @@ app.get('/api/links', authMiddleware, async (req, res) => {
 app.post('/api/links', authMiddleware, async (req, res) => {
   try {
     const { title, url } = req.body;
+    const normalizedTitle = (title || '').trim();
+    const normalizedUrl = (url || '').trim();
 
-    if (!title || !url) {
+    if (!normalizedTitle || !normalizedUrl) {
       return res.status(400).json({ success: false, message: 'title과 url은 필수입니다.' });
+    }
+
+    if (!isValidHttpUrl(normalizedUrl)) {
+      return res.status(400).json({ success: false, message: 'url은 http(s) URL이어야 합니다.' });
     }
 
     // 현재 최대 sort_order 조회
@@ -321,7 +363,7 @@ app.post('/api/links', authMiddleware, async (req, res) => {
 
     const result = await pool.query(
       'INSERT INTO linkpro_links (user_id, title, url, sort_order) VALUES ($1, $2, $3, $4) RETURNING id, title, url, sort_order, is_active, created_at',
-      [req.userId, title, url, nextOrder]
+      [req.userId, normalizedTitle, normalizedUrl, nextOrder]
     );
 
     res.status(201).json({ success: true, data: result.rows[0] });
@@ -384,6 +426,21 @@ app.put('/api/links/:id', authMiddleware, async (req, res) => {
     }
 
     const { title, url, is_active } = req.body;
+    const normalizedTitle = typeof title === 'string' ? title.trim() : title;
+    const normalizedUrl = typeof url === 'string' ? url.trim() : url;
+
+    if (normalizedTitle != null && normalizedTitle.length === 0) {
+      return res.status(400).json({ success: false, message: 'title은 비어 있을 수 없습니다.' });
+    }
+
+    if (normalizedUrl != null) {
+      if (!normalizedUrl) {
+        return res.status(400).json({ success: false, message: 'url은 비어 있을 수 없습니다.' });
+      }
+      if (!isValidHttpUrl(normalizedUrl)) {
+        return res.status(400).json({ success: false, message: 'url은 http(s) URL이어야 합니다.' });
+      }
+    }
 
     const result = await pool.query(
       `UPDATE linkpro_links
@@ -392,7 +449,7 @@ app.put('/api/links/:id', authMiddleware, async (req, res) => {
            is_active = COALESCE($3, is_active)
        WHERE id = $4 AND user_id = $5
        RETURNING id, title, url, sort_order, is_active, created_at`,
-      [title, url, is_active, linkId, req.userId]
+      [normalizedTitle, normalizedUrl, is_active, linkId, req.userId]
     );
 
     if (result.rows.length === 0) {
