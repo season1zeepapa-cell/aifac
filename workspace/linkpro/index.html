@@ -234,13 +234,14 @@
     const AuthContext = createContext(null);
 
     function AuthProvider({ children }) {
-      const [user, setUser] = useState(getUser());
+      const [user, setUser] = useState(() => (getToken() ? getUser() : null));
       const [loading, setLoading] = useState(true);
-      const toast = useToast();
 
       useEffect(() => {
         const token = getToken();
         if (!token) {
+          clearAuth();
+          setUser(null);
           setLoading(false);
           return;
         }
@@ -708,7 +709,7 @@
     // 로그인 페이지
     // ========================================
     function LoginPage() {
-      const { login, isAuthenticated } = useAuth();
+      const { login, isAuthenticated, loading: authLoading } = useAuth();
       const { navigate } = useRouter();
       const toast = useToast();
       const [email, setEmail] = useState('');
@@ -717,8 +718,8 @@
       const [errors, setErrors] = useState({});
 
       useEffect(() => {
-        if (isAuthenticated) navigate('/dashboard');
-      }, [isAuthenticated, navigate]);
+        if (!authLoading && isAuthenticated) navigate('/dashboard');
+      }, [authLoading, isAuthenticated, navigate]);
 
       const validate = () => {
         const newErrors = {};
@@ -794,7 +795,7 @@
     // 회원가입 페이지
     // ========================================
     function RegisterPage() {
-      const { register, isAuthenticated } = useAuth();
+      const { register, isAuthenticated, loading: authLoading } = useAuth();
       const { navigate } = useRouter();
       const toast = useToast();
       const [email, setEmail] = useState('');
@@ -804,8 +805,8 @@
       const [errors, setErrors] = useState({});
 
       useEffect(() => {
-        if (isAuthenticated) navigate('/dashboard');
-      }, [isAuthenticated, navigate]);
+        if (!authLoading && isAuthenticated) navigate('/dashboard');
+      }, [authLoading, isAuthenticated, navigate]);
 
       const validate = () => {
         const newErrors = {};
