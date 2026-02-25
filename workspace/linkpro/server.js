@@ -111,34 +111,27 @@ async function ensureAvatarBucketExists() {
   if (avatarBucketInitialized) return;
 
   const headers = getSupabaseStorageAuthHeaders();
-  const bucketRes = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${SUPABASE_AVATAR_BUCKET}`, {
-    method: 'GET',
-    headers,
+  const createRes = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      id: SUPABASE_AVATAR_BUCKET,
+      name: SUPABASE_AVATAR_BUCKET,
+      public: true,
+      file_size_limit: MAX_AVATAR_IMAGE_BYTES,
+      allowed_mime_types: ALLOWED_AVATAR_MIME_TYPES,
+    }),
   });
 
-  if (bucketRes.status === 404) {
-    const createRes = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
-      method: 'POST',
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        id: SUPABASE_AVATAR_BUCKET,
-        name: SUPABASE_AVATAR_BUCKET,
-        public: true,
-        file_size_limit: MAX_AVATAR_IMAGE_BYTES,
-        allowed_mime_types: ALLOWED_AVATAR_MIME_TYPES,
-      }),
-    });
-
-    if (!createRes.ok && createRes.status !== 409) {
-      const errorText = await createRes.text();
+  if (!createRes.ok) {
+    const errorText = await createRes.text();
+    const alreadyExists = createRes.status === 409 || /already exists|conflict/i.test(errorText);
+    if (!alreadyExists) {
       throw new Error(`스토리지 버킷 생성 실패: ${errorText || createRes.status}`);
     }
-  } else if (!bucketRes.ok) {
-    const errorText = await bucketRes.text();
-    throw new Error(`스토리지 버킷 확인 실패: ${errorText || bucketRes.status}`);
   }
 
   avatarBucketInitialized = true;
