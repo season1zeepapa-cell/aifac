@@ -1015,10 +1015,10 @@
       }
 
       return (
-        <Card className="p-6">
+        <Card className="p-6 pb-3">
           <h3 className="text-lg font-bold text-gray-900 mb-5">프로필 설정</h3>
 
-          <div className="space-y-5">
+          <div className="space-y-5 pb-4">
             {/* 아바타 미리보기 */}
             <div className="flex items-center gap-4">
               <div className="w-20 h-20 rounded-full bg-gray-100 border-2 border-gray-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
@@ -1140,6 +1140,12 @@
               </div>
             </div>
 
+          </div>
+
+          <div
+            className="sticky bottom-0 z-10 bg-white/95 backdrop-blur border-t border-gray-100 -mx-6 px-6 pt-3 pb-2"
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+          >
             <Button onClick={handleSave} loading={saving} className="w-full">
               프로필 저장
             </Button>
