@@ -15,6 +15,9 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = (process.env.JWT_SECRET || '').trim();
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
+const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const SUPABASE_AVATAR_BUCKET = (process.env.SUPABASE_AVATAR_BUCKET || 'linkpro-avatars').trim();
 
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET 환경변수가 설정되지 않았습니다.');
@@ -29,7 +32,7 @@ const pool = new Pool({
 // ------------------------------------------------------------
 // 미들웨어 설정
 // ------------------------------------------------------------
-app.use(express.json());
+app.use(express.json({ limit: '8mb' }));
 app.use(express.static(path.join(__dirname)));
 
 // ------------------------------------------------------------
@@ -37,6 +40,9 @@ app.use(express.static(path.join(__dirname)));
 // ------------------------------------------------------------
 let dbInitialized = false;
 const ALLOWED_THEMES = new Set(['default', 'ocean', 'sunset', 'forest', 'midnight', 'candy']);
+const MAX_AVATAR_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB
+const ALLOWED_AVATAR_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+let avatarBucketInitialized = false;
 
 function isValidHttpUrl(value) {
   try {
@@ -45,6 +51,132 @@ function isValidHttpUrl(value) {
   } catch {
     return false;
   }
+}
+
+function getBase64DecodedSize(base64Body) {
+  const padding = (base64Body.match(/=+$/) || [''])[0].length;
+  return Math.floor((base64Body.length * 3) / 4) - padding;
+}
+
+function isValidBase64ImageDataUrl(value) {
+  const match = /^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(value);
+  if (!match) return false;
+  const mimeType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+  if (!ALLOWED_AVATAR_MIME_TYPES.includes(mimeType)) return false;
+  const decodedSize = getBase64DecodedSize(match[2]);
+  return decodedSize > 0 && decodedSize <= MAX_AVATAR_IMAGE_BYTES;
+}
+
+function isValidAvatarUrl(value) {
+  return isValidHttpUrl(value) || isValidBase64ImageDataUrl(value);
+}
+
+function getSupabaseStorageAuthHeaders() {
+  return {
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+  };
+}
+
+function normalizeMimeType(mimeType) {
+  return mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
+}
+
+function getAvatarExtension(mimeType) {
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/webp') return 'webp';
+  if (mimeType === 'image/gif') return 'gif';
+  return 'png';
+}
+
+function parseImageDataUrl(dataUrl) {
+  const match = /^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(dataUrl);
+  if (!match) return null;
+
+  const mimeType = normalizeMimeType(match[1].toLowerCase());
+  if (!ALLOWED_AVATAR_MIME_TYPES.includes(mimeType)) return null;
+
+  const base64Body = match[2];
+  const decodedSize = getBase64DecodedSize(base64Body);
+  if (decodedSize <= 0 || decodedSize > MAX_AVATAR_IMAGE_BYTES) return null;
+
+  return {
+    mimeType,
+    buffer: Buffer.from(base64Body, 'base64'),
+  };
+}
+
+async function ensureAvatarBucketExists() {
+  if (avatarBucketInitialized) return;
+
+  const headers = getSupabaseStorageAuthHeaders();
+  const bucketRes = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${SUPABASE_AVATAR_BUCKET}`, {
+    method: 'GET',
+    headers,
+  });
+
+  if (bucketRes.status === 404) {
+    const createRes = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: SUPABASE_AVATAR_BUCKET,
+        name: SUPABASE_AVATAR_BUCKET,
+        public: true,
+        file_size_limit: MAX_AVATAR_IMAGE_BYTES,
+        allowed_mime_types: ALLOWED_AVATAR_MIME_TYPES,
+      }),
+    });
+
+    if (!createRes.ok && createRes.status !== 409) {
+      const errorText = await createRes.text();
+      throw new Error(`스토리지 버킷 생성 실패: ${errorText || createRes.status}`);
+    }
+  } else if (!bucketRes.ok) {
+    const errorText = await bucketRes.text();
+    throw new Error(`스토리지 버킷 확인 실패: ${errorText || bucketRes.status}`);
+  }
+
+  avatarBucketInitialized = true;
+}
+
+function buildPublicAvatarUrl(objectPath) {
+  const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/');
+  return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_AVATAR_BUCKET}/${encodedPath}`;
+}
+
+async function uploadAvatarToSupabaseStorage(userId, imageDataUrl) {
+  const parsedImage = parseImageDataUrl(imageDataUrl);
+  if (!parsedImage) {
+    throw new Error('지원하지 않는 이미지 형식이거나 크기 제한(2MB)을 초과했습니다.');
+  }
+
+  await ensureAvatarBucketExists();
+
+  const extension = getAvatarExtension(parsedImage.mimeType);
+  const objectPath = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+  const headers = getSupabaseStorageAuthHeaders();
+
+  const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_AVATAR_BUCKET}/${objectPath}`, {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'Content-Type': parsedImage.mimeType,
+      'x-upsert': 'true',
+    },
+    body: parsedImage.buffer,
+  });
+
+  if (!uploadRes.ok) {
+    const errorText = await uploadRes.text();
+    throw new Error(`스토리지 업로드 실패: ${errorText || uploadRes.status}`);
+  }
+
+  return buildPublicAvatarUrl(objectPath);
 }
 
 async function initDB() {
@@ -261,6 +393,35 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+// POST /api/uploads/avatar - 아바타 이미지 업로드 (Supabase Storage)
+app.post('/api/uploads/avatar', authMiddleware, async (req, res) => {
+  try {
+    const { image_data_url } = req.body;
+    const normalizedDataUrl = typeof image_data_url === 'string' ? image_data_url.trim() : '';
+
+    if (!normalizedDataUrl) {
+      return res.status(400).json({ success: false, message: 'image_data_url은 필수입니다.' });
+    }
+
+    if (!isValidBase64ImageDataUrl(normalizedDataUrl)) {
+      return res.status(400).json({ success: false, message: '지원하지 않는 이미지 형식이거나 크기 제한(2MB)을 초과했습니다.' });
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(503).json({
+        success: false,
+        message: '서버 업로드 환경이 설정되지 않았습니다. SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY를 확인해 주세요.',
+      });
+    }
+
+    const publicUrl = await uploadAvatarToSupabaseStorage(req.userId, normalizedDataUrl);
+    return res.json({ success: true, data: { url: publicUrl } });
+  } catch (err) {
+    console.error('아바타 업로드 오류:', err.message);
+    return res.status(500).json({ success: false, message: '아바타 업로드 중 오류가 발생했습니다.' });
+  }
+});
+
 // ============================================================
 // API 라우트 - 프로필 관리
 // ============================================================
@@ -294,8 +455,8 @@ app.put('/api/profile', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: '지원하지 않는 테마입니다.' });
     }
 
-    if (nextAvatarUrl && !isValidHttpUrl(nextAvatarUrl)) {
-      return res.status(400).json({ success: false, message: 'avatar_url은 http(s) URL이어야 합니다.' });
+    if (nextAvatarUrl && !isValidAvatarUrl(nextAvatarUrl)) {
+      return res.status(400).json({ success: false, message: 'avatar_url은 http(s) URL 또는 2MB 이하 업로드 이미지(data URL)만 허용됩니다.' });
     }
 
     const result = await pool.query(
