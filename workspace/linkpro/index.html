@@ -619,6 +619,19 @@
       );
     }
 
+    function IconDragHandle() {
+      return (
+        <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="6" cy="5" r="1.4" />
+          <circle cx="6" cy="10" r="1.4" />
+          <circle cx="6" cy="15" r="1.4" />
+          <circle cx="14" cy="5" r="1.4" />
+          <circle cx="14" cy="10" r="1.4" />
+          <circle cx="14" cy="15" r="1.4" />
+        </svg>
+      );
+    }
+
     // ========================================
     // 랜딩 페이지
     // ========================================
@@ -1551,6 +1564,91 @@
     function DashboardPage() {
       const { user, isAuthenticated, loading, logout } = useAuth();
       const { navigate } = useRouter();
+      const [activeTab, setActiveTab] = useState('manage');
+      const [previewNonce, setPreviewNonce] = useState(() => Date.now());
+      const [sectionOrder, setSectionOrder] = useState(['profile', 'links', 'share']);
+      const [draggingSection, setDraggingSection] = useState(null);
+      const [dragOverSection, setDragOverSection] = useState(null);
+
+      const sectionStorageKey = useMemo(
+        () => `linkpro_dashboard_section_order_${user?.id || 'guest'}`,
+        [user?.id]
+      );
+
+      const sections = useMemo(() => ({
+        profile: { label: '프로필 관리', render: () => <ProfileSection /> },
+        links: { label: '링크 관리', render: () => <LinksSection /> },
+        share: { label: '페이지 공유', render: () => <ShareSection /> },
+      }), []);
+
+      useEffect(() => {
+        if (!user?.id) return;
+        try {
+          const raw = localStorage.getItem(sectionStorageKey);
+          if (!raw) return;
+
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return;
+
+          const allowedKeys = Object.keys(sections);
+          const normalized = [
+            ...parsed.filter((key) => allowedKeys.includes(key)),
+            ...allowedKeys.filter((key) => !parsed.includes(key)),
+          ];
+
+          if (normalized.length === allowedKeys.length) {
+            setSectionOrder(normalized);
+          }
+        } catch {
+          // no-op
+        }
+      }, [sectionStorageKey, sections, user?.id]);
+
+      useEffect(() => {
+        if (!user?.id) return;
+        localStorage.setItem(sectionStorageKey, JSON.stringify(sectionOrder));
+      }, [sectionOrder, sectionStorageKey, user?.id]);
+
+      const moveSection = useCallback((sourceKey, targetKey) => {
+        if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+
+        setSectionOrder((prev) => {
+          const sourceIndex = prev.indexOf(sourceKey);
+          const targetIndex = prev.indexOf(targetKey);
+          if (sourceIndex < 0 || targetIndex < 0) return prev;
+
+          const next = [...prev];
+          const [moved] = next.splice(sourceIndex, 1);
+          next.splice(targetIndex, 0, moved);
+          return next;
+        });
+      }, []);
+
+      const handleDragStart = useCallback((sectionKey, event) => {
+        setDraggingSection(sectionKey);
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', sectionKey);
+      }, []);
+
+      const handleDragOver = useCallback((sectionKey, event) => {
+        if (!draggingSection) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        setDragOverSection(sectionKey);
+      }, [draggingSection]);
+
+      const handleDrop = useCallback((sectionKey, event) => {
+        event.preventDefault();
+        const sourceKey = draggingSection || event.dataTransfer.getData('text/plain');
+        moveSection(sourceKey, sectionKey);
+        setDraggingSection(null);
+        setDragOverSection(null);
+      }, [draggingSection, moveSection]);
+
+      const handleDragEnd = useCallback(() => {
+        setDraggingSection(null);
+        setDragOverSection(null);
+      }, []);
 
       useEffect(() => {
         if (!loading && !isAuthenticated) {
@@ -1564,6 +1662,8 @@
       const handleViewPage = () => {
         window.open(`/${user.username}`, '_blank');
       };
+
+      const previewUrl = `/${user.username}?preview=${previewNonce}`;
 
       return (
         <div className="min-h-screen bg-gray-50">
@@ -1598,9 +1698,106 @@
               <p className="text-sm text-gray-500 mt-1">프로필과 링크를 관리해 보세요.</p>
             </div>
 
-            <ProfileSection />
-            <LinksSection />
-            <ShareSection />
+            <div>
+              <div className="inline-flex rounded-xl bg-white border border-gray-200 p-1 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('manage')}
+                  className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition-colors ${
+                    activeTab === 'manage'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-600 hover:text-indigo-600'
+                  }`}
+                >
+                  관리
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('preview');
+                    setPreviewNonce(Date.now());
+                  }}
+                  className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition-colors ${
+                    activeTab === 'preview'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-600 hover:text-indigo-600'
+                  }`}
+                >
+                  내 페이지 미리보기
+                </button>
+              </div>
+            </div>
+
+            {activeTab === 'manage' ? (
+              <div className="space-y-4">
+                {sectionOrder.map((sectionKey) => {
+                  const section = sections[sectionKey];
+                  if (!section) return null;
+
+                  const isDragOver = dragOverSection === sectionKey && draggingSection !== sectionKey;
+
+                  return (
+                    <div
+                      key={sectionKey}
+                      onDragOver={(e) => handleDragOver(sectionKey, e)}
+                      onDrop={(e) => handleDrop(sectionKey, e)}
+                      className={`rounded-2xl transition-all ${
+                        isDragOver ? 'ring-2 ring-indigo-300 ring-offset-2 ring-offset-gray-50' : ''
+                      }`}
+                    >
+                      <div className="flex justify-end mb-2">
+                        <button
+                          type="button"
+                          draggable
+                          onDragStart={(e) => handleDragStart(sectionKey, e)}
+                          onDragEnd={handleDragEnd}
+                          className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full border border-dashed transition-colors ${
+                            draggingSection === sectionKey
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-300 cursor-grabbing'
+                              : 'bg-white text-gray-500 border-gray-300 hover:text-indigo-600 hover:border-indigo-300 cursor-grab'
+                          }`}
+                          title={`${section.label} 섹션 순서 이동`}
+                        >
+                          <IconDragHandle />
+                          <span>드래그해 순서 변경</span>
+                        </button>
+                      </div>
+                      {section.render()}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <Card className="overflow-hidden">
+                <div className="flex items-center justify-between p-4 border-b border-gray-100">
+                  <p className="text-sm font-semibold text-gray-700">내 페이지 실시간 미리보기</p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setPreviewNonce(Date.now())}
+                    >
+                      새로고침
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={handleViewPage}>
+                      <IconExternalLink />
+                      <span className="ml-1.5">새 탭 열기</span>
+                    </Button>
+                  </div>
+                </div>
+                <div className="bg-gray-100 p-3 sm:p-4">
+                  <div className="mx-auto max-w-[390px] bg-white border-[10px] border-gray-900 rounded-[2rem] overflow-hidden shadow-xl">
+                    <iframe
+                      key={previewNonce}
+                      src={previewUrl}
+                      title="내 페이지 미리보기"
+                      className="w-full h-[640px] border-0"
+                      loading="lazy"
+                    />
+                  </div>
+                </div>
+              </Card>
+            )}
           </main>
         </div>
       );
