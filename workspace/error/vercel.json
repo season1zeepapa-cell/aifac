@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "functions": {
+    "api/gemini.js": { "maxDuration": 300 },
+    "api/openai.js": { "maxDuration": 300 },
+    "api/law.js": { "maxDuration": 15 }
+  }
+}

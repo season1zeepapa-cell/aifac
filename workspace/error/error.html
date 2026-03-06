@@ -1,0 +1,1541 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>틀린문제 전체 110문항</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Apple SD Gothic Neo','Malgun Gothic',sans-serif; background:#f1f3f8; margin:0; padding:0; color:#1a1a1a; line-height:1.9; }
+
+        /* 상단 헤더 */
+        .site-header {
+            background:#4f46e5;
+            color:#fff;
+            padding:22px 40px;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            position:sticky;
+            top:0;
+            z-index:100;
+            box-shadow:0 2px 12px rgba(79,70,229,0.35);
+        }
+        .site-header h1 { margin:0; font-size:20px; font-weight:800; letter-spacing:-0.5px; }
+        .site-header .count { font-size:13px; background:rgba(255,255,255,0.2); padding:4px 12px; border-radius:20px; }
+
+        /* 레이아웃 */
+        .layout { display:flex; max-width:1280px; margin:0 auto; padding:30px 20px; gap:30px; }
+
+        /* 사이드 목차 */
+        .sidebar {
+            width:160px;
+            flex-shrink:0;
+            position:sticky;
+            top:80px;
+            align-self:flex-start;
+            max-height:calc(100vh - 100px);
+            overflow-y:auto;
+        }
+        .sidebar::-webkit-scrollbar { width:4px; }
+        .sidebar::-webkit-scrollbar-thumb { background:#c7d2fe; border-radius:4px; }
+        .sidebar-title { font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; padding:0 4px; }
+        .toc-item {
+            display:flex;
+            align-items:center;
+            gap:6px;
+            padding:5px 8px;
+            border-radius:7px;
+            text-decoration:none;
+            font-size:12px;
+            color:#4b5563;
+            transition:background 0.15s;
+            margin-bottom:2px;
+        }
+        .toc-item:hover { background:#e0e7ff; color:#4f46e5; }
+        .toc-idx { font-weight:700; color:#9ca3af; min-width:26px; font-size:11px; }
+        .toc-qnum { color:#4f46e5; font-weight:600; }
+
+        /* 메인 콘텐츠 */
+        .main { flex:1; min-width:0; }
+
+        /* 카드 */
+        .card {
+            background:#fff;
+            border-radius:14px;
+            box-shadow:0 4px 20px rgba(0,0,0,0.07);
+            padding:18px 24px;
+            border-top:5px solid #4f46e5;
+            margin-bottom:12px;
+            scroll-margin-top:80px;
+            transition:box-shadow 0.2s, padding 0.3s;
+        }
+        .card.open { padding:24px 32px; margin-bottom:20px; }
+        .card:hover { box-shadow:0 6px 28px rgba(79,70,229,0.13); }
+        .meta { font-size:12px; color:#9ca3af; margin-bottom:20px; display:flex; justify-content:space-between; }
+        .question-body { font-size:16px; line-height:2.0; color:#111827; margin-bottom:28px; }
+        .q-num { font-size:18px; font-weight:800; color:#4f46e5; margin-right:6px; }
+        .law { font-weight:700; }
+        .box { background:#f9fafb; border-left:4px solid #4f46e5; padding:16px 20px; border-radius:8px; margin-bottom:22px; font-size:14.5px; line-height:1.9; color:#374151; }
+        .choices { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
+        .choices li { display:flex; align-items:flex-start; gap:12px; padding:12px 18px; border-radius:10px; background:#f3f4f6; font-size:15px; color:#374151; transition:background 0.15s; }
+        .choices li:hover { background:#e0e7ff; cursor:pointer; }
+        .c-num { font-weight:700; color:#4f46e5; min-width:20px; }
+
+        /* 맨위로 버튼 */
+        .top-btn {
+            position:fixed;
+            bottom:30px;
+            right:30px;
+            background:#4f46e5;
+            color:#fff;
+            border:none;
+            border-radius:50%;
+            width:46px;
+            height:46px;
+            font-size:20px;
+            cursor:pointer;
+            box-shadow:0 4px 16px rgba(79,70,229,0.4);
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            text-decoration:none;
+            transition:background 0.2s;
+        }
+        .top-btn:hover { background:#4338ca; }
+
+        /* 카드 헤더 (접기/펼치기 + 복사) */
+        .card-header {
+            display:flex;
+            align-items:center;
+            gap:10px;
+            cursor:pointer;
+            user-select:none;
+            padding-bottom:0;
+        }
+        .card-header .toggle-icon {
+            font-size:14px;
+            color:#9ca3af;
+            transition:transform 0.25s;
+            flex-shrink:0;
+            width:20px;
+            text-align:center;
+        }
+        .card.open .card-header .toggle-icon { transform:rotate(90deg); }
+        .card-header .header-title {
+            flex:1;
+            min-width:0;
+            font-size:15px;
+            font-weight:600;
+            color:#1f2937;
+            white-space:nowrap;
+            overflow:hidden;
+            text-overflow:ellipsis;
+            line-height:1.6;
+        }
+        .card-header .header-title .q-num { font-size:16px; }
+        .card-actions {
+            display:flex;
+            gap:6px;
+            flex-shrink:0;
+        }
+        .card-actions button {
+            background:#e0e7ff;
+            color:#4f46e5;
+            border:none;
+            border-radius:8px;
+            padding:5px 12px;
+            font-size:12px;
+            font-weight:600;
+            cursor:pointer;
+            transition:all 0.2s;
+            white-space:nowrap;
+        }
+        .card-actions button:hover { background:#4f46e5; color:#fff; }
+        .card-actions button.copied { background:#10b981; color:#fff; }
+
+        /* 접기/펼치기 본문 */
+        .card-content {
+            max-height:0;
+            overflow:hidden;
+            transition:max-height 0.35s ease, padding-top 0.35s ease;
+            padding-top:0;
+        }
+        .card.open .card-content {
+            max-height:3000px;
+            padding-top:20px;
+        }
+
+        /* 스크린샷 토글 이미지 (헤더 바로 아래) */
+        .screenshot-wrap {
+            margin-top:12px;
+            margin-bottom:4px;
+            border:1px solid #e5e7eb;
+            border-radius:10px;
+            overflow:hidden;
+            background:#f9fafb;
+        }
+        .screenshot-wrap img {
+            display:block;
+            width:100%;
+            cursor:zoom-in;
+        }
+
+        /* 이미지 모달 (확대 보기) */
+        .img-modal {
+            display:none;
+            position:fixed;
+            inset:0;
+            z-index:9999;
+            background:rgba(0,0,0,0.85);
+            align-items:center;
+            justify-content:center;
+            padding:20px;
+            cursor:zoom-out;
+        }
+        .img-modal.show { display:flex; }
+        .img-modal img {
+            max-width:95vw;
+            max-height:92vh;
+            border-radius:8px;
+            box-shadow:0 8px 40px rgba(0,0,0,0.5);
+        }
+        .img-modal .close-modal {
+            position:fixed;
+            top:18px;
+            right:24px;
+            color:#fff;
+            font-size:32px;
+            cursor:pointer;
+            line-height:1;
+            font-weight:300;
+            opacity:0.7;
+            transition:opacity 0.2s;
+        }
+        .img-modal .close-modal:hover { opacity:1; }
+
+        /* 헤더 전체 펼침/접기 버튼 */
+        .bulk-actions {
+            display:flex;
+            gap:8px;
+            align-items:center;
+        }
+        .bulk-actions button {
+            background:rgba(255,255,255,0.2);
+            color:#fff;
+            border:none;
+            border-radius:8px;
+            padding:5px 14px;
+            font-size:12px;
+            font-weight:600;
+            cursor:pointer;
+            transition:background 0.2s;
+        }
+        .bulk-actions button:hover { background:rgba(255,255,255,0.35); }
+
+        @media (max-width:700px) {
+            .sidebar { display:none; }
+            .card { padding:20px 16px; }
+            .card-header .header-title { font-size:13px; }
+        }
+    </style>
+</head>
+<body>
+
+<header class="site-header">
+    <h1>📋 틀린문제 컬렉션</h1>
+    <div class="bulk-actions">
+        <span class="count">전체 110문항</span>
+        <button onclick="toggleAll(true)">모두 펼치기</button>
+        <button onclick="toggleAll(false)">모두 접기</button>
+    </div>
+</header>
+
+<div class="layout">
+    <nav class="sidebar">
+        <div class="sidebar-title">목차</div>
+        <a href="#q001" class="toc-item"><span class="toc-idx">001</span><span class="toc-qnum">Q10</span></a>
+<a href="#q002" class="toc-item"><span class="toc-idx">002</span><span class="toc-qnum">Q6</span></a>
+<a href="#q003" class="toc-item"><span class="toc-idx">003</span><span class="toc-qnum">Q11</span></a>
+<a href="#q004" class="toc-item"><span class="toc-idx">004</span><span class="toc-qnum">Q14</span></a>
+<a href="#q005" class="toc-item"><span class="toc-idx">005</span><span class="toc-qnum">Q18</span></a>
+<a href="#q006" class="toc-item"><span class="toc-idx">006</span><span class="toc-qnum">Q22</span></a>
+<a href="#q007" class="toc-item"><span class="toc-idx">007</span><span class="toc-qnum">Q29</span></a>
+<a href="#q008" class="toc-item"><span class="toc-idx">008</span><span class="toc-qnum">Q30</span></a>
+<a href="#q009" class="toc-item"><span class="toc-idx">009</span><span class="toc-qnum">Q37</span></a>
+<a href="#q010" class="toc-item"><span class="toc-idx">010</span><span class="toc-qnum">Q2</span></a>
+<a href="#q011" class="toc-item"><span class="toc-idx">011</span><span class="toc-qnum">Q10</span></a>
+<a href="#q012" class="toc-item"><span class="toc-idx">012</span><span class="toc-qnum">Q11</span></a>
+<a href="#q013" class="toc-item"><span class="toc-idx">013</span><span class="toc-qnum">Q13</span></a>
+<a href="#q014" class="toc-item"><span class="toc-idx">014</span><span class="toc-qnum">Q16</span></a>
+<a href="#q015" class="toc-item"><span class="toc-idx">015</span><span class="toc-qnum">Q18</span></a>
+<a href="#q016" class="toc-item"><span class="toc-idx">016</span><span class="toc-qnum">Q19</span></a>
+<a href="#q017" class="toc-item"><span class="toc-idx">017</span><span class="toc-qnum">Q21</span></a>
+<a href="#q018" class="toc-item"><span class="toc-idx">018</span><span class="toc-qnum">Q22</span></a>
+<a href="#q019" class="toc-item"><span class="toc-idx">019</span><span class="toc-qnum">Q24</span></a>
+<a href="#q020" class="toc-item"><span class="toc-idx">020</span><span class="toc-qnum">Q25</span></a>
+<a href="#q021" class="toc-item"><span class="toc-idx">021</span><span class="toc-qnum">Q28</span></a>
+<a href="#q022" class="toc-item"><span class="toc-idx">022</span><span class="toc-qnum">Q29</span></a>
+<a href="#q023" class="toc-item"><span class="toc-idx">023</span><span class="toc-qnum">Q30</span></a>
+<a href="#q024" class="toc-item"><span class="toc-idx">024</span><span class="toc-qnum">Q2</span></a>
+<a href="#q025" class="toc-item"><span class="toc-idx">025</span><span class="toc-qnum">Q6</span></a>
+<a href="#q026" class="toc-item"><span class="toc-idx">026</span><span class="toc-qnum">Q9</span></a>
+<a href="#q027" class="toc-item"><span class="toc-idx">027</span><span class="toc-qnum">Q12</span></a>
+<a href="#q028" class="toc-item"><span class="toc-idx">028</span><span class="toc-qnum">Q13</span></a>
+<a href="#q029" class="toc-item"><span class="toc-idx">029</span><span class="toc-qnum">Q19</span></a>
+<a href="#q030" class="toc-item"><span class="toc-idx">030</span><span class="toc-qnum">Q21</span></a>
+<a href="#q031" class="toc-item"><span class="toc-idx">031</span><span class="toc-qnum">Q22</span></a>
+<a href="#q032" class="toc-item"><span class="toc-idx">032</span><span class="toc-qnum">Q25</span></a>
+<a href="#q033" class="toc-item"><span class="toc-idx">033</span><span class="toc-qnum">Q30</span></a>
+<a href="#q034" class="toc-item"><span class="toc-idx">034</span><span class="toc-qnum">Q31</span></a>
+<a href="#q035" class="toc-item"><span class="toc-idx">035</span><span class="toc-qnum">Q35</span></a>
+<a href="#q036" class="toc-item"><span class="toc-idx">036</span><span class="toc-qnum">Q6</span></a>
+<a href="#q037" class="toc-item"><span class="toc-idx">037</span><span class="toc-qnum">Q9</span></a>
+<a href="#q038" class="toc-item"><span class="toc-idx">038</span><span class="toc-qnum">Q10</span></a>
+<a href="#q039" class="toc-item"><span class="toc-idx">039</span><span class="toc-qnum">Q20</span></a>
+<a href="#q040" class="toc-item"><span class="toc-idx">040</span><span class="toc-qnum">Q21</span></a>
+<a href="#q041" class="toc-item"><span class="toc-idx">041</span><span class="toc-qnum">Q?</span></a>
+<a href="#q042" class="toc-item"><span class="toc-idx">042</span><span class="toc-qnum">Q3</span></a>
+<a href="#q043" class="toc-item"><span class="toc-idx">043</span><span class="toc-qnum">Q5</span></a>
+<a href="#q044" class="toc-item"><span class="toc-idx">044</span><span class="toc-qnum">Q20</span></a>
+<a href="#q045" class="toc-item"><span class="toc-idx">045</span><span class="toc-qnum">Q25</span></a>
+<a href="#q046" class="toc-item"><span class="toc-idx">046</span><span class="toc-qnum">Q34</span></a>
+<a href="#q047" class="toc-item"><span class="toc-idx">047</span><span class="toc-qnum">Q39</span></a>
+<a href="#q048" class="toc-item"><span class="toc-idx">048</span><span class="toc-qnum">Q2</span></a>
+<a href="#q049" class="toc-item"><span class="toc-idx">049</span><span class="toc-qnum">Q15</span></a>
+<a href="#q050" class="toc-item"><span class="toc-idx">050</span><span class="toc-qnum">Q23</span></a>
+<a href="#q051" class="toc-item"><span class="toc-idx">051</span><span class="toc-qnum">Q35</span></a>
+<a href="#q052" class="toc-item"><span class="toc-idx">052</span><span class="toc-qnum">Q37</span></a>
+<a href="#q053" class="toc-item"><span class="toc-idx">053</span><span class="toc-qnum">Q8</span></a>
+<a href="#q054" class="toc-item"><span class="toc-idx">054</span><span class="toc-qnum">Q9</span></a>
+<a href="#q055" class="toc-item"><span class="toc-idx">055</span><span class="toc-qnum">Q16</span></a>
+<a href="#q056" class="toc-item"><span class="toc-idx">056</span><span class="toc-qnum">Q17</span></a>
+<a href="#q057" class="toc-item"><span class="toc-idx">057</span><span class="toc-qnum">Q18</span></a>
+<a href="#q058" class="toc-item"><span class="toc-idx">058</span><span class="toc-qnum">Q26</span></a>
+<a href="#q059" class="toc-item"><span class="toc-idx">059</span><span class="toc-qnum">Q29</span></a>
+<a href="#q060" class="toc-item"><span class="toc-idx">060</span><span class="toc-qnum">Q33</span></a>
+<a href="#q061" class="toc-item"><span class="toc-idx">061</span><span class="toc-qnum">Q38</span></a>
+<a href="#q062" class="toc-item"><span class="toc-idx">062</span><span class="toc-qnum">Q4</span></a>
+<a href="#q063" class="toc-item"><span class="toc-idx">063</span><span class="toc-qnum">Q13</span></a>
+<a href="#q064" class="toc-item"><span class="toc-idx">064</span><span class="toc-qnum">Q5</span></a>
+<a href="#q065" class="toc-item"><span class="toc-idx">065</span><span class="toc-qnum">Q6</span></a>
+<a href="#q066" class="toc-item"><span class="toc-idx">066</span><span class="toc-qnum">Q13</span></a>
+<a href="#q067" class="toc-item"><span class="toc-idx">067</span><span class="toc-qnum">Q16</span></a>
+<a href="#q068" class="toc-item"><span class="toc-idx">068</span><span class="toc-qnum">Q24</span></a>
+<a href="#q069" class="toc-item"><span class="toc-idx">069</span><span class="toc-qnum">Q29</span></a>
+<a href="#q070" class="toc-item"><span class="toc-idx">070</span><span class="toc-qnum">Q28</span></a>
+<a href="#q071" class="toc-item"><span class="toc-idx">071</span><span class="toc-qnum">Q32</span></a>
+<a href="#q072" class="toc-item"><span class="toc-idx">072</span><span class="toc-qnum">Q4</span></a>
+<a href="#q073" class="toc-item"><span class="toc-idx">073</span><span class="toc-qnum">Q10</span></a>
+<a href="#q074" class="toc-item"><span class="toc-idx">074</span><span class="toc-qnum">Q15</span></a>
+<a href="#q075" class="toc-item"><span class="toc-idx">075</span><span class="toc-qnum">Q16</span></a>
+<a href="#q076" class="toc-item"><span class="toc-idx">076</span><span class="toc-qnum">Q17</span></a>
+<a href="#q077" class="toc-item"><span class="toc-idx">077</span><span class="toc-qnum">Q5</span></a>
+<a href="#q078" class="toc-item"><span class="toc-idx">078</span><span class="toc-qnum">Q11</span></a>
+<a href="#q079" class="toc-item"><span class="toc-idx">079</span><span class="toc-qnum">Q12</span></a>
+<a href="#q080" class="toc-item"><span class="toc-idx">080</span><span class="toc-qnum">Q18</span></a>
+<a href="#q081" class="toc-item"><span class="toc-idx">081</span><span class="toc-qnum">Q20</span></a>
+<a href="#q082" class="toc-item"><span class="toc-idx">082</span><span class="toc-qnum">Q2</span></a>
+<a href="#q083" class="toc-item"><span class="toc-idx">083</span><span class="toc-qnum">Q33</span></a>
+<a href="#q084" class="toc-item"><span class="toc-idx">084</span><span class="toc-qnum">Q9</span></a>
+<a href="#q085" class="toc-item"><span class="toc-idx">085</span><span class="toc-qnum">Q16</span></a>
+<a href="#q086" class="toc-item"><span class="toc-idx">086</span><span class="toc-qnum">Q19</span></a>
+<a href="#q087" class="toc-item"><span class="toc-idx">087</span><span class="toc-qnum">Q36</span></a>
+<a href="#q088" class="toc-item"><span class="toc-idx">088</span><span class="toc-qnum">Q10</span></a>
+<a href="#q089" class="toc-item"><span class="toc-idx">089</span><span class="toc-qnum">Q15</span></a>
+<a href="#q090" class="toc-item"><span class="toc-idx">090</span><span class="toc-qnum">Q18</span></a>
+<a href="#q091" class="toc-item"><span class="toc-idx">091</span><span class="toc-qnum">Q21</span></a>
+<a href="#q092" class="toc-item"><span class="toc-idx">092</span><span class="toc-qnum">Q23</span></a>
+<a href="#q093" class="toc-item"><span class="toc-idx">093</span><span class="toc-qnum">Q33</span></a>
+<a href="#q094" class="toc-item"><span class="toc-idx">094</span><span class="toc-qnum">Q6</span></a>
+<a href="#q095" class="toc-item"><span class="toc-idx">095</span><span class="toc-qnum">Q13</span></a>
+<a href="#q096" class="toc-item"><span class="toc-idx">096</span><span class="toc-qnum">Q27</span></a>
+<a href="#q097" class="toc-item"><span class="toc-idx">097</span><span class="toc-qnum">Q29</span></a>
+<a href="#q098" class="toc-item"><span class="toc-idx">098</span><span class="toc-qnum">Q35</span></a>
+<a href="#q099" class="toc-item"><span class="toc-idx">099</span><span class="toc-qnum">Q18</span></a>
+<a href="#q100" class="toc-item"><span class="toc-idx">100</span><span class="toc-qnum">Q21</span></a>
+<a href="#q101" class="toc-item"><span class="toc-idx">101</span><span class="toc-qnum">Q26</span></a>
+<a href="#q102" class="toc-item"><span class="toc-idx">102</span><span class="toc-qnum">Q2</span></a>
+<a href="#q103" class="toc-item"><span class="toc-idx">103</span><span class="toc-qnum">Q10</span></a>
+<a href="#q104" class="toc-item"><span class="toc-idx">104</span><span class="toc-qnum">Q20</span></a>
+<a href="#q105" class="toc-item"><span class="toc-idx">105</span><span class="toc-qnum">Q30</span></a>
+<a href="#q106" class="toc-item"><span class="toc-idx">106</span><span class="toc-qnum">Q34</span></a>
+<a href="#q107" class="toc-item"><span class="toc-idx">107</span><span class="toc-qnum">Q4</span></a>
+<a href="#q108" class="toc-item"><span class="toc-idx">108</span><span class="toc-qnum">Q11</span></a>
+<a href="#q109" class="toc-item"><span class="toc-idx">109</span><span class="toc-qnum">Q27</span></a>
+<a href="#q110" class="toc-item"><span class="toc-idx">110</span><span class="toc-qnum">Q31</span></a>
+    </nav>
+
+    <main class="main">
+        <div class="card" id="q001">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>001 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">10.</span>
+        <span class="law">「학교폭력예방 및 대책에 관한 법률」</span> 제20조의7에 따라 영상정보처리기기의 통합 관제에 관하여 동 법에서 규정한 것을 제외하고는 <span class="law">「개인정보 보호법」</span>을 적용하도록 하고 있다. 학교 내외에 설치된 영상정보처리기기가 통합 관제되는 경우 해당 학교의 영상정보처리기기운영자가 <span class="law">「개인정보 보호법」</span> 및 동법 시행령에 따라 반드시 마련해야 하는 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 영상정보처리기기 보호 지침</li>
+        <li><span class="c-num">②</span> 영상정보처리기기 시행계획</li>
+        <li><span class="c-num">③</span> 영상정보처리기기 운영·관리 방침</li>
+        <li><span class="c-num">④</span> 영상정보처리기기 내부관리 계획</li>
+    </ul>
+</div>
+
+<div class="card" id="q002">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>002 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">6.</span>
+        <span class="law">「개인정보 보호법」</span>의 영상정보처리기기의 설치 및 운영 관련 사항에 해당하지 않는 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 고정형 영상정보처리기기운영자는 고정형 영상정보처리기기의 설치 목적과 다른 목적으로 고정형 영상정보처리기기를 임의로 조작하거나 다른 곳을 비춰서는 아니 되며, 녹음기능은 사용할 수 없다.</li>
+        <li><span class="c-num">②</span> 고정형 영상정보처리기기운영자는 개인정보가 분실·도난·유출·위조·변조 또는 훼손되지 아니하도록 제29조에 따라 안전성 확보에 필요한 조치를 하여야 한다.</li>
+        <li><span class="c-num">③</span> 누구든지 불특정 다수가 이용하는 목욕실, 화장실, 발한실, 탈의실 등 개인의 사생활을 현저히 침해할 우려가 있는 장소의 내부를 볼 수 있는 곳에서 이동형 영상정보처리기기로 사람 또는 그 사람과 관련된 사물의 영상을 촬영하여서는 아니 된다. 다만, 인명의 구조·구급 등을 위하여 필요한 경우로서 대통령령으로 정하는 경우에는 그러하지 아니하다.</li>
+        <li><span class="c-num">④</span> 고정형 영상정보처리기기운영자는 고정형 영상정보처리기기의 설치·운영에 관한 사무를 위탁할 수 있다. 다만, 공공기관이 이동형 영상정보처리기기 설치·운영에 관한 사무를 위탁하는 경우에는 대통령령으로 정하는 절차 및 요건에 따라야 한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q003">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>003 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">11.</span>
+        <span class="law">「의료법」</span> 제38조의2 제2항에 따른 '수술실 내 CCTV 촬영 거부 사유'에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 수술이 지체되면 환자의 생명이 위험하여지거나 심신상의 중대한 장애를 가져오는 응급 수술을 시행하는 경우</li>
+        <li><span class="c-num">②</span> 환자의 생명을 구하기 위하여 적극적 조치가 필요한 위험도 높은 수술을 시행하는 경우</li>
+        <li><span class="c-num">③</span> <span class="law">「전공의의 수련환경 개선 및 지위 향상을 위한 법률」</span> 제2조 제2호에 따른 수련병원등의 전공의 수련 등 그 목적 달성을 현저히 저해할 우려가 있는 경우</li>
+        <li><span class="c-num">④</span> 촬영을 허용할 경우 환자의 개인정보 침해 위험이 증가하여 보건복지부령이 정한 안전성 기준을 충족하지 못한다고 판단되는 경우</li>
+    </ul>
+</div>
+
+<div class="card" id="q004">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>004 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">14.</span>
+        관제요원의 VMS 설정 변경을 위해 본부 요원이 원격으로 PC 화면을 제어해야 한다. 외부 원격지원 프로그램 설치가 금지된 상황에서 사용할 Windows 11 기본 기능은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 비트로커(BitLocker)</li>
+        <li><span class="c-num">②</span> 빠른 지원(Quick Assist)</li>
+        <li><span class="c-num">③</span> 근거리 공유(Nearby Sharing)</li>
+        <li><span class="c-num">④</span> 저장소 공간(Storage Spaces)</li>
+    </ul>
+</div>
+
+<div class="card" id="q005">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>005 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">18.</span>
+        스마트시티 CCTV 안전앱 개발팀이 모바일 앱 개발 과정에서 Firebase와 같은 클라우드 플랫폼으로부터 푸시 알림 SDK, 사용자 인증 API, 클라우드 스토리지 연동 라이브러리 등을 제공받아 활용하는 서비스 유형은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> IaaS (Infrastructure as a Service)</li>
+        <li><span class="c-num">②</span> DaaS (Data as a Service)</li>
+        <li><span class="c-num">③</span> MBaaS (Mobile Backend as a Service)</li>
+        <li><span class="c-num">④</span> SECaaS (Security as a Service)</li>
+    </ul>
+</div>
+
+<div class="card" id="q006">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>006 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">22.</span>
+        관제센터에서 CCTV 설치 시 촬영 목적에 따라 다른 렌즈를 선택해야 한다. 다음 중 렌즈의 종류와 특징에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 고정초점렌즈는 초점 거리와 배율이 고정되어 렌즈 밝기가 우수하고 정밀도가 뛰어나다.</li>
+        <li><span class="c-num">②</span> 가변초점렌즈는 약 2배 정도 초점 거리 조절이 가능하며, 렌즈 교체 없이 화각을 선택할 수 있다.</li>
+        <li><span class="c-num">③</span> 광각렌즈는 짧은 초점 거리로 넓은 화각을 제공하며, 초점 거리가 짧을수록 피사계 심도가 얕아진다.</li>
+        <li><span class="c-num">④</span> 망원렌즈는 긴 초점 거리로 좁은 화각을 가져 먼 거리 물체를 관찰할 수 있다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q007">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>007 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">29.</span>
+        관제시스템 운영서버의 장애 진단 방법에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 진단도구를 활용하여 시스템 설정, 하드웨어 상태, 소프트웨어 정보를 종합적으로 수집한다.</li>
+        <li><span class="c-num">②</span> 로그 분석을 통해 시스템 이벤트, 오류 메시지, 성능 지표를 시계열로 추적하여 장애 원인을 파악한다.</li>
+        <li><span class="c-num">③</span> SLA 기준에 따른 시스템 가용성과 성능 요구사항을 확인하여 장애 수준을 평가한다.</li>
+        <li><span class="c-num">④</span> 중앙 관제센터에서 모든 사이트의 서버를 통합 모니터링하여 일괄적으로 진단을 수행한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q008">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>008 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">30.</span>
+        VMS에서 영상 백업 및 아카이빙(Archiving) 전략에 관한 설명으로 옳은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 모든 영상 데이터는 동일한 저장 매체에 영구 보관해야 한다.</li>
+        <li><span class="c-num">②</span> 단기 저장은 고속 SSD, 장기 보관은 대용량 HDD나 클라우드를 활용하는 계층형 저장이 효율적이다.</li>
+        <li><span class="c-num">③</span> 백업된 영상은 원본과 동일한 화질을 유지할 필요가 없으므로 항상 압축하여 저장한다.</li>
+        <li><span class="c-num">④</span> 법적 보존 기간이 지난 영상은 즉시 자동 삭제되도록 설정해야 한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q009">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>009 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">37.</span>
+        지능형 관제시스템 비정상 이벤트 발생 보고서 관련 내용으로 옳지 않은 것은?
+    </div>
+    <div class="scenario">
+        <div>- CCTV 카메라 1번 MD로 설정된 상태임</div>
+        <div>- 배치 시간에 화면이 녹화는 되지만 이벤트가 발생하지 않아 올바르게 탐지 알림이 발생하지 않음</div>
+        <div style="margin-top:10px;font-weight:700;">CCTV 1번 설정 화면</div>
+        <table>
+            <tr><th>카메라</th><th>ON/OFF</th><th>MD 타입</th><th>MD/영역 설정</th></tr>
+            <tr><td>1</td><td>ON</td><td>General</td><td>설정</td></tr>
+        </table>
+        <div style="margin-top:10px;font-weight:700;">CCTV 1번 녹화 영상</div>
+        <div style="margin-top:6px;color:#6b7280;font-style:italic;">[녹화된 외부 건물 영상 화면]</div>
+        <div style="margin-top:6px;">동작</div>
+    </div>
+</div>
+
+<div class="card" id="q010">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>010 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">2.</span>
+        지방자치단체의 스마트시티 통합플랫폼 기능 및 역할에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 도시에서 발생하는 다양한 상황 이벤트를 실시간으로 영상정보관리사(관제요원)이 단말기 화면에서 처리할 수 있도록 지원한다.</li>
+        <li><span class="c-num">②</span> 도시 전체를 안전하게 운영·관리하는 데 필요한 데이터를 제공하여 의사결정을 지원한다.</li>
+        <li><span class="c-num">③</span> 스마트시티 통합플랫폼은 모든 지방자치단체에서 동일한 S-서비스를 제공하고 있다.</li>
+        <li><span class="c-num">④</span> 112, 119, 재난망, 사회적 약자 지원 서비스를 통합플랫폼과 연계하여 안전하고 편리한 도시를 조성하는 데 기여하고 있다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q011">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>011 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">10.</span>
+        이동형 영상정보처리기기의 사적 목적 이용자에 해당하지 않는 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 가정 내에서 카메라가 달린 청소 로봇을 이용</li>
+        <li><span class="c-num">②</span> 여행 중 관광지에서 기념영상을 촬영</li>
+        <li><span class="c-num">③</span> 교통사고 발생 시 증거확보를 목적으로 자동차에 블랙박스를 설치</li>
+        <li><span class="c-num">④</span> 영리를 목적으로 공개된 장소에서 불특정 다수를 촬영한 후 유튜브에 지속적으로 게재</li>
+    </ul>
+</div>
+
+<div class="card" id="q012">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>012 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">11.</span>
+        영상정보처리기기(CCTV) 개인영상정보 보호를 위한 조치 중 기술적 보안 방안에 해당하는 것은?
+    </div>
+    <div class="box">
+        <div class="box-item">㉠ 마스킹 처리</div>
+        <div class="box-item">㉡ 서버 접근 비밀번호 설정</div>
+        <div class="box-item">㉢ 영상 데이터 암호화</div>
+        <div class="box-item">㉣ CCTV 함체 자물쇠 설치</div>
+        <div class="box-item">㉤ 웹 방화벽 설치</div>
+    </div>
+</div>
+
+<div class="card" id="q013">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>013 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">13.</span>
+        <span class="law">「정보보호 및 개인정보보호 관리체계 인증 등에 관한 고시」</span>에서의 보호대책 요구사항 중 '인적 보안'에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 개인정보 및 중요정보의 취급이나 주요 시스템 접근 등 주요 직무의 기준과 관리방안을 수립하고, 주요 직무자를 최소한으로 지정하여 그 목록을 최신으로 관리하여야 한다.</li>
+        <li><span class="c-num">②</span> 권한 오·남용 등으로 인한 잠재적인 피해 예방을 위하여 직무 통합 기준을 수립하고 적용하여야 한다.</li>
+        <li><span class="c-num">③</span> 정보자산을 취급하거나 접근권한이 부여된 임직원·임시직원·외부자 등이 내부 정책 및 관련 법규, 비밀유지 의무 등 준수사항을 명확히 인지할 수 있도록 업무 특성에 따른 정보보호 서약을 받아야 한다.</li>
+        <li><span class="c-num">④</span> 퇴직 및 직무변경 시 인사·정보보호·개인정보보호·IT 등 관련 부서별 이행하여야 할 자산반납, 계정 및 접근권한 회수·조정, 결과확인 등의 절차를 수립·관리하여야 한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q014">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>014 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">16.</span>
+        드론에 탑재된 카메라가 지상 물체를 효과적으로 식별하기 위해 사용하는 기술적 방법으로 옳은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 고정 초점(Fixed Focus) 렌즈만을 사용하면 고도 변화에 관계없이 항상 선명한 영상을 얻을 수 있다.</li>
+        <li><span class="c-num">②</span> 드론 영상에 위치 정보를 삽입하려면 반드시 LTE 통신망이 있어야 한다.</li>
+        <li><span class="c-num">③</span> 짐벌(Gimbal) 장치는 드론의 움직임과 관계없이 카메라의 방향과 수평을 안정적으로 유지하는 데 사용된다.</li>
+        <li><span class="c-num">④</span> CMOS 센서는 CCD 센서보다 전력 소모가 많고, 고속 촬영에 적합하지 않다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q015">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>015 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">18.</span>
+        다음 중 영상정보처리기기에서 사용하는 해상도 명칭과 픽셀 해상도 간 연결로 적절하지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> QHD급 <span class="res">— 2560×1440</span></li>
+        <li><span class="c-num">②</span> HD급 <span class="res">— 1280×720</span></li>
+        <li><span class="c-num">③</span> UHD급 <span class="res">— 2048×1152</span></li>
+        <li><span class="c-num">④</span> Full HD급 <span class="res">— 1920×1080</span></li>
+    </ul>
+</div>
+
+<div class="card" id="q016">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>016 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">19.</span>
+        <span class="law">「지능형 CCTV 도입·운영 가이드라인(2024)」</span>에 따라 2세대(IP 네트워크) 및 3세대(지능형·AI) CCTV의 해상도 및 영상 압축 방식에 대한 설명으로 옳은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 2세대(IP 네트워크) CCTV는 FHD급 해상도를 지원하며, 영상 압축 방식으로 MPEG4, H.264가 사용된다.</li>
+        <li><span class="c-num">②</span> 2세대(IP 네트워크) CCTV는 SD급 해상도를 지원하며, 압축 방식으로 MPEG2를 사용한다.</li>
+        <li><span class="c-num">③</span> 3세대(지능형·AI) CCTV는 UHD급 해상도를 지원하지만, 영상 압축 방식으로 MPEG4를 사용한다.</li>
+        <li><span class="c-num">④</span> 3세대(지능형·AI) CCTV는 AI 기반으로 분석을 수행하며, 고해상도 영상을 저장하기 위해 MPEG4를 사용한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q017">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>017 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">21.</span>
+        카메라 센서의 '노출 시간'을 조절하여 주변 조도에 따라 영상의 밝기를 자동으로 제어하는 방식으로 센서에 유입되는 빛의 양을 결정하는 기술에 해당하는 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 화이트 밸런스 조정</li>
+        <li><span class="c-num">②</span> 감마 보정</li>
+        <li><span class="c-num">③</span> 전자 셔터 제어</li>
+        <li><span class="c-num">④</span> 주파수 변환</li>
+    </ul>
+</div>
+
+<div class="card" id="q018">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>018 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">22.</span>
+        영상정보처리기기 제어 장치인 '리시버'의 기능 설명 중 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 리시버는 팬틸트(pan tilt) 드라이브를 작동하는 원격 제어 수신기로, RX라는 약어로 표현되며, 카메라 CPU와 연결된 제어 신호를 받아 구동 신호로 변환한다.</li>
+        <li><span class="c-num">②</span> 리시버는 팬, 줌 렌즈, 카메라 밝기, 초점, 전원 등을 제어하며, 동기통신 방식을 통해 오동작을 최소화한다.</li>
+        <li><span class="c-num">③</span> 리시버는 RS-232 연결 방식을 주로 사용하며, RS-422, RS-485와 같은 통신 프로토콜은 적용되지 않는다.</li>
+        <li><span class="c-num">④</span> 팬/틸트 드라이브 위에 카메라와 하우징이 장착되며, 회전 속도가 빠른 스피드 돔 카메라의 보급으로 사용이 점차 감소하고 있다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q019">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>019 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">24.</span>
+        다음 중 PoE(Power over Ethernet) 스위치를 활용하여 CCTV 시스템을 구축할 때 고려사항으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> PoE 스위치의 전력 공급 용량이 연결된 모든 장치의 요구 전력을 충족하는지 확인한다.</li>
+        <li><span class="c-num">②</span> PoE 스위치는 설치 시 일반 스위치와 달리 케이블 길이에 따른 전력 손실이 발생하지 않는다.</li>
+        <li><span class="c-num">③</span> PoE 스위치의 네트워크 대역폭이 CCTV 카메라의 영상 전송 요구를 충분히 처리할 수 있는지 평가한다.</li>
+        <li><span class="c-num">④</span> PoE 스위치의 관리 기능을 활용하여 네트워크 트래픽을 효율적으로 제어한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q020">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>020 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">25.</span>
+        CCTV 시스템에서 IP 카메라와 NVR 간의 상호 운용성을 보장하기 위해 가장 널리 사용되는 표준 프로토콜은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> RISP</li>
+        <li><span class="c-num">②</span> HTTP</li>
+        <li><span class="c-num">③</span> ONVIF</li>
+        <li><span class="c-num">④</span> FTP</li>
+    </ul>
+</div>
+
+<div class="card" id="q021">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>021 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">28.</span>
+        다음 그림은 CCTV 관제센터의 영상정보관리시스템(VMS)을 실행한 화면의 예이다. 해당 화면을 통해 알 수 없는 정보는?
+    </div>
+    <div class="img-note">📍 지도 기반 CCTV 위치 현황 화면 (카메라 위치 및 상태 표시)</div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 관리 번호, 설치 목적, 설치 지점 상세 표시</li>
+        <li><span class="c-num">②</span> 회전 카메라, 고정 카메라 설치 대수 확인</li>
+        <li><span class="c-num">③</span> 회전 카메라, 고정 카메라의 제어 기능</li>
+        <li><span class="c-num">④</span> 방송, 전력 등의 제어 기능</li>
+    </ul>
+</div>
+
+<div class="card" id="q022">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>022 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">29.</span>
+        영상정보관제솔루션의 영상 백업 기능에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 중요 영상을 안전하게 보관하고 복구 가능성을 확보한다.</li>
+        <li><span class="c-num">②</span> 실시간 영상 데이터의 화질을 개선한다.</li>
+        <li><span class="c-num">③</span> 시스템 장애 시 데이터 손실을 최소화한다.</li>
+        <li><span class="c-num">④</span> 장기 보관을 위해 데이터를 효율적으로 관리한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q023">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>023 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">30.</span>
+        관리서버의 시스템 설정값을 백업하여 관리할 때 주의할 사항으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 백업 데이터의 용량 관리를 위해 로그 파일은 기본적으로 구성 백업 대상에서 제외할 수 있다.</li>
+        <li><span class="c-num">②</span> 관리서버와 연결된 데이터베이스를 기준으로 백업한다.</li>
+        <li><span class="c-num">③</span> 시스템의 안정성이 보장되므로 시스템 성능을 확보하기 위해서 예약 백업은 권장하지 않는다.</li>
+        <li><span class="c-num">④</span> 구성 백업은 관리 클라이언트의 '파일 - 구성 백업' 메뉴를 통해서 간편하게 실행한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q024">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>024 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">2.</span>
+        영상정보 관제센터의 운영 목적에 따른 세부 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 무인 주·정차 단속 - 영상정보처리기기를 활용하여 불법 주·정차를 현장단속요원 없이 운영관리</li>
+        <li><span class="c-num">②</span> 범죄예방 - 범죄 발생 시 실시간 모니터링으로 용의자 검거에 기여하고, 수사기관 요청 시 영상 열람·반출을 지원</li>
+        <li><span class="c-num">③</span> 시설관리 - 도로, 건물 주변 등에 주차단속 및 교통 흐름에 대한 모니터링</li>
+        <li><span class="c-num">④</span> 화재예방 - 관리 시설물의 화재예방을 위한 사전상황 모니터링을 지원</li>
+    </ul>
+</div>
+
+<div class="card" id="q025">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>025 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">6.</span>
+        <span class="law">「개인정보 보호법」</span>에 따른 이동형 영상정보처리기기의 개인영상정보 보호 8대 원칙에 대한 설명으로 옳은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 개인영상정보의 처리 근거가 적법·명확해야 하는 것은 명확성 원칙에 해당한다.</li>
+        <li><span class="c-num">②</span> 영상기기운영자는 안전성 원칙을 지키기 위해 개인영상정보 처리 전반에 대한 책임을 준수하고 정보주체의 신뢰를 확보하기 위해 노력해야 한다.</li>
+        <li><span class="c-num">③</span> 정보주체가 자신의 개인영상정보에 대한 통제권을 행사할 수 있는 수단을 제공하고 이를 보장하는 것을 투명성 원칙이라고 한다.</li>
+        <li><span class="c-num">④</span> 개인영상정보 처리는 목적에 필요한 범위에서 최소화해야 하고, 이를 목적 제한 원칙이라고 한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q026">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>026 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">9.</span>
+        다음 <span class="law">「개인정보 보호법」</span> 및 <span class="law">「의료법」</span>에 근거하여 보건복지부에서 발간한 <span class="law">「수술실 설치·운영 폐쇄회로 텔레비전 기준(가이드라인)」</span>에 대한 내용 중 옳은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 국소마취 등으로 환자의 의식 여부에 영향이 없는 상태에서의 수술을 시행하는 수술실도 적용 대상이다.</li>
+        <li><span class="c-num">②</span> 촬영되어야 하는 수술 장면의 범위는 환자가 수술실에 입실하는 시점부터 수술실에서 퇴실하는 시점까지이다.</li>
+        <li><span class="c-num">③</span> CCTV는 수술실에 설치되어 수술 장면을 자동으로 촬영되도록 운영되어야 한다.</li>
+        <li><span class="c-num">④</span> 진료실, 검사실에 CCTV를 설치하기 위해서는 촬영 대상 정보주체의 동의를 받아야 한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q027">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>027 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">12.</span>
+        출입통제 시스템 분야에서 사용자 편의성 향상을 위한 생체인증 기술이 활성화 되고 있다. 다음 중 출입통제 시스템에 활용되는 생체인식정보의 특징에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 생체인식정보는 개인을 유일하게 식별할 수 있는 정보이다.</li>
+        <li><span class="c-num">②</span> 원본 생체정보로부터 인종이나 건강 상태 등 인증 목적과 무관한 민감정보가 추출될 수 있다.</li>
+        <li><span class="c-num">③</span> 생체인식정보도 위·변조될 가능성이 있다.</li>
+        <li><span class="c-num">④</span> 생체인식정보는 변경이 불가능한 특성으로 인해 유출되더라도 그 피해를 복구하기 용이하다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q028">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>028 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">13.</span>
+        '국가 정보보안 기본지침' 상 '휴대용 저장매체 보안'에 관한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 정보보안담당관은 개별사용자가 휴대용 저장매체를 PC·서버 등에 연결할 경우 자동 실행되지 아니하고 최신 백신 소프트웨어로 악성코드 감염 여부를 자동 검사하는 등의 보안 정책을 수립·시행하도록 관리하여야 한다.</li>
+        <li><span class="c-num">②</span> 휴대용 저장매체 관리자는 휴대용 저장매체를 비밀용·일반용으로 구분·관리하고 수량 및 보관 상태를 정기적으로 점검하며 외부 반출·입을 통제하여야 한다.</li>
+        <li><span class="c-num">③</span> 휴대용 저장매체 관리자는 비밀이 저장된 휴대용 저장매체는 매체별로 비밀등급 및 관리번호를 부여하고 비밀관리기록부에 등재·관리하여야 한다.</li>
+        <li><span class="c-num">④</span> 휴대용 저장매체 관리자는 비밀용 휴대용 저장매체를 다른 등급의 비밀용 또는 일반용으로 변경 사용하고자 할 경우 저장자료가 복구 불가하도록 완전삭제 소프트웨어 등을 이용하여 삭제하여야 한다. 다만, 완전삭제가 불가할 경우 변경 사용할 수 있다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q029">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>029 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">19.</span>
+        IP 카메라와 아날로그 카메라에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> IP 카메라는 디지털 포맷으로 변환된 영상을 네트워크를 통해 실시간으로 전송하며, 웹서버와 네트워크 인터페이스 장치를 내장하고 있다.</li>
+        <li><span class="c-num">②</span> 아날로그 카메라는 아날로그 신호를 출력하며, 디지털 저장 장치와 연결하려면 별도의 비디오 인코더가 필요하다.</li>
+        <li><span class="c-num">③</span> IP 카메라는 네트워크 연결 없이도 디지털 영상 데이터를 저장할 수 있는 독립적인 저장 장치가 필수 내장되어 있다.</li>
+        <li><span class="c-num">④</span> 아날로그 카메라는 IP 기반 전송을 지원하지 않으며, 영상 데이터를 전송하기 위해 별도의 장치가 필요하다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q030">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>030 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">21.</span>
+        영상정보처리기기의 촬상소자에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> CCD 이미지 센서는 주로 고해상도 방송촬영카메라에 사용되며, 화소의 수가 많을수록 성능이 우수하다.</li>
+        <li><span class="c-num">②</span> BBD 방식은 신호를 축적하여 릴레이식으로 전송하며, CCD와 동일하게 전하를 하나의 덩어리로 전송한다.</li>
+        <li><span class="c-num">③</span> CMOS 이미지 센서는 단일 칩으로 구성될 수 있어 소형화가 가능하고, 저전력 및 고집적도의 장점을 가진다.</li>
+        <li><span class="c-num">④</span> CCD 이미지 센서는 감도가 높고 수명이 반영구적이며, 빛에 노출되면 빛을 전기 신호로 변환해 전송하는 방식이다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q031">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>031 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">22.</span>
+        고정형 영상정보처리기기(CCTV 카메라)에 사용되는 렌즈의 특성과 구성에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 렌즈는 촬영 센서에 빛을 전달하는 역할을 하며, 영상 품질에 직접적인 영향을 미친다.</li>
+        <li><span class="c-num">②</span> 렌즈는 보통 단일 렌즈를 사용하며, 여러 장의 렌즈를 겹쳐 사용하는 경우는 드물다.</li>
+        <li><span class="c-num">③</span> 렌즈의 화각은 카메라로 포착하는 장면의 시야를 결정하는 중요한 요소이다.</li>
+        <li><span class="c-num">④</span> 렌즈의 형식은 트리플릿(Triplet), 가우스(Gauss) 등이 있다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q032">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>032 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">25.</span>
+        관제 모니터링 화면의 구성 및 설정에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 관제용 클라이언트의 최적 모니터링 화면 구성은 15분할 또는 27분할이 적합하다.</li>
+        <li><span class="c-num">②</span> 영상정보관리사(관제요원)은 CCTV의 중요도에 따라 단일 분할 또는 다중분할로 설정하여 관제 업무를 수행한다.</li>
+        <li><span class="c-num">③</span> 관제 효율을 높이기 위해 여러 카메라 화면을 차례대로 보는 방식은 순환보기이다.</li>
+        <li><span class="c-num">④</span> 어안 렌즈 카메라도 순환보기에 활용될 수 있다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q033">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>033 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">30.</span>
+        영상정보관제시스템(VMS)의 운용 서버에서 장애를 진단하는 방법에 대한 설명으로 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 관제시스템의 진단 도구를 통해 시스템 설정에 대한 상세한 정보를 수집한다.</li>
+        <li><span class="c-num">②</span> 로그 서버에서 시스템 구성, 경보, 이벤트 및 로그 메시지를 활용해 장애 정보를 탐색한다.</li>
+        <li><span class="c-num">③</span> 벤더사와 서비스 수준협약(SLA) 체결 여부를 확인하고, 장치의 가용성과 응용 프로그램의 지원 수준을 검토한다.</li>
+        <li><span class="c-num">④</span> 관제시스템 사이트별로 서버를 개별 선택하여 진단 도구를 실행할 수 있다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q034">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>034 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">31.</span>
+        과학기술정보통신부의 <span class="law">「지능형 CCTV 성능 시험·인증 운영 지침」</span>에 따른 지능형 CCTV 솔루션 성능시험 분야 및 항목 중, 일반 분야의 인증에 해당하는 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 화재</li>
+        <li><span class="c-num">②</span> 범죄</li>
+        <li><span class="c-num">③</span> 감염병</li>
+        <li><span class="c-num">④</span> 싸움</li>
+    </ul>
+</div>
+
+<div class="card" id="q035">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>035 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">35.</span>
+        설정된 트릭 모드에 부합하지 않는 객체의 움직임에 동작하여 녹화되는 경우 또는 객체의 움직임이 없으나 로그 생성과 영상 녹화되는 상황에 해당하는 이벤트 정상 검출 여부 판단 기준은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 이벤트 연동 검출</li>
+        <li><span class="c-num">②</span> 이벤트 오검출</li>
+        <li><span class="c-num">③</span> 이벤트 확인 검출</li>
+        <li><span class="c-num">④</span> 이벤트 미검출</li>
+    </ul>
+</div>
+
+<div class="card" id="q036">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>036 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">6.</span>
+        <span class="law">'개인정보 보호법'</span>에 따르면, 공개된 장소에 적법하게 설치된 고정형 영상정보처리기기를 통해 처리되는 '개인정보'에 대해서는 적용되지 않는 규정들이 있다. 이에 대한 다음 설명 중 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 개인정보 열람권은 공개된 장소에 적법하게 설치된 고정형 영상정보처리기기를 통해 처리되는 개인정보에도 적용되지만, 정보주체의 요청이 타인의 개인정보를 침해하거나 공공기관 등의 업무에 현저한 지장을 초래할 우려가 있는 경우 제한될 수 있다.</li>
+        <li><span class="c-num">②</span> 개인정보 유출 시 사업자의 통지 의무는 공개된 장소에 적법하게 설치된 고정형 영상정보처리기기를 통해 처리되는 개인정보가 유출된 경우에는 적용되지 않는다.</li>
+        <li><span class="c-num">③</span> 영업의 양도 시 정보주체에게 알려야 하는 의무는 공개된 장소에 적법하게 설치된 고정형 영상정보처리기기를 통해 처리되는 개인정보를 다루고 있는 영업을 양도하는 경우에는 적용되지 않는다.</li>
+        <li><span class="c-num">④</span> 만 14세 미만 아동의 법정대리인으로부터 동의를 받아야 하는 의무는 공개된 장소에 적법하게 설치된 고정형 영상정보처리기기를 통해 처리되는 개인정보의 경우에는 적용되지 않는다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q037">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>037 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">9.</span>
+        철도경찰이 철도시설 및 열차 안에서 발생하는 <span class="law">'철도안전법'</span>에 규정된 범죄와 역 구내 및 열차 안에서 발생하는 범죄의 수사를 위하여, 지방자치단체로부터 CCTV 영상정보를 <span class="law">'개인정보 보호법'</span> 제18조 제2항 제3호 또는 제5호 또는 제7호에 따라 제공받을 수 있는지의 여부에 대한 설명으로 옳은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> CCTV 영상정보를 철도경찰이 범죄수사를 위하여 제공받는 것은 '목적 외 제공'에 해당하지 않는다.</li>
+        <li><span class="c-num">②</span> 공공기관이 범죄의 수사를 위하여 필요한 경우 영상정보를 목적 외 제공할 수 있다.</li>
+        <li><span class="c-num">③</span> 지방자치단체 관내에 재난 재해·구급상황 및 범죄가 발생한 경우 개인정보 보호법에 따라 지방자치단체 통합관제센터의 영상정보를 소방서, 경찰서에 제공할 수 없다.</li>
+        <li><span class="c-num">④</span> 철도경찰이 지방자치단체 CCTV 망을 연계하여 영상정보를 제공받고자 하는 것은 범죄 발생 후 보다 신속하게 수사에 필요한 지역이 촬영된 영상정보를 공유받기보다는 실시간으로 CCTV를 모니터링하기 위한 것이다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q038">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>038 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">10.</span>
+        <span class="law">'노인장기요양보험법'</span> 및 <span class="law">'시행규칙'</span>에 따른 폐쇄회로 텔레비전(CCTV)의 설치·관리 기준에서 정하고 있는 사항으로 옳은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 공동거실을 촬영하기 위해서는 침실과 마찬가지로 수급자 전원 또는 그 보호자 전원의 동의를 받아야 촬영할 수 있다.</li>
+        <li><span class="c-num">②</span> 폐쇄회로 텔레비전(CCTV)은 공동거실 등을 촬영할 수 있고, 그 영상정보를 녹화·저장할 수 있는 기능을 갖춰야 한다.</li>
+        <li><span class="c-num">③</span> 녹화된 영상정보의 보관 장소는 독립적인 공간이면 되고, 잠금장치까지 갖출 필요는 없다.</li>
+        <li><span class="c-num">④</span> 공동거실이라도 사생활 침해를 최소화해야 하므로 지속적으로 촬영해서는 안된다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q039">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>039 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">20.</span>
+        CCTV카메라의 렌즈사양에 대한 다음 설명 중 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 카메라의 렌즈 설정을 통해 줌, 포커스, 화소를 결정한다.</li>
+        <li><span class="c-num">②</span> 고정 초점렌즈의 경우 줌 기능이 없으나 포커스는 맞추어야 한다.</li>
+        <li><span class="c-num">③</span> 어안렌즈 카메라는 360도 모든 방향을 볼 수 있는 영상을 제공한다.</li>
+        <li><span class="c-num">④</span> 최근에 개발 출시된 P-Iris 렌즈는 조리개를 정밀하게 제어하여 밝은 환경에서도 심도를 최적화하고 선명한 영상을 제공한다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q040">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>040 / 110</span></div>
+    <div class="question-body">
+        <span class="q-num">21.</span>
+        CCTV카메라의 촬상소자에 대한 다음 설명 중 옳지 않은 것은?
+    </div>
+    <ul class="choices">
+        <li><span class="c-num">①</span> 촬상소자가 클수록 조도(밝기)성능이 좋아진다.</li>
+        <li><span class="c-num">②</span> 촬상소자는 빛을 전기신호로 변환하는 기능을 수행한다.</li>
+        <li><span class="c-num">③</span> 촬상소자에 나누어진 셀의 수에 의해 최대해상도(픽셀)가 결정된다.</li>
+        <li><span class="c-num">④</span> 촬상소자가 클수록 광학 줌(확대) 성능이 좋아진다.</li>
+    </ul>
+</div>
+
+<div class="card" id="q041">
+<div class="meta"><span>틀린문제 컬렉션</span><span>041 / 110</span></div>
+<div class="qb"><span class="qn">28.</span> 영상정보관제솔루션의 영상 백업 기능에 대한 설명으로 옳지 않은 것은?</div>
+<ul><li><span class="c-num">①</span> 중요 영상을 안전하게 보관하고 복구 가능성을 확보한다.</li>
+<li><span class="c-num">②</span> 실시간 영상 데이터의 화질을 개선한다.</li>
+<li><span class="c-num">③</span> 시스템 장애 시 데이터 손실을 최소화한다.</li>
+<li><span class="c-num">④</span> 장기 보관을 위해 데이터를 효율적으로 관리한다.</li></ul></div>
+
+<div class="card" id="q042">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>042 / 110</span></div>
+    <div class="question-body"><span class="q-num">3.</span> 다음 중 「아동복지법」에 따라 국가와 지방자치단체가 아동을 유괴 등의 범죄위험으로부터 보호하기 위해 고정형 영상정보처리기기를 설치할 수 있도록 아동보호구역으로 지정할 수 있는 장소가 아닌 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 「영유아보육법」에 따른 어린이집</li><li><span class="c-num">②</span> 「초·중등교육법」에 따른 초등학교</li><li><span class="c-num">③</span> 「도시공원 및 녹지 등에 관한 법률」에 따른 묘지공원</li><li><span class="c-num">④</span> 「아동복지법」에 따른 아동양육시설</li></ul>
+</div>
+
+<div class="card" id="q043">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>043 / 110</span></div>
+    <div class="question-body"><span class="q-num">5.</span> 영상정보처리기기를 이용한 녹화 또는 녹음에 대한 설명으로 옳은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 매장은 공개된 장소에 해당하므로 고객의 폭행 등 범죄예방을 목적으로 매장 내에 CCTV를 설치하여 고객의 폭행 행위를 녹화할 수 있다.</li><li><span class="c-num">②</span> 공동주택의 경우에는 관리규약을 통해 입주자대표회의 참석자들로부터 개인정보 수집 동의를 받은 경우라도 녹음할 수 없다.</li><li><span class="c-num">③</span> 상점은 일반인이 자유롭게 출입할 수 있으므로 고객의 폭언 행위를 방지하기 위하여 상점 내에 CCTV를 설치하여 고객의 폭언을 녹음할 수 있다.</li><li><span class="c-num">④</span> 공동주택의 경우에 입주자대표회의의 회의록과 그 회의록을 촬영한 녹화물은 입주민의 알 권리 보장을 위해 열람할 수 있다.</li></ul>
+</div>
+
+<div class="card" id="q044">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>044 / 110</span></div>
+    <div class="question-body"><span class="q-num">20.</span> CCTV 카메라의 동기화 방법에 대한 설명으로 옳은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 외부 동기 방식은 하나의 카메라만 동기화하는데 사용된다.</li><li><span class="c-num">②</span> HD-VD 방식은 내부 동기화의 한 예이다.</li><li><span class="c-num">③</span> 전원 동기화 방식은 외부 전원 신호를 이용한 동기화 방식이다.</li><li><span class="c-num">④</span> 내부 동기 방식은 여러 대의 카메라를 동기화하여 동일한 타이밍으로 신호를 전송하게 한다.</li></ul>
+</div>
+
+<div class="card" id="q045">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>045 / 110</span></div>
+    <div class="question-body"><span class="q-num">25.</span> 다음 중 사용자가 영상정보관제솔루션에 CCTV 영상을 저장하기 위해 카메라 해상도를 설정하고자 한다. Full HD 카메라를 설정하기 위한 올바른 설정 값은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 1920 X 1080</li><li><span class="c-num">②</span> 720 X 480</li><li><span class="c-num">③</span> 2560 X 1920</li><li><span class="c-num">④</span> 1280 X 720</li></ul>
+</div>
+
+<div class="card" id="q046">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>046 / 110</span></div>
+    <div class="question-body"><span class="q-num">34.</span> 다음 회면은 관제사A씨가 사용자 동의하에 사무실 내부를 관제센터에서 관찰하는 화면 모습이다. 영상정보관제솔루션(VMS)의 기능 중 해당 화면에 적용하기 적합한 지능형 관제 이벤트 종류는?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 유기물</li><li><span class="c-num">②</span> 배회</li><li><span class="c-num">③</span> 화재</li><li><span class="c-num">④</span> 투기</li></ul>
+</div>
+
+<div class="card" id="q047">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>047 / 110</span></div>
+    <div class="question-body"><span class="q-num">39.</span> 법률상 의무적으로 CCTV를 설치해야 하는 장소의 영상정보 저장기간으로 옳은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 영유아보육법 제2조 제3호의 어린이집 - 60일</li><li><span class="c-num">②</span> 초·중등교육법 제2조에 따른 초등학교 - 60일</li><li><span class="c-num">③</span> 초·중등교육법 제2조에 따른 특수학교 - 60일</li><li><span class="c-num">④</span> 고등교육법 제2조 1호에 따른 대학 - 60일</li></ul>
+</div>
+
+<div class="card" id="q048">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>048 / 110</span></div>
+    <div class="question-body"><span class="q-num">2.</span> 다음은 '개인정보 보호법' 상 자료제출 요구에 대한 설명이다. 괄호 안에 들어갈 내용으로 올바른 것은?</div>
+    <div class="box"><div class="box-item">개인정보보호위원회는 (      ) 위하여 개인정보처리자에게 고정형 영상정보처리기기 또는 이동형 영상정보처리기기의 설치·운영에 관한 자료의 제출이나 의견의 진술 등을 요구할 수 있다.</div></div>
+</div>
+
+<div class="card" id="q049">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>049 / 110</span></div>
+    <div class="question-body"><span class="q-num">15.</span> 스토리지 종류 중 하나인 NAS(Network Attached Storage)의 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 네트워크를 통해 데이터를 공유하므로 높은 대역폭의 네트워크를 통한 전송 속도 확보가 가능하다.</li><li><span class="c-num">②</span> 여러 다른 장치들의 데이터 저장 및 읽기에 용이하다.</li><li><span class="c-num">③</span> 단순한 시스템 아키텍처 구조로 유지 관리가 비교적 편하다.</li><li><span class="c-num">④</span> 가상화 환경을 구축하기에 좋다.</li></ul>
+</div>
+
+<div class="card" id="q050">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>050 / 110</span></div>
+    <div class="question-body"><span class="q-num">23.</span> 다음 중 영상정보처리기기(CCTV) 시스템에서 리시버가 반드시 필요한 경우에 해당하는 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 공원용 영상정보처리기기(CCTV)에서 비상벨을 설치·운영시 민원인이 비상벨을 눌렀을 때 관제센터로 신호를 전송할 경우</li><li><span class="c-num">②</span> 아날로그 카메라가 PAN, TILT 위에 설치되어 감시 방향을 전환하기 위한 전력신호를 전송할 경우</li><li><span class="c-num">③</span> 마이크가 내장된 카메라에 큰 소리가 입력되어 알람이 발생되어 관제센터로 전송하는 경우</li><li><span class="c-num">④</span> 불법주정차 단속시스템의 계도용 전광판에 단속 중인 차량 번호를 표출하기 위해 정보를 수신하는 경우</li></ul>
+</div>
+
+<div class="card" id="q051">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>051 / 110</span></div>
+    <div class="question-body"><span class="q-num">35.</span> 영상정보 관제솔루션(VMS)에서 이용하는 빅데이터 분석 기법으로 적절하지 않은 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 행동 분석</li><li><span class="c-num">②</span> 로그 분석</li><li><span class="c-num">③</span> 예측 분석</li><li><span class="c-num">④</span> 사건 분석</li></ul>
+</div>
+
+<div class="card" id="q052">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>052 / 110</span></div>
+    <div class="question-body"><span class="q-num">37.</span> 용의자 도주 형태에 따른 모니터링 방법에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 도보로 도주하는 용의자 - 도주로 전면 또는 후면에 포커스를 맞추고 따라가듯 모니터링 실시</li><li><span class="c-num">②</span> 뛰어서 도주하는 용의자 - 화망 구성하듯 도주로 전면 또는 후면에 미리 포커스를 맞추고 기다려 이미지 획득</li><li><span class="c-num">③</span> 저속으로 주행하는 차량 - 차량의 색상을 기억하고, 차량을 추적하여 동일한 색상의 차량 이미지 획득</li><li><span class="c-num">④</span> 고속으로 주행하는 차량 - 차량의 진행 방향 전면에 미리 포커스를 맞추고 영상 촬영 후 화면을 정지하여 차량번호 검출</li></ul>
+</div>
+
+<div class="card" id="q053">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>053 / 110</span></div>
+    <div class="question-body"><span class="q-num">8.</span> 보호자의 요청에 의해 어린이집 폐쇄회로 텔레비전(CCTV) 영상의 설치 및 열람하는 것에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 보호자는 자녀 또는 보호아동의 안전을 확인할 목적으로 해당 어린이집에 CCTV 영상의 열람을 요청할 수 있다.</li><li><span class="c-num">②</span> 보호자의 어린이집 CCTV 열람은 아동학대 근절이라는 공익의 중대함이 제한되는 사익보다 크다고 보기 때문에, 어린이집 보호자의 요청에 따라 열람을 허용하는 경우 다른 사람을 알아볼 수 없도록 하는 보호조치를 반드시 할 필요는 없다.</li><li><span class="c-num">③</span> 보호자가 CCTV 영상의 사본을 제공받아 어린이집 외부로 반출하고자 하는 경우에도 공익의 중대함이 보육교직원의 권리침해보다 더 크다고 보기 때문에 열람 범위에 해당한다.</li><li><span class="c-num">④</span> 「영유아보육법」에 따르면 어린이집 설치·운영자는 영유아의 안전 등을 위해 어린이집에 CCTV를 필수적으로 설치해야 한다.</li></ul>
+</div>
+
+<div class="card" id="q054">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>054 / 110</span></div>
+    <div class="question-body"><span class="q-num">9.</span> 다음 근로 모니터링을 위한 고정형 영상정보처리기기의 설치 및 해당 영상정보의 이용에 관한 설명 중 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 지방자치단체 감사담당관이 시설안전 및 화재예방 등을 위하여 동주민센터에 설치한 CCTV의 영상정보를 공공감사법상 복무감사 목적으로 이용하는 경우는 개인정보보호법상 목적 외 이용에 해당한다.</li><li><span class="c-num">②</span> 외부인 출입이 통제되는 공간에 근로자의 근무상황 및 근태 관리 등을 위해 CCTV 등 영상정보처리기기를 설치하려는 경우에는 사전에 근로자의 의견을 청취해야 한다.</li><li><span class="c-num">③</span> 「근로자참여 및 협력증진에 관한 법률」에 따르면 노사협의회가 설치된 사업장에서는 노사협의회에서 협의해야 한다.</li><li><span class="c-num">④</span> 회사 출입구(현관, 복도 등에 도난방지와 시설 안전을 위해서 CCTV를 설치하는 것은 개인정보보호법상 개인정보처리자의 정당한 이익 달성을 위해 필요한 경우 할 수 있다.</li></ul>
+</div>
+
+<div class="card" id="q055">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>055 / 110</span></div>
+    <div class="question-body"><span class="q-num">16.</span> 지능형 영상정보처리기기의 구성요소로, 아날로그 입력 영상을 IP 패킷으로 변환한 후 관제센터에 전송하는 장비이며, 디지털로 변화하는 A/D 컨버터와 디지털 영상을 IP 기반으로 변환하는 패킷타이저, 외부로 전송하는 IP 트랜스미터로 구성되어 있는 장비는?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> IP 카메라</li><li><span class="c-num">②</span> 아날로그 카메라</li><li><span class="c-num">③</span> 인코더</li><li><span class="c-num">④</span> 영상관리 서버</li></ul>
+</div>
+
+<div class="card" id="q056">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>056 / 110</span></div>
+    <div class="question-body"><span class="q-num">17.</span> 다음 중 통합관제센터 구축에 필요한 시스템과 관련된 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 네트워크 인터페이스 카드(NIC)는 CCTV 영상 데이터 전송을 지원한다.</li><li><span class="c-num">②</span> 데이터 스토리지 시스템은 대용량 CCTV 영상을 저장하고 관리한다.</li><li><span class="c-num">③</span> 운영체제(OS)는 관제센터 시스템의 하드웨어와 소프트웨어를 관리한다.</li><li><span class="c-num">④</span> 멀티미디어 프로세싱 유닛은 CCTV 영상을 실시간 처리하는 주요 장비다.</li></ul>
+</div>
+
+<div class="card" id="q057">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>057 / 110</span></div>
+    <div class="question-body"><span class="q-num">18.</span> 다음 중 네트워크 기반 CCTV 카메라의 주요 기능과 관련된 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> WDR(120dB) 기능을 통해, 명암 차이가 큰 환경에서도 밝은 영역과 어두운 영역 모두에서 디테일을 살릴 수 있어, 역광 상황에서도 균형 잡힌 영상을 제공할 수 있다.</li><li><span class="c-num">②</span> 해당 카메라는 0.034Lux와 같은 낮은 조도 환경에도 컬러 영상을 촬영할 수 있으며, IR LED가 활성화 된 경우 완전한 어둠에서도 영상을 기록할 수 있다.</li><li><span class="c-num">③</span> PoE(Power over Ethernet) 기술을 사용하면, 네트워크 케이블만으로도 전력 공급과 데이터 전송이 가능하며, 복잡한 전력 인프라를 구축하지 않고도 설치할 수 있다.</li><li><span class="c-num">④</span> 카메라의 HDR 기능은 주간에만 적용되며, 야간에는 IR LED와 결합해 조명이 충분할 때만 작동한다.</li></ul>
+</div>
+
+<div class="card" id="q058">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>058 / 110</span></div>
+    <div class="question-body"><span class="q-num">26.</span> 영상정보관제솔루션에서 Main/Master Server의 역할에 해당하지 않는 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 사용자 및 접근 권한 관리</li><li><span class="c-num">②</span> 영상 데이터의 저장 및 백업 관리</li><li><span class="c-num">③</span> 실시간 영상 모니터링 및 관리</li><li><span class="c-num">④</span> 적접적인 카메라 하드웨어의 유지보수 및 물리적 조정</li></ul>
+</div>
+
+<div class="card" id="q059">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>059 / 110</span></div>
+    <div class="question-body"><span class="q-num">29.</span> 통합관제센터에서 관리하는 영상정보처리기기 시스템에서 영상을 정상적으로 녹화하지 못하는 상황이 발생했다. 현장 방문을 최소화하기 위한 첫 번째 조치로 적절한 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> CCTV 기기의 소프트웨어 버전을 점검하고 최신 버전으로 업데이트한다.</li><li><span class="c-num">②</span> 원격으로 접속하여 녹화 설정 및 스케줄이 정상적으로 설정되었는지 확인한다.</li><li><span class="c-num">③</span> 네트워크 속도 측정을 통해 데이터 전송 속도가 충분한지 확인한다.</li><li><span class="c-num">④</span> 녹화 서버의 하드 디스크 상태를 점검하여 물리적 손상 여부를 확인한다.</li></ul>
+</div>
+
+<div class="card" id="q060">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>060 / 110</span></div>
+    <div class="question-body"><span class="q-num">33.</span> 지능형 영상정보관제시스템에서 과거 데이터를 바탕으로 미래의 사건을 예측하고, 이를 통해 사전 대응을 준비하는 분석 방법에 해당하는 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 실시간 데이터를 분석하여 즉각적인 경고를 생성하는 실시간 스트리밍 분석</li><li><span class="c-num">②</span> 영상 속 행동 패턴을 분석하여 이상 징후를 탐지하는 행동 분석</li><li><span class="c-num">③</span> 이전 데이터를 참고하여 과거 상황을 평가하는 데이터 후처리 분석</li><li><span class="c-num">④</span> 실시간 및 과거 데이터를 결합해 잠재적인 위험을 미리 감지하는 예지적 분석</li></ul>
+</div>
+
+<div class="card" id="q061">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>061 / 110</span></div>
+    <div class="question-body"><span class="q-num">38.</span> CCTV 관제실에서 영상 관제 중 긴급상황이 발생한 경우 대응 절차 또는 방법으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 발생한 이벤트에 대하여 영상 관제시스템으로부터 도출한 상황정보를 관제 담당자가 재확인한 후 사전에 정의된 위협지수의 수준에 따른 상황 대응을 수행한다.</li><li><span class="c-num">②</span> 정상단계의 경우 지속적으로 모니터링을 수행할 필요는 없으며, 관심 및 주의 단계의 경우 관련자들에게 발생 상황에 대하여 알린다.</li><li><span class="c-num">③</span> 경계 및 심각 단계의 경우 관련자 및 이해관계자들에게 알려서 상황 수습에 대한 대응을 할 수 있도록 한다.</li><li><span class="c-num">④</span> 신속한 상황전파를 위하여 재난 대응 관계기관의 비상연락망 등을 최신화한다.</li></ul>
+</div>
+
+<div class="card" id="q062">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>062 / 110</span></div>
+    <div class="question-body"><span class="q-num">4.</span> 공동주택 입주민이 관리사무소 직원에게 폭언하는 경우 촬영하는 것이 개인정보 보호법 위반인지 여부에 대한 '개인정보보호위원회'의 해석으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 개인정보 보호법에 따라 개인정보처리자의 정당한 이익을 달성하기 위하여 필요한 경우로서 명백하게 정보주체의 권리보다 우선하고, 개인정보처리자의 정당한 이익과 상당한 관련이 있으며, 합리적인 범위를 초과하지 아니하는 경우 정보주체의 동의를 받지 않고 개인정보를 수집할 수 있다는 규정을 근거로 촬영을 허용할 수 있다.</li><li><span class="c-num">②</span> 개인정보 유출 시 사업자의 통지 의무는 공개된 장소에 적법하게 설치된 고정형 영상정보처리기기를 통해 처리되는 개인정보가 유출된 경우에는 적용되지 않는다.</li><li><span class="c-num">③</span> 개인정보 보호법상 이동형 영상정보처리기기 관련 규정에 따라 정보주체가 촬영 사실을 명확히 표시하여 정보주체가 촬영 동의를 구하는 데 대해 거부 의사를 밝히지 않는 경우에는 촬영할 수 있다.</li><li><span class="c-num">④</span> 공동주택 내 입주민 및 방문객의 폭언·폭행 등이 발생하는 경우에 먼저 자제 요청을 하였음에도 이에 응하지 않을 경우 미리 안내하고 상황을 촬영할 수는 있으나, 개인정보 보호법에 따라 녹음은 할 수 없다.</li></ul>
+</div>
+
+<div class="card" id="q063">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>063 / 110</span></div>
+    <div class="question-body"><span class="q-num">13.</span> '국가 정보보안 기본지침'에서 제시한 '휴대용 저장매체 보안대책'에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 관리책임자는 사용자가 USB 메모리를 PC 등에 연결 시 자동실행 되지 않도록 하고 최신 백신으로 악성코드 감염여부를 자동 검사하도록 보안 설정하여야 한다.</li><li><span class="c-num">②</span> 관리책임자는 휴대용 저장매체를 비밀용, 일반용으로 구분하고 주기적으로 수량 및 보관 상태를 점검하며 반출·입을 통제하여야 한다.</li><li><span class="c-num">③</span> 관리책임자는 사용자의 휴대용 저장매체 무단 반출 및 미등록 휴대용 저장매체 사용 여부 등 보안관리 실태를 주기적으로 점검하여야 한다.</li><li><span class="c-num">④</span> 보안담당관은 비밀자료가 저장된 휴대용 저장매체는 매체별로 비밀등급 및 관리번호를 부여하고 비밀관리기록부에 등재 관리하여야 한다. 이 경우에는 매체 후면에 비밀등급 및 관리번호가 표시되도록 하여야 한다.</li></ul>
+</div>
+
+<div class="card" id="q064">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>064 / 110</span></div>
+    <div class="question-body"><span class="q-num">5.</span> 지방자치단체에서 도로에 해수를 방류하는 차량을 단속하기 위한 목적으로 '개인정보 보호법(이하 '보호법') 제25조 제1항 제4호'에 따라 영상정보처리기기를 설치·운영 가능 여부에 관한 설명으로 옳은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 해수를 도로에 무단으로 방류하는 행위는 「도로교통법」상의 단속 행위에는 해당하므로 지방자치단체에서는 설치·운영 가능하다.</li><li><span class="c-num">②</span> 모든 차 또는 노면전차의 운전자는 시·도 지방자치단체장이 교통안전과 교통질서 유지에 필요하다고 인정하여 지정·공고한 사항을 따라야 한다.</li><li><span class="c-num">③</span> 해수를 도로에 무단으로 방류하는 행위는 지방자치단체에서는 설치·운영 불가능하며, 해수 방류 차량에 대한 단속 권한은 경찰청 소관이다.</li><li><span class="c-num">④</span> 「개인정보 보호법」에 따라 교통안전과 질서유지를 위해 모든 차의 운전자는 운행 중 흙, 해수, 오물 등을 버리거나, 흙 또는 오물 등이 차량 바퀴에 묻은 상태로 운행하는 행위를 하여서는 아니 된다고 규정하고 있다.</li></ul>
+</div>
+
+<div class="card" id="q065">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>065 / 110</span></div>
+    <div class="question-body"><span class="q-num">6.</span> '영유아보육법 제15조의5(영상정보의 열람금지 등)'에 관련하여 폐쇄회로 텔레비전을 설치·관리하는 자가 영상정보를 열람할 수 없는 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 보호자가 자녀 또는 보호아동의 안전을 확인할 목적으로 열람시기·절차 및 방법 등 보건복지부령으로 정하는 바에 따라 영상정보의 원본 또는 사본 등을 요청하는 경우</li><li><span class="c-num">②</span> '개인정보 보호법 제2조제6호'가목에 따른 공공기관이 '제42조' 또는 '아동복지법 제66조' 등 법령에서 정하는 영유아의 안전업무 수행을 위하여 요청하는 경우</li><li><span class="c-num">③</span> 범죄의 수사와 공소의 제기 및 유지, 법원의 재판업무 수행을 위하여 필요한 경우</li><li><span class="c-num">④</span> 보육관련 안전업무를 수행하는 기관으로서 교사의 아동학대를 사전에 방지하기 위하여 원장이 열람하는 경우</li></ul>
+</div>
+
+<div class="card" id="q066">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>066 / 110</span></div>
+    <div class="question-body"><span class="q-num">13.</span> CCTV관제센터 내 데이터 및 개인정보영상에 대한 보안사항으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 개인영상정보 관리 대장 및 보호구역 출입자 명부 등을 기록·관리한다.</li><li><span class="c-num">②</span> 외장하드 및 USB를 이용할 수 있는 PC를 최소화하고 외부인 출입을 최소화 할 수 있게 원격작업을 권장한다.</li><li><span class="c-num">③</span> 수사기관에 영상제공 시, 영상파일 암호화하여 개인정보 유출을 방지한다.</li><li><span class="c-num">④</span> 외부인 출입 시, 카메라 차단 프로그램을 설치하거나 촬영 방지 스티커를 부착하여 영상정보 유출을 차단한다.</li></ul>
+</div>
+
+<div class="card" id="q067">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>067 / 110</span></div>
+    <div class="question-body"><span class="q-num">16.</span> VPN의 주요 기술에 대한 설명으로 옳은 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> TDM 기술, 패킷 스위칭 기술</li><li><span class="c-num">②</span> 패킷 스위칭 기술, 셀 스위칭 기술</li><li><span class="c-num">③</span> 암호화 기술, 라우팅 기술</li><li><span class="c-num">④</span> 셀 스위칭 기술, 암호화 기술</li></ul>
+</div>
+
+<div class="card" id="q068">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>068 / 110</span></div>
+    <div class="question-body"><span class="q-num">24.</span> 다음 중 영상정보관제솔루션(VMS)에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> VMS는 디지털 시스템에서 매트릭스 스위치 같은 역할을 아날로그에서 처리하는 시스템으로서, 영상 저장, 실시간 영상 관찰, 저장된 카메라 스트림의 재생 기능을 처리한다.</li><li><span class="c-num">②</span> VMS 시스템에서 하드웨어를 제어하는 것은 시스템 운영체제(윈도우, 리눅스)와 VMS 애플리케이션 소프트웨어가 작동되고 있는 컴퓨터이다.</li><li><span class="c-num">③</span> DVR 및 NVR은 독자적으로 기능을 수행하는 저장 장치로서, 윈도우나 리눅스에서 작동된다.</li><li><span class="c-num">④</span> 동시에 접속되는 다수의 컴퓨터로 구성된 디지털 시스템일 경우 VMS가 작동하는 컴퓨터를 통상 VMS 워크스테이션이라고 한다.</li></ul>
+</div>
+
+<div class="card" id="q069">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>069 / 110</span></div>
+    <div class="question-body"><span class="q-num">29.</span> 네트워크 이중화 구성을 통해 하나의 네트워크 장비에 장애가 발생하였을 때 다른 장비를 활용하여 대비하는 장애 조치 방법은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> Fail Over</li><li><span class="c-num">②</span> Network Delay</li><li><span class="c-num">③</span> Network Halting</li><li><span class="c-num">④</span> Active-Standby</li></ul>
+</div>
+
+<div class="card" id="q070">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>070 / 110</span></div>
+    <div class="question-body"><span class="q-num">28.</span> 다음은 영상에서 이벤트의 영역을 설정하고 해당 영역 이벤트를 정의하는 화면의 예이다. 이 중 옳은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 해당 이벤트 영역 내에서 차량만을 감지한다.</li><li><span class="c-num">②</span> 해당 범위 내에서 움직임이 확인되는 모든 사물에 대한 이벤트가 발생한다.</li><li><span class="c-num">③</span> 해당 이벤트 영역에서 차량 이주행 감지가 설정되어 있다.</li><li><span class="c-num">④</span> 해당 이벤트 영역에서 발생한 이벤트는 1초 주기로 보여준다.</li></ul>
+</div>
+
+<div class="card" id="q071">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>071 / 110</span></div>
+    <div class="question-body"><span class="q-num">32.</span> 다음 그림과 같이 절도 사건으로 의심되는 용의자의 인상착의 검은색 비지와 빨간색 상의 정보를 비롯하여 해당 지역의 카메라가 키워드로 입력된 정보를 바탕으로 동시에 팝업되어 키워드와 관련된 이벤트 지점의 주변까지 모니터링하는 관제기법은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 선별관제</li><li><span class="c-num">②</span> 크로스관제</li><li><span class="c-num">③</span> 투망감시관제</li><li><span class="c-num">④</span> 선형관제</li></ul>
+</div>
+
+<div class="card" id="q072">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>072 / 110</span></div>
+    <div class="question-body"><span class="q-num">4.</span> '개인정보 보호법'에서 제시한 '이동형 영상정보처리기기'에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 이동형 영상정보처리기기는 사람이 신체에 착용 또는 휴대하거나 이동 가능한 물체에 부착 또는 거치하여 사람 또는 사물의 영상 등을 촬영하거나 이를 유·무선망을 통하여 전송하는 장치를 말한다.</li><li><span class="c-num">②</span> 이동형 영상정보처리기기로 사람 또는 그 사람과 관련된 사물의 영상을 촬영하는 경우에는 불빛, 소리, 안내판 등 촬영 사실을 표시하고 알려야 한다.</li><li><span class="c-num">③</span> 인명의 구조·구급 등을 위하여 필요한 경우 이동형 영상정보처리기기로 사람 또는 그 사람과 관련된 사물의 영상을 촬영하여서는 아니 된다.</li><li><span class="c-num">④</span> 누구든지 불특정 다수가 이용하는 목욕실, 화장실, 발한실, 탈의실 등 개인의 사생활을 현저히 침해할 우려가 있는 장소의 내부를 볼 수 있는 곳에서 이동형 영상정보처리기기로 사람 또는 그 사람과 관련된 사물의 영상을 촬영하여서는 아니 된다.</li></ul>
+</div>
+
+<div class="card" id="q073">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>073 / 110</span></div>
+    <div class="question-body"><span class="q-num">10.</span> '국가 정보보안 기본지침'에 제시한 '휴대용 저장매체 보안대책'에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 관리책임자는 사용자의 휴대용 저장매체 무단 반출 및 미등록 휴대용 저장매체 사용 여부 등 보안관리 실태를 주기적으로 점검하여야 한다.</li><li><span class="c-num">②</span> 관리책임자는 휴대용 저장매체를 비밀용, 일반용으로 구분하고 주기적으로 수량 및 보관 상태를 점검하며 반출·입을 통제하여야 한다.</li><li><span class="c-num">③</span> 관리책임자는 사용자가 USB 메모리를 PC 등에 연결 시 자동실행 되지 않도록 하고 최신 백신으로 악성코드 감염여부를 수동 검사하도록 보안 설정하여야 한다.</li><li><span class="c-num">④</span> 보안담당관은 비밀자료가 저장된 휴대용 저장매체는 매체별로 비밀등급 및 관리번호를 부여하고 비밀관리기록부에 등재 관리하여야 한다. 이 경우에는 매체 전면에 비밀등급 및 관리번호가 표시되도록 하여야 한다.</li></ul>
+</div>
+
+<div class="card" id="q074">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>074 / 110</span></div>
+    <div class="question-body"><span class="q-num">15.</span> 영상 데이터의 암호화와 보안을 위해 사용되는 기술로, 카메라와 저장장치 간의 데이터 전송을 안전하게 보호하는 기술에 해당하지 않은 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> HTTP</li><li><span class="c-num">②</span> SSL</li><li><span class="c-num">③</span> FTPS</li><li><span class="c-num">④</span> VPN</li></ul>
+</div>
+
+<div class="card" id="q075">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>075 / 110</span></div>
+    <div class="question-body"><span class="q-num">16.</span> 무선 영상정보처리기기(CCTV)의 네트워크에서 사용되는 Wi-Fi 암호화 프로토콜 중 가장 안전한 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> WEP</li><li><span class="c-num">②</span> WEP3</li><li><span class="c-num">③</span> WPA</li><li><span class="c-num">④</span> WPA3</li></ul>
+</div>
+
+<div class="card" id="q076">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>076 / 110</span></div>
+    <div class="question-body"><span class="q-num">17.</span> IPv4에서 IP Address에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> Network ID 부분과 Host ID 부분으로 되어 있다.</li><li><span class="c-num">②</span> 인터넷상에서 컴퓨터를 찾기 위한 주소이다.</li><li><span class="c-num">③</span> '000.000.000.000' 부터 '255.255.255.255' 까지이다.</li><li><span class="c-num">④</span> 64bit의 숫자 조합으로 표현된다.</li></ul>
+</div>
+
+<div class="card" id="q077">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>077 / 110</span></div>
+    <div class="question-body"><span class="q-num">5.</span> 다음 법률적 근거를 바탕으로 영상정보처리기기 설치가 허용되는 장소의 설치 목적 평가기준에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 의료법 - 수술실 내 CCTV의 설치·운영</li><li><span class="c-num">②</span> 공동주택관리법 시행령, 주택건설기준 등에 관한 규정 - 200세대 이상의 아파트, 100세대 이상으로서 승강기가 설치된 아파트</li><li><span class="c-num">③</span> 주차장법 시행규칙 - 주차 대수 30대를 초과하는 규모의 자주식 주차장 관리</li><li><span class="c-num">④</span> 도시철도법 - 범죄 예방 및 교통사고 상황 파악</li></ul>
+</div>
+
+<div class="card" id="q078">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>078 / 110</span></div>
+    <div class="question-body"><span class="q-num">11.</span> 다음 중 악성코드의 설명으로 거리가 먼 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 컴퓨터 사용자의 승인 없이 컴퓨터에 침투하거나 설치되어 악의적인 행동을 하거나 시스템을 파괴하는 프로그램이다.</li><li><span class="c-num">②</span> 실행가능하지 않더라도 악의적인 목적을 위해 작성된 코드면 악성코드에 포함된다.</li><li><span class="c-num">③</span> 제작자로 인한 버그는 제외되나 광범위한 피해가 예상될 경우는 포함될 수 있다.</li><li><span class="c-num">④</span> 트로이 목마, 바이러스, 웜, 스파이웨어, 악성 봇, 루트킷, 스턱스넷, 백도어, 키로거, 애드웨어, 랜섬웨어 등 다양한 종류가 존재한다.</li></ul>
+</div>
+
+<div class="card" id="q079">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>079 / 110</span></div>
+    <div class="question-body"><span class="q-num">12.</span> 지능형영상관제 관리적 보안 처리 방안 중 인력보안에 대한 내용으로 옳은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 보안 임무 수행에 필요한 교육을 이수하여 임무 수행</li><li><span class="c-num">②</span> 방문객은 보안 책임자의 승인 후 출입하며 지정된 장소에서만 허용</li><li><span class="c-num">③</span> 전화/팩스/메신저/인터넷 사용은 보안 책임자의 통제 하에 사용</li><li><span class="c-num">④</span> 장비가 위치한 장소에 대한 비인가자의 출입 통제 및 보안 일지 작성</li></ul>
+</div>
+
+<div class="card" id="q080">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>080 / 110</span></div>
+    <div class="question-body"><span class="q-num">18.</span> CCTV 카메라의 렌즈에 대한 설명으로 맞지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 최소 조리개 F값이 작을수록 렌즈가 밝다고 할 수 있다.</li><li><span class="c-num">②</span> 고정초점렌즈는 초점거리가 고정인 렌즈를 의미한다.</li><li><span class="c-num">③</span> 렌즈의 최대 조리개 개방 값이 작을수록 렌즈가 밝다고 할 수 있다.</li><li><span class="c-num">④</span> 고정초점렌즈는 줌(Zoom) 기능을 사용할 수 없다.</li></ul>
+</div>
+
+<div class="card" id="q081">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>081 / 110</span></div>
+    <div class="question-body"><span class="q-num">20.</span> 주로 영상정보처리기기(CCTV) 아날로그카메라와 네트워크카메라에 사용되며 메가 픽셀화면(1280×720 이상)을 시리얼라인(동축)을 이용하여 전송하기 위한 디지털 영상 전송 규격은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> HD-SDI</li><li><span class="c-num">②</span> HD-TVI</li><li><span class="c-num">③</span> HD-CVI</li><li><span class="c-num">④</span> AHD</li></ul>
+</div>
+
+<div class="card" id="q082">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>082 / 110</span></div>
+    <div class="question-body"><span class="q-num">2.</span> '표준지침 제2조제9호'에서 제시된 용어의 정의를 바탕으로 '개인영상정보'에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 연속적으로 연결된 영상 형태의 정형 정보</li><li><span class="c-num">②</span> 주로 기계장치에 의한 정보의 자동 수집·처리</li><li><span class="c-num">③</span> 사적자치(정보주체 동의)에 의한 통제 곤란</li><li><span class="c-num">④</span> 범죄예방, 수사, 교통단속, 재산보호 등의 목적으로 이용</li></ul>
+</div>
+
+<div class="card" id="q083">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>083 / 110</span></div>
+    <div class="question-body"><span class="q-num">33.</span> "개인정보 비식별 조치 가이드라인 비식별 조치 기준"에서 제시하는 데이터 활용 시 사용되는 개인정보 비식별 기술로 옳지 않은 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 일반화 기술</li><li><span class="c-num">②</span> 변형 기술</li><li><span class="c-num">③</span> 가명화 기술</li><li><span class="c-num">④</span> 무작위화 기술</li></ul>
+</div>
+
+<div class="card" id="q084">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>084 / 110</span></div>
+    <div class="question-body"><span class="q-num">9.</span> 정보화 시대에 발생하는 통신윤리 문제점 중 지능형 영상정보관제와 관계가 깊은 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 바이러스 유포</li><li><span class="c-num">②</span> 개인정보 유출</li><li><span class="c-num">③</span> 저작권 침해</li><li><span class="c-num">④</span> 인터넷 금전거래 사기</li></ul>
+</div>
+
+<div class="card" id="q085">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>085 / 110</span></div>
+    <div class="question-body"><span class="q-num">16.</span> UPS OFF-LINE 방식에 대한 설명으로 올바른 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> UPS OFF-LINE 방식은 주 전원을 사용할 수 있을 때 주 전원에서 직접 부하에 전원을 공급한다.</li><li><span class="c-num">②</span> UPS OFF-LINE 방식은 주 전원을 사용할 수 있는 경우 백업 배터리 뱅크는 정류기 회로로 구성된 충전기 장치를 통해 DC로 충전된다.</li><li><span class="c-num">③</span> UPS OFF-LINE 방식은 정전 또는 큰 저전압 / 과전압 시 정적 스위치는 부하에서 주 전원을 차단하고 중요하지 않은 시간 내에 배터리를 부하에 연결한다.</li><li><span class="c-num">④</span> UPS OFF-LINE 방식은 주 전원을 출력에 연결하지 않고, 대신 정류기-인버터 조합을 통해 부하에 AC를 공급하고 동시에 배터리를 충전한다.</li></ul>
+</div>
+
+<div class="card" id="q086">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>086 / 110</span></div>
+    <div class="question-body"><span class="q-num">19.</span> 동축케이블(Coaxial Cable)에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 영상이나 데이터 신호를 전송하기 위해 사용되는 가장 전통적인 매체이다.</li><li><span class="c-num">②</span> EMI로부터의 차폐효과가 좋기 때문에 아날로그 CCTV에 사용할 경우 특별한 증폭기 없이도 영상신호를 수백 미터 떨어진 곳까지 전송할 수 있다.</li><li><span class="c-num">③</span> 두 가닥의 선을 사용하는 불평형 전송방식을 지원한다.</li><li><span class="c-num">④</span> 모든 신호는 중심도선만을 이용하여 전달된다.</li></ul>
+</div>
+
+<div class="card" id="q087">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>087 / 110</span></div>
+    <div class="question-body"><span class="q-num">36.</span> 통합관제에 운영되는 GIS 시스템의 기능과 가장 거리가 먼 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 통합관제 솔루션과 통합된 효율적 시설물 제어 및 관리</li><li><span class="c-num">②</span> 영상데이터의 효율적이고 통합적인 관리</li><li><span class="c-num">③</span> 비상 상황 시 사용자 정의 시나리오와 연동된 상황별 이벤트 처리</li><li><span class="c-num">④</span> 현장 시설물(CCTV, 비상벨)과 연동되는 다양한 상황 표출</li></ul>
+</div>
+
+<div class="card" id="q088">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>088 / 110</span></div>
+    <div class="question-body"><span class="q-num">10.</span> 다음 중 기술적 보안과 가장 거리가 먼 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> Biometrics</li><li><span class="c-num">②</span> IPS</li><li><span class="c-num">③</span> IDS</li><li><span class="c-num">④</span> VPN</li></ul>
+</div>
+
+<div class="card" id="q089">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>089 / 110</span></div>
+    <div class="question-body"><span class="q-num">15.</span> 다음 중 운영체제의 성능평가 기준에 해당하지 않는 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 처리 능력</li><li><span class="c-num">②</span> 반환 시간</li><li><span class="c-num">③</span> 사용 가능도</li><li><span class="c-num">④</span> 응답 시간</li></ul>
+</div>
+
+<div class="card" id="q090">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>090 / 110</span></div>
+    <div class="question-body"><span class="q-num">18.</span> Windows에서 지원하는 동영상 파일 형식으로 잘못된 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> AVI</li><li><span class="c-num">②</span> MP4</li><li><span class="c-num">③</span> MPG</li><li><span class="c-num">④</span> JPEG</li></ul>
+</div>
+
+<div class="card" id="q091">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>091 / 110</span></div>
+    <div class="question-body"><span class="q-num">21.</span> 다음 중 CCTV 시스템의 촬상부, 전송부, 감시부 3가지 요소 중 감시부 제어 장비에 해당하지 않은 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 광전송장비</li><li><span class="c-num">②</span> 광수신장비</li><li><span class="c-num">③</span> 고속이더넷</li><li><span class="c-num">④</span> 압축디코더</li></ul>
+</div>
+
+<div class="card" id="q092">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>092 / 110</span></div>
+    <div class="question-body"><span class="q-num">23.</span> 다음 중 해상도별 픽셀사이즈(Pixel Size)에 대한 내용으로 옳지 않은 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> VGA : 1024 × 768</li><li><span class="c-num">②</span> SXGA : 1280 × 1024</li><li><span class="c-num">③</span> FHD : 1920 × 1080</li><li><span class="c-num">④</span> UHD : 3840 × 2160</li></ul>
+</div>
+
+<div class="card" id="q093">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>093 / 110</span></div>
+    <div class="question-body"><span class="q-num">33.</span> 다음 중 자동차 번호판 검색 기능에 해당하는 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> DPR</li><li><span class="c-num">②</span> LPR</li><li><span class="c-num">③</span> UTM</li><li><span class="c-num">④</span> OCR</li></ul>
+</div>
+
+<div class="card" id="q094">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>094 / 110</span></div>
+    <div class="question-body"><span class="q-num">6.</span> 다음 중 주차대수 30대를 초과하는 규모의 자주식주차장으로서 지하식 또는 건축물식 노외주차장에서 영상정보처리기기를 설치·운영할 때의 사항으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 방범설비는 주차장의 바닥면으로부터 170cm 높이에 있는 사물을 알아볼 수 있도록 설치하여야 한다.</li><li><span class="c-num">②</span> 폐쇄회로 텔레비전 또는 네트워크 카메라와 녹화장치의 화면 수가 같아야 한다.</li><li><span class="c-num">③</span> 선명한 화질이 유지될 수 있도록 관리하여야 한다.</li><li><span class="c-num">④</span> 촬영된 자료는 컴퓨터보안시스템을 설치하여 2개월 이상 보관하여야 한다.</li></ul>
+</div>
+
+<div class="card" id="q095">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>095 / 110</span></div>
+    <div class="question-body"><span class="q-num">13.</span> 통합관제센터에서 데이터보안을 위한 로그기록에 대한 고려사항으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 외부 침입에 의한 모든 DB Query에 대한 모니터링</li><li><span class="c-num">②</span> DB Client별 별도 ID를 부여하여 DB에 접속하고 Log 기록</li><li><span class="c-num">③</span> 권한에 따른 DB 접근통제와 DB 접근 후 수행 명령에 대한 Log 기록</li><li><span class="c-num">④</span> 외주업체 직원이 행하는 일부의 DB Query에 대한 모니터링</li></ul>
+</div>
+
+<div class="card" id="q096">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>096 / 110</span></div>
+    <div class="question-body"><span class="q-num">27.</span> 통합관제 솔루션 기능에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 통합관제 서버관리 모듈 - 통합 연동되는 비디오, 알람, 사용자, 이벤트 정보를 관리 및 DB화하는 솔루션</li><li><span class="c-num">②</span> 카메라 정보 DB 모듈 - 비디오 서버 정보를 관리 및 DB화하는 솔루션</li><li><span class="c-num">③</span> 디렉터리 관리 모듈 - 영상녹화 파일 위치 정보, 이벤트 및 알람정보를 관리하는 솔루션</li><li><span class="c-num">④</span> 관리자 및 사용자 인증 모듈 - 사용자 저장소를 통하여 관리자 및 사용자의 이름과 비밀번호, 그룹정보, 상태를 통하여 인증을 수행하는 솔루션</li></ul>
+</div>
+
+<div class="card" id="q097">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>097 / 110</span></div>
+    <div class="question-body"><span class="q-num">29.</span> 다음 중 새로 설치한 하드디스크를 인식하지 못하는 경우 대처방안으로 적절하지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> CMOS 셋업에서 하드디스크 타입이 일치하는지 확인한다.</li><li><span class="c-num">②</span> 하드디스크의 데이터 케이블 연결이나 전원 케이블 연결을 확인한다.</li><li><span class="c-num">③</span> 부팅디스크로 부팅한 후 디스크 검사로 부트 섹트를 복구한다.</li><li><span class="c-num">④</span> 운영체제가 설치되어 있는 경우 재설치하고, 그 외에는 포맷한다.</li></ul>
+</div>
+
+<div class="card" id="q098">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>098 / 110</span></div>
+    <div class="question-body"><span class="q-num">35.</span> 지리정보시스템(GIS)의 자료취득 방법과 가장 거리가 먼 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 투영법에 의한 자료취득 방법</li><li><span class="c-num">②</span> 항공사진 측량에 의한 방법</li><li><span class="c-num">③</span> 일반 측량에 의한 방법</li><li><span class="c-num">④</span> 원격 탐사에 의한 방법</li></ul>
+</div>
+
+<div class="card" id="q099">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>099 / 110</span></div>
+    <div class="question-body"><span class="q-num">18.</span> L3스위치(라우터)의 주요 기능이 아닌 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> LAN간의 연결</li><li><span class="c-num">②</span> 네트워크간 연결</li><li><span class="c-num">③</span> 보안관리</li><li><span class="c-num">④</span> 데이터 압축 및 해제</li></ul>
+</div>
+
+<div class="card" id="q100">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>100 / 110</span></div>
+    <div class="question-body"><span class="q-num">21.</span> 다음 중 시리얼 통신 방식으로 PAN/TILT를 제어하는 스피드 돔 카메라의 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> RS-422, RS-485 통신을 이용한다.</li><li><span class="c-num">②</span> RS-422방식은 4가닥의 전선을 이용한다.</li><li><span class="c-num">③</span> RS-485방식은 2가닥의 전선을 이용한다.</li><li><span class="c-num">④</span> RS-485방식은 전이중통신을 사용한다.</li></ul>
+</div>
+
+<div class="card" id="q101">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>101 / 110</span></div>
+    <div class="question-body"><span class="q-num">26.</span> 다음 그림과 같이 객체의 방향성 움직임 변수에 시간 변수까지 더해진 MD 기능으로 마우스를 이용하여 영역을 지정하고 시간을 설정하면 영역 외부에서 영역 내부로 객체가 이동하고 설정된 시간 동안 영역 내부에 머무르는 경우 MD 이벤트를 발생시키는 이벤트 검출 기능 모드는?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> General 모드</li><li><span class="c-num">②</span> Tripwire 모드</li><li><span class="c-num">③</span> Intrusion 모드</li><li><span class="c-num">④</span> Abandoned 모드</li></ul>
+</div>
+
+<div class="card" id="q102">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>102 / 110</span></div>
+    <div class="question-body"><span class="q-num">2.</span> CCTV 통합관제센터에 상주하는 파견 경찰의 주요업무에 해당하지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 각종 사건·사고의 신속한 대응을 위한 방범용 CCTV 관제 및 현장 출동 지휘</li><li><span class="c-num">②</span> 차량판독 및 방범용 CCTV 수사자료 확인</li><li><span class="c-num">③</span> CCTV 관제 및 운영 책임, 관제 모니터링 요원 긴급 상황 대처 교육</li><li><span class="c-num">④</span> 긴급 상황 발생 시 판단에 따라 선 조치 및 지시</li></ul>
+</div>
+
+<div class="card" id="q103">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>103 / 110</span></div>
+    <div class="question-body"><span class="q-num">10.</span> 관리적 보안 대상에 따른 처리 방안 중 시설보안 내용으로 해당하지 않는 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 사업 개발을 위해 사용되는 장비는 보안이 잘 유지되는 장소에 보관</li><li><span class="c-num">②</span> 시설 및 정보시스템 정보보호 활동 정책 수립</li><li><span class="c-num">③</span> 장비가 위치한 장소에 대한 비인가자의 출입 통제 및 보안 일지 작성</li><li><span class="c-num">④</span> 전화, 팩스, 메신저, 인터넷 사용은 보안 책임자의 통제 하에 사용</li></ul>
+</div>
+
+<div class="card" id="q104">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>104 / 110</span></div>
+    <div class="question-body"><span class="q-num">20.</span> 내부 또는 외부 하우징에 LED를 장착하여 주긴뿐 아니라 야간에 피사체를 촬영하기 위해서 다수의 적외선 LED를 이용하는 카메라에 해당하는 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 적외선 카메라</li><li><span class="c-num">②</span> 돔형 카메라</li><li><span class="c-num">③</span> 인공지능(AI) 카메라</li><li><span class="c-num">④</span> 후드형 카메라</li></ul>
+</div>
+
+<div class="card" id="q105">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>105 / 110</span></div>
+    <div class="question-body"><span class="q-num">30.</span> 하나의 네트워크 장비에 장애가 발생되었을 때 다른 장비를 활용하여 장애에 대비하는 이중화 환경 구성을 의미하는 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> Fail Over</li><li><span class="c-num">②</span> Fault Tolerant</li><li><span class="c-num">③</span> Network Halting</li><li><span class="c-num">④</span> Active-Standby</li></ul>
+</div>
+
+<div class="card" id="q106">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>106 / 110</span></div>
+    <div class="question-body"><span class="q-num">34.</span> 지리정보시스템(GIS)에 대한 설명으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 도형자료와 속성자료를 연결하여 처리하는 정보 시스템이다.</li><li><span class="c-num">②</span> 하드웨어, 소프트웨어, 지리자료, 인적자원의 통합적 시스템이다.</li><li><span class="c-num">③</span> 인공위성을 이용한 각종 공간정보를 취합하여 위치를 결정하는 시스템이다.</li><li><span class="c-num">④</span> 지리자료와 공간문제의 해결을 위한 자료의 활용에 중점을 둔다.</li></ul>
+</div>
+
+<div class="card" id="q107">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>107 / 110</span></div>
+    <div class="question-body"><span class="q-num">4.</span> 아파트 단지에 설치된 영상정보처리기기의 관리 기준으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 선명한 화질이 유지될 수 있도록 관리할 것</li><li><span class="c-num">②</span> 촬영된 자료는 컴퓨터보안시스템을 설치하여 60일 이상 보관할 것</li><li><span class="c-num">③</span> 영상정보처리기기가 고장 난 경우에는 지체없이 수리할 것</li><li><span class="c-num">④</span> 영상정보처리기기의 안전관리자를 지정하여 관리할 것</li></ul>
+</div>
+
+<div class="card" id="q108">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>108 / 110</span></div>
+    <div class="question-body"><span class="q-num">11.</span> 개인용 컴퓨터의 정보 보안을 위한 방안으로 옳지 않은 것은?</div>
+    
+    <ul class="choices"><li><span class="c-num">①</span> 컴퓨터를 사용하지 않을 때도 전원을 켜놓고 네트워크를 활성화한다.</li><li><span class="c-num">②</span> 백신 프로그램과 OS Patch를 항상 최신 상태로 유지시킨다.</li><li><span class="c-num">③</span> 인터넷 뱅킹 등에 사용하는 개인 인증서 파일은 PGP와 같은 프로그램을 이용하여 암호 저장한다.</li><li><span class="c-num">④</span> S/W 기반의 개인 방화벽을 설치·운영한다.</li></ul>
+</div>
+
+<div class="card" id="q109">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>109 / 110</span></div>
+    <div class="question-body"><span class="q-num">27.</span> 다음 그림은 문제차량이 검출되어 이동 경로가 파악되고 있는 과정이다. CCTV 촬영 방향을 표출하며 차량 이동 경로를 예측할 수 있는 CCTV 제어기능에 속하지 않는 것은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 공간정보를 통한 PTZ제어</li><li><span class="c-num">②</span> 프리셋 연동 기능</li><li><span class="c-num">③</span> 투어링 기능</li><li><span class="c-num">④</span> 공간 영역 CCTV 추출</li></ul>
+</div>
+
+<div class="card" id="q110">
+    <div class="meta"><span>틀린문제 컬렉션</span><span>110 / 110</span></div>
+    <div class="question-body"><span class="q-num">31.</span> 영상정보처리기기(CCTV) 부근에서 SOS 알람등 이벤트가 발생할 경우 근처에 있는 5개의 카메라가 모니터에 동시에 팝업되어 이벤트가 발생한 지점의 주변 상황까지 모니터링 할 수 있는 관제기법은?</div>
+    
+    <ul class="choices" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><li><span class="c-num">①</span> 선별관제</li><li><span class="c-num">②</span> 순환관제</li><li><span class="c-num">③</span> 투망감시관제</li><li><span class="c-num">④</span> 선택관제</li></ul>
+</div>
+    </main>
+</div>
+
+<a href="#" class="top-btn" title="맨 위로">↑</a>
+
+<div class="img-modal" id="imgModal">
+    <span class="close-modal">&times;</span>
+    <img id="modalImg" src="" alt="확대 이미지">
+</div>
+
+<script>
+const modal = document.getElementById('imgModal');
+const modalImg = document.getElementById('modalImg');
+modal.addEventListener('click', () => modal.classList.remove('show'));
+
+function openModal(src) {
+    modalImg.src = src;
+    modal.classList.add('show');
+}
+
+function toggleAll(open) {
+    document.querySelectorAll('.card').forEach(c => c.classList.toggle('open', open));
+}
+
+document.querySelectorAll('.card').forEach((card, i) => {
+    const meta = card.querySelector('.meta');
+    const qBody = card.querySelector('.question-body, .qb');
+    const titleText = qBody ? qBody.textContent.trim() : '';
+    const num = String(i + 1).padStart(3, '0');
+    const imgFile = 'q' + num + '.png';
+
+    const header = document.createElement('div');
+    header.className = 'card-header';
+
+    const arrow = document.createElement('span');
+    arrow.className = 'toggle-icon';
+    arrow.textContent = '▶';
+
+    const title = document.createElement('span');
+    title.className = 'header-title';
+    if (meta) {
+        const idx = meta.querySelector('span:last-child')?.textContent || '';
+        title.innerHTML = '<span class="q-num">' + idx + '</span> ' +
+            titleText.substring(titleText.indexOf('.') + 1).trim().substring(0, 80) +
+            (titleText.length > 80 ? '…' : '');
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+
+    const imgBtn = document.createElement('button');
+    imgBtn.textContent = '🖼 원본';
+    imgBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const wrap = card.querySelector('.screenshot-wrap');
+        if (wrap) {
+            wrap.remove();
+            imgBtn.textContent = '🖼 원본';
+        } else {
+            const div = document.createElement('div');
+            div.className = 'screenshot-wrap';
+            const img = document.createElement('img');
+            img.src = imgFile;
+            img.alt = '문제 ' + num + ' 스크린샷';
+            img.loading = 'lazy';
+            img.addEventListener('click', (ev) => { ev.stopPropagation(); openModal(imgFile); });
+            div.appendChild(img);
+            const headerEl = card.querySelector('.card-header');
+            headerEl.insertAdjacentElement('afterend', div);
+            imgBtn.textContent = '🖼 숨기기';
+        }
+    });
+
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = '📋 복사';
+    copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const clone = card.cloneNode(true);
+        clone.querySelector('.card-header')?.remove();
+        clone.querySelector('.screenshot-wrap')?.remove();
+        const text = clone.innerText.trim();
+        navigator.clipboard.writeText(text).then(() => {
+            copyBtn.textContent = '✅ 복사됨';
+            copyBtn.classList.add('copied');
+            setTimeout(() => {
+                copyBtn.textContent = '📋 복사';
+                copyBtn.classList.remove('copied');
+            }, 1500);
+        });
+    });
+
+    actions.appendChild(imgBtn);
+    actions.appendChild(copyBtn);
+
+    header.appendChild(arrow);
+    header.appendChild(title);
+    header.appendChild(actions);
+
+    const content = document.createElement('div');
+    content.className = 'card-content';
+    while (card.firstChild) content.appendChild(card.firstChild);
+
+    card.appendChild(header);
+    card.appendChild(content);
+
+    header.addEventListener('click', () => card.classList.toggle('open'));
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') modal.classList.remove('show');
+});
+</script>
+
+</body>
+</html>
