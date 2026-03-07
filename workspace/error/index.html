@@ -4200,9 +4200,9 @@ function openSettings(){
   const oTemp = parseFloat(aiSettings.openai.temperature ?? 1.0);
   document.getElementById('openaiTemp').value = oTemp;
   document.getElementById('openaiTempVal').textContent = oTemp.toFixed(1);
-  // 옵션 UI 갱신
-  onGeminiModelChange();
-  onOpenAIModelChange();
+  // 옵션 UI 갱신 (모달 열 때는 기본값 리셋 없이 토글만)
+  onGeminiModelChange(true);
+  onOpenAIModelChange(true);
   document.getElementById('settingsModal').classList.add('show');
 }
 
@@ -4210,7 +4210,7 @@ function closeSettings(){
   document.getElementById('settingsModal').classList.remove('show');
 }
 
-function onGeminiModelChange(){
+function onGeminiModelChange(keepValues){
   const model = document.getElementById('geminiModelSelect').value;
   const info = GEMINI_CATALOG.find(m=>m.id===model) || GEMINI_CATALOG[1];
   const color = TIER_COLOR[info.tier] || '#6b7280';
@@ -4223,12 +4223,14 @@ function onGeminiModelChange(){
   const showBudget = info.thinking && !isGemini3;
   document.getElementById('geminiThinkingLevelRow').classList.toggle('s-hidden', !showLevel);
   document.getElementById('geminiThinkingRow').classList.toggle('s-hidden', !showBudget);
-  // 모델 변경 시 기본값 리셋
-  if(showLevel) document.getElementById('geminiThinkingLevel').value = 'high';
-  if(showBudget) document.getElementById('geminiThinkingBudget').value = '0';
+  // 사용자가 직접 모델을 변경했을 때만 기본값 리셋 (모달 열 때는 유지)
+  if(!keepValues){
+    if(showLevel) document.getElementById('geminiThinkingLevel').value = 'high';
+    if(showBudget) document.getElementById('geminiThinkingBudget').value = '0';
+  }
 }
 
-function onOpenAIModelChange(){
+function onOpenAIModelChange(keepValues){
   const model = document.getElementById('openaiModelSelect').value;
   const info = OPENAI_CATALOG.find(m=>m.id===model) || OPENAI_CATALOG[3];
   const color = TIER_COLOR[info.tier] || '#6b7280';
@@ -4238,13 +4240,15 @@ function onOpenAIModelChange(){
     `<span style="color:var(--text)">${info.desc}</span>`;
   document.getElementById('openaiReasoningRow').classList.toggle('s-hidden', !info.reasoning);
   document.getElementById('openaiTempRow').classList.toggle('s-hidden', info.reasoning);
-  // 모델 변경 시 기본값 리셋
-  if(info.reasoning){
-    document.getElementById('openaiReasoningEffort').value = 'high';
-  } else {
-    const temp = document.getElementById('openaiTemp');
-    temp.value = 1.0;
-    document.getElementById('openaiTempVal').textContent = '1.0';
+  // 사용자가 직접 모델을 변경했을 때만 기본값 리셋 (모달 열 때는 유지)
+  if(!keepValues){
+    if(info.reasoning){
+      document.getElementById('openaiReasoningEffort').value = 'high';
+    } else {
+      const temp = document.getElementById('openaiTemp');
+      temp.value = 1.0;
+      document.getElementById('openaiTempVal').textContent = '1.0';
+    }
   }
 }
 
