@@ -1,5 +1,6 @@
 // Vercel 서버리스 함수 - OpenAI API 프록시 (SSE 스트리밍)
 const OpenAI = require('openai');
+const { verifyToken, extractToken } = require('./auth');
 
 const SYSTEM_PROMPT =
   '당신은 영상정보관리사 자격증 시험 전문 강사입니다. 주어진 문제를 분석하고 다음 형식으로 답변해주세요:\n\n' +
@@ -37,6 +38,12 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: 'POST 요청만 허용됩니다.' });
   }
 
+  // 인증 확인
+  const user = verifyToken(extractToken(req));
+  if (!user) {
+    return res.status(401).json({ error: '로그인이 필요합니다.' });
+  }
+
   try {
     const { text, imageBase64, mimeType, model, temperature, reasoningEffort, stream: useStream } = req.body;
     // 허용된 모델만 사용 (화이트리스트)
@@ -62,11 +69,13 @@ module.exports = async (req, res) => {
       : text;
 
     // 완성 파라미터 구성
+    // o-시리즈/gpt-5.4는 system 역할 미지원 → developer 역할 사용
+    const systemRole = isOSeries ? 'developer' : 'system';
     const completionParams = {
       model: selectedModel,
       max_tokens: 2000,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: systemRole, content: SYSTEM_PROMPT },
         { role: 'user', content: userContent },
       ],
     };
@@ -98,12 +107,21 @@ module.exports = async (req, res) => {
       res.setHeader('X-Accel-Buffering', 'no');
 
       completionParams.stream = true;
-      console.log('[OpenAI] 스트리밍 요청:', selectedModel, JSON.stringify(completionParams.reasoning_effort || completionParams.temperature));
+      console.log('[OpenAI] 스트리밍 요청:', selectedModel, 'role:', systemRole,
+        'reasoning_effort:', completionParams.reasoning_effort,
+        'temperature:', completionParams.temperature);
       const stream = await openai.chat.completions.create(completionParams);
 
       let hasContent = false;
       let refusalText = '';
+      let chunkIndex = 0;
       for await (const chunk of stream) {
+        // 처음 3개 chunk 구조를 로깅 (디버깅용)
+        if (chunkIndex < 3) {
+          console.log(`[OpenAI] chunk[${chunkIndex}]:`, JSON.stringify(chunk).slice(0, 500));
+        }
+        chunkIndex++;
+
         const delta = chunk.choices?.[0]?.delta;
         // 거부 응답 감지
         if (delta?.refusal) {
@@ -117,6 +135,7 @@ module.exports = async (req, res) => {
           res.write(`: heartbeat\n\n`);
         }
       }
+      console.log(`[OpenAI] 스트리밍 종료: 총 ${chunkIndex} chunks, hasContent: ${hasContent}`);
       // 거부 응답인 경우 에러로 전송
       if (refusalText) {
         console.warn('[OpenAI] 모델 거부:', selectedModel, refusalText);

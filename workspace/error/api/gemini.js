@@ -1,4 +1,5 @@
 // Vercel 서버리스 함수 - Gemini API 프록시 (SSE 스트리밍 지원)
+const { verifyToken, extractToken } = require('./auth');
 const SYSTEM_PROMPT =
   '당신은 영상정보관리사 자격증 시험 전문 강사입니다. 주어진 문제를 분석하고 다음 형식으로 답변해주세요:\n\n' +
   '**정답**: [번호 및 내용]\n\n' +
@@ -28,6 +29,12 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용됩니다.' });
+
+  // 인증 확인
+  const user = verifyToken(extractToken(req));
+  if (!user) {
+    return res.status(401).json({ error: '로그인이 필요합니다.' });
+  }
 
   try {
     const { text, imageBase64, mimeType, model, temperature, thinkingBudget, thinkingLevel, stream: useStream } = req.body;

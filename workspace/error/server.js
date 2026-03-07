@@ -132,6 +132,20 @@ app.post('/api/openai', async (req, res) => {
   }
 });
 
+// ── POST /api/signup ─────────────────────────────────
+const signupHandler = require('./api/signup');
+app.post('/api/signup', (req, res) => signupHandler(req, res));
+
+// ── /api/admin (GET, POST) ──────────────────────────
+const adminHandler = require('./api/admin');
+app.get('/api/admin', (req, res) => adminHandler(req, res));
+app.post('/api/admin', (req, res) => adminHandler(req, res));
+
+// ── /api/questions (GET, POST) ──────────────────────
+const questionsHandler = require('./api/questions');
+app.get('/api/questions', (req, res) => questionsHandler(req, res));
+app.post('/api/questions', (req, res) => questionsHandler(req, res));
+
 // ── POST /api/law ────────────────────────────────────
 const lawHandler = require('./api/law');
 app.post('/api/law', (req, res) => lawHandler(req, res));
