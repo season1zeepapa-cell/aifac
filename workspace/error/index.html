@@ -112,7 +112,10 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .db-resize-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   width:2px;height:32px;border-radius:2px;background:var(--border)}
 .db-resize-handle:hover::after,.db-resize-handle.active::after{background:var(--accent)}
-.db-quiz-layout .card{scroll-margin-top:100px}
+.db-quiz-layout .card{scroll-margin-top:100px;overflow:hidden}
+.db-quiz-layout .card.open{overflow:visible}
+.db-quiz-layout .card.open .card-content{max-height:none;overflow:visible}
+.db-quiz-layout .explanation.show{max-height:none;overflow:visible}
 .db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
 .db-filter-btn{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);
   background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
