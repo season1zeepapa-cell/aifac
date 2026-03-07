@@ -4186,7 +4186,7 @@ function loadSettings(){
 }
 
 function openSettings(){
-  loadSettings();
+  // 현재 메모리에 있는 aiSettings 값을 UI에 반영 (리셋하지 않음)
   // Gemini
   document.getElementById('geminiModelSelect').value = aiSettings.gemini.model;
   document.getElementById('geminiThinkingLevel').value = aiSettings.gemini.thinkingLevel ?? 'high';
