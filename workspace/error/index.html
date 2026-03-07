@@ -102,8 +102,11 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .admin-page-title{font-size:20px;font-weight:800;color:var(--text);margin-bottom:20px;
   display:flex;align-items:center;gap:8px}
 /* DB 문제풀이 필터 버튼 */
-/* DB 문제풀이 페이지 카드 헤더: sticky 비활성화 (admin-page 안) */
-.admin-page .card-header{position:relative;top:auto}
+/* DB 문제풀이 레이아웃 */
+.db-quiz-layout{display:none;gap:0;max-width:1320px;margin:0 auto;padding:0 20px}
+.db-quiz-layout.show{display:flex}
+.db-quiz-layout .sidebar{top:94px}
+.db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
 .db-filter-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);
   background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
   cursor:pointer;transition:.2s}
@@ -6390,18 +6393,30 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 
 <!-- AI설정 페이지 -->
 <!-- DB 문제풀이 (검증용) -->
-<div class="admin-page" id="pageDbQuiz" style="max-width:1100px">
-  <div class="admin-page-title">📝 DB 문제풀이 <span style="font-size:12px;color:var(--text-sub);font-weight:400">(검증용 — DB 데이터로 렌더링)</span></div>
-  <!-- 그룹 필터 -->
-  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap" id="dbQuizFilters"></div>
-  <!-- 카드 영역 -->
-  <div id="dbQuizCards"></div>
-  <div id="dbQuizLoading" style="text-align:center;padding:40px;color:var(--text-sub);display:none">
-    <div class="spinner"></div> 문제 불러오는 중...
-  </div>
-  <div id="dbQuizEmpty" style="text-align:center;padding:40px;color:var(--text-sub);display:none">
-    표시할 문제가 없습니다.
-  </div>
+<!-- DB 문제풀이 (사이드바 + 메인 레이아웃) -->
+<div class="db-quiz-layout" id="pageDbQuiz" style="display:none">
+  <!-- 사이드바 -->
+  <nav class="sidebar db-sidebar" id="dbSidebar">
+    <div class="sidebar-title">
+      <span class="sidebar-title-text">목차</span>
+      <button class="sidebar-toggle" id="dbSidebarToggle" title="목차 접기/펼치기" aria-label="목차 접기/펼치기">◀</button>
+    </div>
+    <div class="toc-jump">
+      <input type="number" id="dbTocJumpInput" min="1" max="190" placeholder="번호 입력 → Enter">
+    </div>
+    <div class="toc-groups" id="dbTocGroups"></div>
+  </nav>
+  <!-- 메인 -->
+  <main class="main">
+    <div style="display:flex;gap:8px;margin:10px 0 16px;flex-wrap:wrap;padding:0 4px" id="dbQuizFilters"></div>
+    <div id="dbQuizCards"></div>
+    <div id="dbQuizLoading" style="text-align:center;padding:40px;color:var(--text-sub);display:none">
+      <div class="spinner"></div> 문제 불러오는 중...
+    </div>
+    <div id="dbQuizEmpty" style="text-align:center;padding:40px;color:var(--text-sub);display:none">
+      표시할 문제가 없습니다.
+    </div>
+  </main>
 </div>
 
 <div class="admin-page" id="pageSettings">
@@ -6908,6 +6923,7 @@ function navTo(page){
 
   // 페이지 섹션 전환
   document.querySelectorAll('.admin-page').forEach(el => el.classList.remove('show'));
+  document.getElementById('pageDbQuiz').classList.remove('show');
   if(page === 'questions'){
     document.getElementById('pageQuestions').classList.add('show');
     loadQuestionMeta().then(() => loadQuestionList());
@@ -6921,6 +6937,7 @@ function navTo(page){
   } else if(page === 'dbquiz'){
     document.getElementById('pageDbQuiz').classList.add('show');
     loadDbQuiz();
+    return; // DB 문제풀이는 별도 레이아웃이므로 여기서 종료
   }
 
   window.scrollTo({top:0});
@@ -8488,7 +8505,81 @@ async function loadDbQuiz(examId) {
   initQuizChoices();
   autoLinkLaws();
   initLawKeywords();
+
+  // 사이드바 TOC 생성
+  buildDbToc(filtered);
 }
+
+// DB 사이드바 TOC 생성
+function buildDbToc(questions) {
+  const groupsEl = document.getElementById('dbTocGroups');
+  groupsEl.innerHTML = '';
+
+  // 시험 그룹별로 분류
+  const groups = {};
+  questions.forEach(q => {
+    const key = q.exam_id;
+    if (!groups[key]) groups[key] = { title: q.exam_title || '기타', items: [] };
+    groups[key].items.push(q);
+  });
+
+  Object.keys(groups).forEach(key => {
+    const grp = groups[key];
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'toc-group';
+
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'toc-group-title open';
+    const first = grp.items[0].question_number;
+    const last = grp.items[grp.items.length - 1].question_number;
+    titleDiv.innerHTML = `<span class="toc-arrow">▶</span> ${grp.title}<span class="toc-gtag">${first}-${last}</span>`;
+    titleDiv.addEventListener('click', () => titleDiv.classList.toggle('open'));
+
+    const bodyDiv = document.createElement('div');
+    bodyDiv.className = 'toc-group-body';
+
+    grp.items.forEach(q => {
+      const num = String(q.question_number).padStart(3, '0');
+      const cardId = 'db-q' + num;
+      const tocLink = document.createElement('a');
+      tocLink.className = 'toc-item';
+      tocLink.href = '#' + cardId;
+      tocLink.dataset.num = q.question_number;
+      tocLink.innerHTML = `<span class="toc-idx">${num}</span>`;
+      tocLink.addEventListener('click', e => {
+        e.preventDefault();
+        const targetCard = document.getElementById(cardId);
+        if (!targetCard) return;
+        targetCard.classList.add('open');
+        targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      bodyDiv.appendChild(tocLink);
+    });
+
+    groupDiv.appendChild(titleDiv);
+    groupDiv.appendChild(bodyDiv);
+    groupsEl.appendChild(groupDiv);
+  });
+}
+
+// DB 사이드바 토글
+document.getElementById('dbSidebarToggle').addEventListener('click', () => {
+  document.getElementById('dbSidebar').classList.toggle('collapsed');
+});
+
+// DB 번호 점프
+document.getElementById('dbTocJumpInput').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const val = parseInt(e.target.value);
+  if (!val || val < 1 || val > 190) return;
+  const targetId = 'db-q' + String(val).padStart(3, '0');
+  const targetCard = document.getElementById(targetId);
+  if (!targetCard) return;
+  targetCard.classList.add('open');
+  targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  e.target.value = '';
+  e.target.blur();
+});
 
 function renderDbQuizFilters() {
   const filtersEl = document.getElementById('dbQuizFilters');
