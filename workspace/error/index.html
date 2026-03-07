@@ -7407,6 +7407,52 @@ function showLawTooltip(el){
   }
 }
 
+// 해설·본문 안의 「법령명」을 자동으로 .law 링크로 변환
+function autoLinkLaws(){
+  // 카드 내부의 텍스트 노드에서 「...」 패턴을 찾아 <span class="law"> 로 감싼다
+  const targets = document.querySelectorAll('.card-content, .question-body');
+  const lawPattern = /「([^」]{2,40})」/g;
+
+  targets.forEach(container => {
+    if(container.dataset.lawLinked) return;
+    container.dataset.lawLinked = '1';
+
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+    const textNodes = [];
+    while(walker.nextNode()) textNodes.push(walker.currentNode);
+
+    textNodes.forEach(node => {
+      const text = node.textContent;
+      if(!lawPattern.test(text)) return;
+      lawPattern.lastIndex = 0;
+
+      // 이미 .law 안에 있으면 스킵
+      if(node.parentElement.classList.contains('law')) return;
+
+      const frag = document.createDocumentFragment();
+      let lastIdx = 0;
+      let m;
+      while((m = lawPattern.exec(text)) !== null){
+        // 매치 이전 텍스트
+        if(m.index > lastIdx){
+          frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
+        }
+        // 법령 링크 span 생성
+        const span = document.createElement('span');
+        span.className = 'law';
+        span.textContent = m[0]; // 「법령명」 전체 포함
+        frag.appendChild(span);
+        lastIdx = m.index + m[0].length;
+      }
+      // 나머지 텍스트
+      if(lastIdx < text.length){
+        frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+      }
+      node.parentNode.replaceChild(frag, node);
+    });
+  });
+}
+
 // 모든 .law 요소에 클릭 이벤트
 function initLawKeywords(){
   document.querySelectorAll('.law').forEach(el=>{
@@ -8359,7 +8405,8 @@ restoreAllReplacedExp();
 
 // 카드 초기화 완료 후 퀴즈 핸들러 실행
 initQuizChoices();
-// 법령 키워드 클릭 이벤트 초기화
+// 법령 키워드 자동 링크 변환 → 클릭 이벤트 초기화
+autoLinkLaws();
 initLawKeywords();
 
 // 사이드바 토글
