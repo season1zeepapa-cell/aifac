@@ -3185,7 +3185,7 @@ function createMemoArea(card, questionId) {
   btnRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center';
   const addBtn = document.createElement('button');
   addBtn.className = 'memo-add-btn';
-  addBtn.textContent = '메모 추가';
+  addBtn.textContent = '메모 / 파일 추가';
   btnRow.appendChild(fileRow);
   btnRow.appendChild(addBtn);
   inputArea.appendChild(ta);
@@ -3237,7 +3237,7 @@ function createMemoArea(card, questionId) {
       showToast('저장 실패: ' + e.message, 'error');
     } finally {
       addBtn.disabled = false;
-      addBtn.textContent = '메모 추가';
+      addBtn.textContent = '메모 / 파일 추가';
     }
   });
 
