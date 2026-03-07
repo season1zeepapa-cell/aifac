@@ -4214,10 +4214,15 @@ function openSettings(){
   document.getElementById('geminiTemp').value = gTemp;
   document.getElementById('geminiTempVal').textContent = gTemp.toFixed(1);
 
-  setSelectValue('openaiReasoningEffort', aiSettings.openai.reasoningEffort ?? 'high');
+  const targetEffort = aiSettings.openai.reasoningEffort ?? 'high';
+  setSelectValue('openaiReasoningEffort', targetEffort);
+  const actualEffort = document.getElementById('openaiReasoningEffort').value;
   const oTemp = parseFloat(aiSettings.openai.temperature ?? 1.0);
   document.getElementById('openaiTemp').value = oTemp;
   document.getElementById('openaiTempVal').textContent = oTemp.toFixed(1);
+
+  // 디버그: 세팅 직후 실제 값 확인
+  alert('메모리: ' + targetEffort + '\nDOM 세팅 후: ' + actualEffort + '\n일치: ' + (targetEffort === actualEffort));
 }
 
 function closeSettings(){
