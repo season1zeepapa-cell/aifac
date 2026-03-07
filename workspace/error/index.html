@@ -267,8 +267,8 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .dbg-tag.model{background:var(--accent);color:#fff}
 .dbg-code{background:var(--card-bg);border:1px solid var(--ai-resp-border);border-radius:6px;padding:6px 10px;
   font-size:11px;line-height:1.6;color:var(--text-sub);max-height:400px;overflow-y:auto;word-break:break-all;flex:1}
-.dbg-sys{max-height:40px;opacity:.6;cursor:pointer;transition:max-height .3s}
-.dbg-sys:hover,.dbg-sys.expanded{max-height:400px;opacity:1}
+.dbg-sys,.dbg-usr{max-height:40px;opacity:.6;cursor:pointer;transition:max-height .3s,opacity .3s}
+.dbg-sys:hover,.dbg-sys.expanded,.dbg-usr:hover,.dbg-usr.expanded{max-height:400px;opacity:1}
 .ai-response-area.show{display:block}
 .ai-resp-header{font-size:11px;font-weight:700;color:var(--text-sub);
   text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
@@ -4763,7 +4763,7 @@ function buildDebugPanel(provider, model, opts, text, hasImage){
       <div class="dbg-row"><span class="dbg-label">모델</span><span class="dbg-tag model">${model}</span> ${optEntries}</div>
       <div class="dbg-row"><span class="dbg-label">이미지</span>${hasImage ? '✅ 포함' : '❌ 미포함'}</div>
       <div class="dbg-row"><span class="dbg-label">system</span><div class="dbg-code dbg-sys">${esc(SYS_PROMPT_TEXT)}</div></div>
-      <div class="dbg-row"><span class="dbg-label">user</span><div class="dbg-code">${esc(text)}</div></div>
+      <div class="dbg-row"><span class="dbg-label">user</span><div class="dbg-code dbg-usr">${esc(text)}</div></div>
     </div>
   </div>`;
 }
@@ -4903,7 +4903,7 @@ async function askBoth(card, allBtns, respArea){
       <div class="dbg-row"><span class="dbg-label">GPT</span><span class="dbg-tag model">${aiModels.openai}</span> ${oOptTags}</div>
       <div class="dbg-row"><span class="dbg-label">이미지</span>${imageBase64 ? '✅ 포함' : '❌ 미포함'}</div>
       <div class="dbg-row"><span class="dbg-label">system</span><div class="dbg-code dbg-sys">${esc(SYS_PROMPT_TEXT)}</div></div>
-      <div class="dbg-row"><span class="dbg-label">user</span><div class="dbg-code">${esc(text)}</div></div>
+      <div class="dbg-row"><span class="dbg-label">user</span><div class="dbg-code dbg-usr">${esc(text)}</div></div>
     </div>
   </div>`;
   respArea.insertAdjacentHTML('afterbegin', dualDebug);
