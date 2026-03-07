@@ -4673,10 +4673,11 @@ async function fetchImageBase64(src){
 // SSE 스트림 읽기 헬퍼
 // ═══════════════════════════════════
 async function readSSEStream(resp, onChunk){
+  console.log('[SSE] 응답 타입:', resp.headers.get('content-type'), '| body:', !!resp.body, '| getReader:', typeof resp.body?.getReader);
   // ReadableStream 미지원 시 일반 JSON 폴백
   if(!resp.body || typeof resp.body.getReader !== 'function'){
     const text = await resp.text();
-    console.log('[SSE] No ReadableStream, raw response:', text.slice(0, 300));
+    console.log('[SSE] No ReadableStream, raw:', text.slice(0, 500));
     try{
       const data = JSON.parse(text);
       const answer = data.answer || '';
@@ -4732,7 +4733,8 @@ async function readSSEStream(resp, onChunk){
       if(json.t){ full += json.t; onChunk(full); }
     }catch(_){}
   }
-  console.log('[SSE] Stream finished. Chunks:', chunkCount, 'Result length:', full.length);
+  console.log('[SSE] Stream finished. Chunks:', chunkCount, 'Result length:', full.length, full.length === 0 ? '⚠️ 빈 응답!' : '✅');
+  if(full.length === 0 && chunkCount > 0) console.warn('[SSE] chunks는 받았으나 content가 비었음 — 서버 응답 형식 확인 필요');
   return full;
 }
 
@@ -4852,11 +4854,13 @@ async function askAI(provider, card, btnEl, respArea){
       `<div class="ai-resp-header">${providerName} <span class="model-badge">${modelName}</span> 분석 중...</div>
        <div class="ai-loading"><div class="spinner"></div> AI가 문제를 분석하고 있어요...</div>`;
 
+    console.log(`[${provider}] 요청 시작:`, model, opts);
     const resp = await fetchWithTimeout(endpoint,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text, imageBase64, mimeType, model, stream:true, ...opts})
     });
+    console.log(`[${provider}] 응답 수신: HTTP ${resp.status}`);
 
     if(!resp.ok){
       const errText = await resp.text();
@@ -4896,9 +4900,13 @@ async function askAI(provider, card, btnEl, respArea){
       console.log(`[${provider}] 일반 모드 결과 길이:`, fullText.length);
     }
 
-    const rendered = renderMarkdown(fullText || '응답이 없습니다.');
+    if(!fullText){
+      console.error(`[${provider}] 스트리밍 + 일반 모드 모두 빈 응답`);
+      showToast(`${providerName} 응답이 비어있습니다. 다시 시도해주세요.`, 'error');
+    }
+    const rendered = renderMarkdown(fullText || '응답이 없습니다. (F12 콘솔에서 상세 로그를 확인해주세요)');
     bodyEl.innerHTML = rendered;
-    addSaveButton(respArea, card.id, provider, modelName, rendered);
+    if(fullText) addSaveButton(respArea, card.id, provider, modelName, rendered);
   }catch(e){
     const debugKeep = respArea.querySelector('.ai-debug-panel')?.outerHTML || '';
     const msg = e.name==='AbortError' ? '⏱️ 요청 시간이 초과되었습니다 (3분). 다시 시도해주세요.' : e.message;
