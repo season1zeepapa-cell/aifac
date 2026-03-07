@@ -8695,29 +8695,36 @@ function createMemoArea(card, questionId) {
   area.appendChild(toggle);
   area.appendChild(panel);
 
-  // 클릭 토글
-  toggle.addEventListener('click', () => area.classList.toggle('open'));
+  // 클릭 토글 (이벤트 전파 차단하여 카드 접기/펼치기 방지)
+  toggle.addEventListener('click', e => { e.stopPropagation(); area.classList.toggle('open'); });
 
   // 추가
-  addBtn.addEventListener('click', async () => {
+  addBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const val = ta.value.trim();
     if (!val) { showToast('메모 내용을 입력하세요.', 'warn'); ta.focus(); return; }
     try {
       addBtn.disabled = true;
       addBtn.textContent = '저장 중...';
+      console.log('[메모] 저장 요청:', questionId, val.slice(0,30));
       const result = await saveMemoApi(questionId, val);
+      console.log('[메모] 저장 완료:', result);
       const memo = { id: result.id, content: val, created_at: result.created_at, updated_at: result.created_at };
       memoList.prepend(buildMemoItem(memo, memoList, countEl));
       ta.value = '';
       updateMemoCount(memoList, countEl);
       showToast('메모가 추가되었습니다.', 'info');
     } catch (e) {
+      console.error('[메모] 저장 실패:', e);
       showToast('저장 실패: ' + e.message, 'error');
     } finally {
       addBtn.disabled = false;
       addBtn.textContent = '메모 추가';
     }
   });
+
+  // 패널 내부 클릭 전파 차단 (카드 토글 방지)
+  panel.addEventListener('click', e => e.stopPropagation());
 
   // Ctrl+Enter로 추가
   ta.addEventListener('keydown', e => {
