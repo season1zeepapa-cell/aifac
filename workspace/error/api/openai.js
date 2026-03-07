@@ -102,8 +102,13 @@ module.exports = async (req, res) => {
       const stream = await openai.chat.completions.create(completionParams);
 
       let hasContent = false;
+      let refusalText = '';
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta;
+        // 거부 응답 감지
+        if (delta?.refusal) {
+          refusalText += delta.refusal;
+        }
         if (delta?.content) {
           hasContent = true;
           res.write(`data: ${JSON.stringify({ t: delta.content })}\n\n`);
@@ -112,8 +117,15 @@ module.exports = async (req, res) => {
           res.write(`: heartbeat\n\n`);
         }
       }
-      if (!hasContent) {
-        console.warn('[OpenAI] 스트리밍 완료했지만 content 없음:', selectedModel, '→ 클라이언트가 non-stream 재시도 예정');
+      // 거부 응답인 경우 에러로 전송
+      if (refusalText) {
+        console.warn('[OpenAI] 모델 거부:', selectedModel, refusalText);
+        res.write(`data: ${JSON.stringify({ error: '모델 거부: ' + refusalText })}\n\n`);
+      }
+      if (!hasContent && !refusalText) {
+        console.warn('[OpenAI] 스트리밍 완료했지만 content/refusal 모두 없음:', selectedModel, '— 응답 구조 확인 필요');
+        // 빈 응답을 에러로 전송하여 클라이언트에서 명확히 표시
+        res.write(`data: ${JSON.stringify({ error: 'AI가 빈 응답을 반환했습니다. 다른 모델을 시도해주세요.' })}\n\n`);
       }
       res.write('data: [DONE]\n\n');
       res.end();
@@ -123,8 +135,13 @@ module.exports = async (req, res) => {
     // ── 일반 모드 (하위 호환) ──
     console.log('[OpenAI] 일반 모드 요청:', selectedModel);
     const completion = await openai.chat.completions.create(completionParams);
-    const answer = completion.choices[0]?.message?.content || '';
-    console.log('[OpenAI] 일반 모드 응답 길이:', answer.length, 'finish:', completion.choices[0]?.finish_reason);
+    const msg = completion.choices[0]?.message;
+    const answer = msg?.content || '';
+    const refusal = msg?.refusal || '';
+    console.log('[OpenAI] 일반 모드 응답 길이:', answer.length, 'refusal:', refusal ? refusal.slice(0,100) : '없음', 'finish:', completion.choices[0]?.finish_reason);
+    if (refusal && !answer) {
+      return res.status(400).json({ error: '모델 거부: ' + refusal });
+    }
     res.json({ answer });
   } catch (err) {
     console.error('OpenAI API 에러:', err);
