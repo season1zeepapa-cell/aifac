@@ -101,34 +101,9 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .admin-page.show{display:block}
 .admin-page-title{font-size:20px;font-weight:800;color:var(--text);margin-bottom:20px;
   display:flex;align-items:center;gap:8px}
-/* DB 문제풀이 카드 */
-.db-card{background:var(--card-bg);border-radius:14px;padding:0;margin-bottom:14px;
-  box-shadow:0 3px 16px var(--shadow);border-top:4px solid var(--card-border);overflow:hidden}
-.db-card-header{display:flex;align-items:center;gap:10px;padding:14px 20px;cursor:pointer;
-  transition:.15s;user-select:none}
-.db-card-header:hover{background:var(--accent-light)}
-.db-card-num{font-size:13px;font-weight:800;color:var(--accent);min-width:36px}
-.db-card-preview{font-size:13px;color:var(--text-sub);flex:1;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis}
-.db-card-badge{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700;
-  background:var(--accent-light);color:var(--accent);white-space:nowrap}
-.db-card.open .db-card-body{max-height:5000px;padding:0 20px 20px}
-.db-card-body{max-height:0;overflow:hidden;transition:max-height .35s ease,padding .3s ease;padding:0 20px}
-.db-card-body .question-body{font-size:15px;line-height:1.8;margin-bottom:14px;color:var(--text)}
-.db-card-body .choices{list-style:none;display:flex;flex-direction:column;gap:8px;margin-bottom:16px;padding:0}
-.db-card-body .choices li{display:flex;align-items:flex-start;gap:10px;padding:11px 16px;
-  border-radius:10px;background:var(--choice-bg);font-size:15px;color:var(--text);
-  transition:.15s;line-height:1.7;cursor:pointer}
-.db-card-body .choices li:hover{background:var(--choice-hover)}
-.db-card-body .choices li.correct{background:#dcfce7;border:2px solid #22c55e}
-.db-card-body .choices li.wrong{background:#fee2e2;border:2px solid #ef4444}
-[data-theme="dark"] .db-card-body .choices li.correct{background:#052e16;border-color:#4ade80}
-[data-theme="dark"] .db-card-body .choices li.wrong{background:#3b1515;border-color:#f87171}
-.db-card-body .explanation{margin-top:16px;background:var(--box-bg);border-radius:10px;
-  padding:16px 18px;border-left:4px solid var(--accent);display:none}
-.db-card-body .explanation.show{display:block}
-.db-card-body .screenshot-wrap{margin-top:14px;text-align:center}
-.db-card-body .screenshot-wrap img{max-width:100%;border-radius:8px;border:1px solid var(--border)}
+/* DB 문제풀이 필터 버튼 */
+/* DB 문제풀이 페이지 카드 헤더: sticky 비활성화 (admin-page 안) */
+.admin-page .card-header{position:relative;top:auto}
 .db-filter-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);
   background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
   cursor:pointer;transition:.2s}
@@ -8464,21 +8439,19 @@ initLawKeywords();
 // ═══════════════════════════════════
 // DB 문제풀이 페이지 (검증용)
 // ═══════════════════════════════════
-let dbQuizData = null;    // 캐싱된 전체 문제 데이터
-let dbQuizExamId = null;  // 현재 선택된 시험 그룹
+let dbQuizData = null;
+let dbQuizExamId = null;
 
 async function loadDbQuiz(examId) {
   const cardsEl = document.getElementById('dbQuizCards');
   const loadingEl = document.getElementById('dbQuizLoading');
   const emptyEl = document.getElementById('dbQuizEmpty');
 
-  // 최초 로딩 시 전체 데이터 fetch
   if (!dbQuizData) {
     loadingEl.style.display = '';
     cardsEl.innerHTML = '';
     emptyEl.style.display = 'none';
     try {
-      const token = localStorage.getItem('auth_token');
       const res = await fetch('/api/questions?action=public');
       if (!res.ok) throw new Error('API 오류');
       dbQuizData = await res.json();
@@ -8488,21 +8461,16 @@ async function loadDbQuiz(examId) {
       return;
     }
     loadingEl.style.display = 'none';
-
-    // 필터 버튼 생성
     renderDbQuizFilters();
   }
 
-  // 기본 그룹: 오답풀이(exam_id=1)
   if (examId === undefined) examId = dbQuizExamId || 1;
   dbQuizExamId = examId;
 
-  // 필터 버튼 활성화
   document.querySelectorAll('.db-filter-btn').forEach(btn => {
     btn.classList.toggle('active', parseInt(btn.dataset.examId) === examId);
   });
 
-  // 카드 렌더링
   const filtered = examId === 0
     ? dbQuizData.questions
     : dbQuizData.questions.filter(q => q.exam_id === examId);
@@ -8516,7 +8484,8 @@ async function loadDbQuiz(examId) {
   cardsEl.innerHTML = '';
   filtered.forEach(q => cardsEl.appendChild(renderDbCard(q)));
 
-  // 법령 키워드 자동 링크
+  // 기존 페이지와 동일한 초기화 체인
+  initQuizChoices();
   autoLinkLaws();
   initLawKeywords();
 }
@@ -8524,8 +8493,6 @@ async function loadDbQuiz(examId) {
 function renderDbQuizFilters() {
   const filtersEl = document.getElementById('dbQuizFilters');
   if (!dbQuizData) return;
-
-  // 전체 버튼 + 시험별 버튼
   const exams = dbQuizData.exams || [];
   let html = '<button class="db-filter-btn" data-exam-id="0" onclick="loadDbQuiz(0)">전체</button>';
   exams.forEach(e => {
@@ -8534,97 +8501,189 @@ function renderDbQuizFilters() {
   filtersEl.innerHTML = html;
 }
 
-// DB 레코드 → 카드 DOM 생성
+// DB 레코드 → 기존 카드와 100% 동일한 DOM 생성
 function renderDbCard(q) {
   const num = String(q.question_number).padStart(3, '0');
   const cardId = 'db-q' + num;
   const choices = typeof q.choices === 'string' ? JSON.parse(q.choices) : q.choices;
   const circleNums = ['①','②','③','④'];
+  const imgFile = q.image_url || ('q' + num + '.png');
 
+  // ── 카드 컨테이너 (.card 클래스 재사용) ──
   const card = document.createElement('div');
-  card.className = 'db-card';
+  card.className = 'card';
   card.id = cardId;
 
-  // 본문 미리보기 (HTML 태그 제거, 60자)
-  const previewText = (q.body || '').replace(/<[^>]*>/g, '').trim().slice(0, 60);
+  // ── 카드 내부 원본 DOM 구성 (meta + question-body + choices + explanation) ──
+  // meta
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.innerHTML = `<span>${q.exam_title || ''}</span><span>${num} / ${q.exam_id === 1 ? '110' : q.exam_id === 2 ? '150' : '190'}</span>`;
 
-  // 카드 헤더
-  const header = document.createElement('div');
-  header.className = 'db-card-header';
-  header.innerHTML = `
-    <span class="db-card-num">${q.original_number || num}.</span>
-    <span class="db-card-preview">${previewText}</span>
-    <span class="db-card-badge">${q.exam_title || ''}</span>
-  `;
-  header.addEventListener('click', () => card.classList.toggle('open'));
-
-  // 카드 본문
-  const body = document.createElement('div');
-  body.className = 'db-card-body';
-
-  // 문제 본문
+  // question-body
   const questionBody = document.createElement('div');
   questionBody.className = 'question-body';
-  questionBody.innerHTML = q.body || '';
-  body.appendChild(questionBody);
+  questionBody.innerHTML = `<span class="q-num">${q.original_number || num}.</span> ${q.body || ''}`;
 
-  // 선택지
+  // choices
   const ul = document.createElement('ul');
   ul.className = 'choices';
-  ul.dataset.answer = q.answer;
+  ul.setAttribute('data-answer', q.answer);
   choices.forEach((c, i) => {
     const li = document.createElement('li');
-    li.dataset.num = c.num || (i + 1);
-    li.innerHTML = `<span class="c-num" style="font-weight:800;color:var(--accent);min-width:22px;flex-shrink:0">${circleNums[i] || ''}</span> ${c.text || ''}`;
-    li.addEventListener('click', () => {
-      // 이미 선택된 상태면 무시
-      if (ul.dataset.answered) return;
-      ul.dataset.answered = '1';
-      const correct = parseInt(ul.dataset.answer);
-      const selected = parseInt(li.dataset.num);
-      if (selected === correct) {
-        li.classList.add('correct');
-      } else {
-        li.classList.add('wrong');
-        // 정답 표시
-        ul.querySelectorAll('li').forEach(item => {
-          if (parseInt(item.dataset.num) === correct) item.classList.add('correct');
-        });
-      }
-      // 해설 표시
-      const expEl = card.querySelector('.explanation');
-      if (expEl) expEl.classList.add('show');
-    });
+    li.setAttribute('data-num', c.num || (i + 1));
+    li.innerHTML = `<span class="c-num">${circleNums[i] || ''}</span> ${c.text || ''}`;
     ul.appendChild(li);
   });
-  body.appendChild(ul);
 
-  // 해설
-  if (q.explanation) {
-    const exp = document.createElement('div');
-    exp.className = 'explanation';
-    exp.innerHTML = q.explanation;
-    body.appendChild(exp);
+  // explanation
+  const exp = document.createElement('div');
+  exp.className = 'explanation';
+  exp.id = 'exp-' + cardId;
+  if (q.explanation && q.explanation.replace(/<[^>]*>/g, '').trim().length > 10) {
+    exp.innerHTML = `<div class="exp-result"></div><div class="exp-body">${q.explanation}</div>`;
+  } else {
+    exp.innerHTML = '<div class="exp-result"></div>';
   }
 
-  // 원본 이미지
-  if (q.image_url) {
-    const imgWrap = document.createElement('div');
-    imgWrap.className = 'screenshot-wrap';
-    imgWrap.style.marginTop = '14px';
-    const img = document.createElement('img');
-    img.loading = 'lazy';
-    img.src = q.image_url;
-    img.alt = `문제 ${num} 원본`;
-    img.style.maxWidth = '100%';
-    img.style.borderRadius = '8px';
-    img.style.border = '1px solid var(--border)';
-    imgWrap.appendChild(img);
-    body.appendChild(imgWrap);
-  }
+  // 카드에 원본 요소 추가 (JS 초기화가 이 구조를 기대)
+  card.appendChild(meta);
+  card.appendChild(questionBody);
+  card.appendChild(ul);
+  card.appendChild(exp);
 
+  // ── 기존 카드 초기화 로직과 동일한 처리 ──
+  const titleRaw = questionBody.textContent.trim();
+  const dotIdx = titleRaw.indexOf('.');
+  const preview = dotIdx >= 0
+    ? titleRaw.substring(dotIdx + 1).trim().substring(0, 72)
+    : titleRaw.substring(0, 72);
+
+  // 헤더
+  const header = document.createElement('div');
+  header.className = 'card-header';
+
+  const arrow = document.createElement('span');
+  arrow.className = 'toggle-icon';
+  arrow.textContent = '▶';
+
+  const titleEl = document.createElement('span');
+  titleEl.className = 'header-title';
+  const idxLabel = meta.querySelector('span:last-child')?.textContent || num;
+  titleEl.innerHTML = `<span class="q-num">${idxLabel}</span> ${preview}${titleRaw.length > 72 ? '…' : ''}`;
+
+  const actions = document.createElement('div');
+  actions.className = 'card-actions';
+
+  // 이미지 원본
+  const screenshotWrap = document.createElement('div');
+  screenshotWrap.className = 'screenshot-wrap';
+  const scImg = document.createElement('img');
+  scImg.src = imgFile; scImg.alt = '문제 ' + num; scImg.loading = 'lazy';
+  scImg.addEventListener('click', ev => { ev.stopPropagation(); openModal(imgFile); });
+  screenshotWrap.appendChild(scImg);
+
+  const imgBtn = document.createElement('button');
+  imgBtn.textContent = '🖼 원본';
+  imgBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const isOpen = screenshotWrap.classList.toggle('show');
+    imgBtn.textContent = isOpen ? '🖼 숨기기' : '🖼 원본';
+  });
+
+  // 복사 버튼
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = '📋 복사';
+  copyBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const qText = card.querySelector('.question-body')?.innerText.trim() || '';
+    const choiceLines = Array.from(card.querySelectorAll('.choices li'))
+      .map(li => li.innerText.trim()).join('\n');
+    const copyText = qText + (choiceLines ? '\n' + choiceLines : '');
+    navigator.clipboard.writeText(copyText).then(() => {
+      copyBtn.textContent = '✅ 복사됨';
+      copyBtn.classList.add('copied');
+      setTimeout(() => { copyBtn.textContent = '📋 복사'; copyBtn.classList.remove('copied'); }, 1500);
+    });
+  });
+
+  actions.appendChild(imgBtn);
+  actions.appendChild(copyBtn);
+  header.appendChild(arrow);
+  header.appendChild(titleEl);
+  header.appendChild(actions);
+
+  // 콘텐츠 래퍼
+  const content = document.createElement('div');
+  content.className = 'card-content';
+  while (card.firstChild) content.appendChild(card.firstChild);
+
+  // AI 컨트롤
+  const aiControls = document.createElement('div');
+  aiControls.className = 'ai-controls';
+  aiControls.innerHTML = `
+    <div class="ai-toggle-wrap">
+      <label class="ai-toggle">
+        <input type="checkbox" class="img-use-toggle">
+        <span class="ai-slider"></span>
+      </label>
+      <span>이미지 포함</span>
+    </div>
+    <button class="btn-gemini">✨ Gemini <span class="model-badge">${aiModels.gemini}</span></button>
+    <button class="btn-openai">✨ GPT <span class="model-badge">${aiModels.openai}</span></button>
+    <button class="btn-both">⚡ 둘 다 보기</button>
+    <button class="btn-law">📜 법령</button>
+    <div class="ai-extra-prompt">
+      <textarea class="ai-extra-input" rows="1" placeholder="AI 추가 지시사항 입력 (예: 관련 법령 조문도 알려줘, 쉽게 설명해줘)"></textarea>
+      <button type="button" class="ai-extra-toggle" title="펼치기/접기">▼</button>
+    </div>`;
+  content.appendChild(aiControls);
+
+  // 추가 프롬프트 펼치기/접기
+  const extraTextarea = aiControls.querySelector('.ai-extra-input');
+  const extraToggle = aiControls.querySelector('.ai-extra-toggle');
+  extraToggle.addEventListener('click', () => {
+    const expanded = extraTextarea.classList.toggle('expanded');
+    extraToggle.textContent = expanded ? '▲' : '▼';
+  });
+
+  // 법령 조회 영역
+  const lawArea = initLawArea(card, content);
+  aiControls.querySelector('.btn-law').addEventListener('click', () => {
+    lawArea.classList.toggle('show');
+  });
+
+  // AI 응답 영역
+  const respArea = document.createElement('div');
+  respArea.className = 'ai-response-area';
+  content.appendChild(respArea);
+
+  // AI 버튼 이벤트
+  const gBtn = aiControls.querySelector('.btn-gemini');
+  const oBtn = aiControls.querySelector('.btn-openai');
+  const bothBtn = aiControls.querySelector('.btn-both');
+  gBtn.addEventListener('click', () => askAI('gemini', card, gBtn, respArea));
+  oBtn.addEventListener('click', () => askAI('openai', card, oBtn, respArea));
+  bothBtn.addEventListener('click', () => askBoth(card, [gBtn, oBtn, bothBtn], respArea));
+
+  // 카드 조립
   card.appendChild(header);
-  card.appendChild(body);
+  card.appendChild(screenshotWrap);
+  card.appendChild(content);
+
+  // 헤더 클릭 → 펼치기/접기
+  header.addEventListener('click', () => {
+    const wasOpen = card.classList.toggle('open');
+    if (!wasOpen && screenshotWrap.classList.contains('show')) {
+      screenshotWrap.classList.remove('show');
+      imgBtn.textContent = '🖼 원본';
+    }
+  });
+
+  // 저장된 AI 해설 로드
+  renderSavedAI(card, cardId, 'gemini');
+  renderSavedAI(card, cardId, 'openai');
+
   return card;
 }
 
