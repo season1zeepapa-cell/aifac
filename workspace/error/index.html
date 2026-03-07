@@ -112,11 +112,8 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .db-resize-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   width:2px;height:32px;border-radius:2px;background:var(--border)}
 .db-resize-handle:hover::after,.db-resize-handle.active::after{background:var(--accent)}
-.db-quiz-layout .card{scroll-margin-top:100px;overflow:hidden}
-.db-quiz-layout .card.open{overflow:visible}
-.db-quiz-layout .card.open .card-content{max-height:none;overflow:visible}
-.db-quiz-layout .explanation.show{max-height:none;overflow:visible}
-.db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
+.db-quiz-layout .card{scroll-margin-top:100px}
+.db-quiz-layout .card-header{top:94px}
 /* 메모 영역 */
 .memo-area{margin-bottom:14px}
 .memo-toggle{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;
@@ -8706,16 +8703,14 @@ function createMemoArea(card, questionId) {
     try {
       addBtn.disabled = true;
       addBtn.textContent = '저장 중...';
-      console.log('[메모] 저장 요청:', questionId, val.slice(0,30));
       const result = await saveMemoApi(questionId, val);
-      console.log('[메모] 저장 완료:', result);
       const memo = { id: result.id, content: val, created_at: result.created_at, updated_at: result.created_at };
       memoList.prepend(buildMemoItem(memo, memoList, countEl));
       ta.value = '';
       updateMemoCount(memoList, countEl);
       showToast('메모가 추가되었습니다.', 'info');
     } catch (e) {
-      console.error('[메모] 저장 실패:', e);
+      console.error('[메모] 저장 실패:', e.message);
       showToast('저장 실패: ' + e.message, 'error');
     } finally {
       addBtn.disabled = false;
