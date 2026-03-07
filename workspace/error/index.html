@@ -107,11 +107,13 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .db-quiz-layout.show{display:flex !important}
 .db-quiz-layout .sidebar{top:94px}
 .db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
-.db-filter-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);
+.db-filter-btn{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);
   background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
   cursor:pointer;transition:.2s}
 .db-filter-btn:hover{border-color:var(--accent);color:var(--accent)}
 .db-filter-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+@media(max-width:768px){.db-quiz-layout .sidebar{display:none}
+  .db-quiz-layout .main{margin-left:0;width:100%}}
 .admin-page-card{background:var(--card-bg);border-radius:14px;padding:24px;
   box-shadow:0 3px 16px var(--shadow);border-top:4px solid var(--card-border)}
 .header-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -722,7 +724,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 <!-- 관리자 네비게이션 -->
 <nav class="admin-nav" id="adminNav">
   <div class="admin-nav-inner">
-    <button class="nav-item" data-page="study" onclick="navTo('study')">📖 오답풀이</button>
+    <button class="nav-item" data-page="study" onclick="navTo('study')">📖 기존HTML</button>
     <button class="nav-item" data-page="dbquiz" onclick="navTo('dbquiz')">📝 DB문제풀이</button>
     <button class="nav-item" data-page="questions" onclick="navTo('questions')">📋 문제관리</button>
     <button class="nav-item" data-page="users" onclick="navTo('users')">👤 회원관리</button>
@@ -8709,9 +8711,9 @@ function renderDbQuizFilters() {
   const filtersEl = document.getElementById('dbQuizFilters');
   if (!dbQuizData) return;
   const exams = dbQuizData.exams || [];
-  let html = '<button class="db-filter-btn" data-exam-id="0" onclick="loadDbQuiz(0)">전체</button>';
+  let html = '<button class="db-filter-btn" data-exam-id="0" onclick="loadDbQuiz(0)">#전체</button>';
   exams.forEach(e => {
-    html += `<button class="db-filter-btn" data-exam-id="${e.id}" onclick="loadDbQuiz(${e.id})">${e.title}</button>`;
+    html += `<button class="db-filter-btn" data-exam-id="${e.id}" onclick="loadDbQuiz(${e.id})">#${e.title}</button>`;
   });
   filtersEl.innerHTML = html;
 }
