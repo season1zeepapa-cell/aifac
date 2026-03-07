@@ -113,7 +113,7 @@ module.exports = async (req, res) => {
         }
       }
       if (!hasContent) {
-        console.warn('[OpenAI] 스트리밍 완료했지만 content 없음:', selectedModel);
+        console.warn('[OpenAI] 스트리밍 완료했지만 content 없음:', selectedModel, '→ 클라이언트가 non-stream 재시도 예정');
       }
       res.write('data: [DONE]\n\n');
       res.end();
@@ -121,8 +121,10 @@ module.exports = async (req, res) => {
     }
 
     // ── 일반 모드 (하위 호환) ──
+    console.log('[OpenAI] 일반 모드 요청:', selectedModel);
     const completion = await openai.chat.completions.create(completionParams);
-    const answer = completion.choices[0].message.content;
+    const answer = completion.choices[0]?.message?.content || '';
+    console.log('[OpenAI] 일반 모드 응답 길이:', answer.length, 'finish:', completion.choices[0]?.finish_reason);
     res.json({ answer });
   } catch (err) {
     console.error('OpenAI API 에러:', err);

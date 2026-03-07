@@ -4786,13 +4786,15 @@ function showToast(message, type='info'){
   setTimeout(()=> toast.remove(), 3000);
 }
 
-// fetch에 타임아웃을 적용하는 헬퍼 (기본 60초, 스트리밍은 180초)
+// fetch에 타임아웃을 적용하는 헬퍼
 const AI_TIMEOUT_MS = 180000; // 3분 (AI 추론 모델 대응)
 function fetchWithTimeout(url, options, timeoutMs = AI_TIMEOUT_MS){
   const controller = new AbortController();
   const timer = setTimeout(()=> controller.abort(), timeoutMs);
-  return fetch(url, {...options, signal: controller.signal})
-    .finally(()=> clearTimeout(timer));
+  // timer를 response와 함께 반환하여 스트림 완료 후 해제 가능
+  const promise = fetch(url, {...options, signal: controller.signal});
+  promise.finally(()=> clearTimeout(timer));
+  return promise;
 }
 
 const SYS_PROMPT_TEXT = '당신은 영상정보관리사 자격증 시험 전문 강사입니다. 주어진 문제를 분석하고 다음 형식으로 답변해주세요:\n\n**정답**: [번호 및 내용]\n\n**해설**: [상세한 해설]\n\n**핵심 키워드**: [관련 법령, 용어 등]';
@@ -4876,16 +4878,22 @@ async function askAI(provider, card, btnEl, respArea){
 
     // 스트리밍 결과가 비어있으면 일반 모드로 재시도
     if(!fullText){
-      console.warn('[SSE] 스트리밍 빈 결과 → 일반 모드 재시도');
+      console.warn(`[${provider}] 스트리밍 빈 결과 → 일반 모드 재시도 (model: ${model})`);
       bodyEl.innerHTML = '<div class="ai-loading"><div class="spinner"></div> 재시도 중 (일반 모드)...</div>';
       const resp2 = await fetchWithTimeout(endpoint,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({text, imageBase64, mimeType, model, stream:false, ...opts})
       });
+      if(!resp2.ok){
+        const errText2 = await resp2.text();
+        let errMsg2;
+        try{ errMsg2 = JSON.parse(errText2).error; }catch(_){ errMsg2 = errText2.slice(0,200); }
+        throw new Error(errMsg2||`HTTP ${resp2.status}`);
+      }
       const data2 = await resp2.json();
-      if(!resp2.ok) throw new Error(data2?.error || `HTTP ${resp2.status}`);
       fullText = data2.answer || '';
+      console.log(`[${provider}] 일반 모드 결과 길이:`, fullText.length);
     }
 
     const rendered = renderMarkdown(fullText || '응답이 없습니다.');
@@ -4980,16 +4988,22 @@ async function askBoth(card, allBtns, respArea){
 
       // 스트리밍 결과가 비어있으면 일반 모드로 재시도
       if(!fullText){
-        console.warn('[SSE] 스트리밍 빈 결과 → 일반 모드 재시도 (' + provider + ')');
+        console.warn(`[${provider}] 스트리밍 빈 결과 → 일반 모드 재시도 (model: ${model})`);
         bodyEl.innerHTML = '<div class="ai-loading"><div class="spinner"></div> 재시도 중...</div>';
         const resp2 = await fetchWithTimeout(endpoint,{
           method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({text, imageBase64, mimeType, model, stream:false, ...opts})
         });
+        if(!resp2.ok){
+          const errText2 = await resp2.text();
+          let errMsg2;
+          try{ errMsg2 = JSON.parse(errText2).error; }catch(_){ errMsg2 = errText2.slice(0,200); }
+          throw new Error(errMsg2||`HTTP ${resp2.status}`);
+        }
         const data2 = await resp2.json();
-        if(!resp2.ok) throw new Error(data2?.error || `HTTP ${resp2.status}`);
         fullText = data2.answer || '';
+        console.log(`[${provider}] 일반 모드 결과 길이:`, fullText.length);
       }
 
       const rendered = renderMarkdown(fullText || '응답이 없습니다.');
