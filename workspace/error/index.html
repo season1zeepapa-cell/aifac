@@ -6974,8 +6974,9 @@ function navTo(page){
   const mainLayout = document.querySelector('.layout');
   const topBtn = document.querySelector('.top-btn');
   const isStudy = page === 'study';
+  const showTopBtn = page === 'study' || page === 'dbquiz';
   mainLayout.style.display = isStudy ? '' : 'none';
-  topBtn.style.display = isStudy ? '' : 'none';
+  topBtn.style.display = showTopBtn ? '' : 'none';
 
   // 페이지 섹션 전환
   document.querySelectorAll('.admin-page').forEach(el => el.classList.remove('show'));
