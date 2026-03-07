@@ -123,6 +123,17 @@ module.exports = async (req, res) => {
       return res.json({ message: '문제가 삭제되었습니다.' });
     }
 
+    // ── 시험 등록 ──
+    if (action === 'createExam') {
+      const { title, exam_date, sort_order } = req.body;
+      if (!title) return res.status(400).json({ error: '시험 제목은 필수입니다.' });
+      const result = await query(
+        `INSERT INTO exams (title, exam_date, sort_order) VALUES ($1, $2, $3) RETURNING *`,
+        [title, exam_date || null, sort_order || 99]
+      );
+      return res.json({ exam: result.rows[0], message: '시험이 등록되었습니다.' });
+    }
+
     // ── 과목 일괄 지정 ──
     if (action === 'assignSubject') {
       const { ids, subject_id } = req.body;
