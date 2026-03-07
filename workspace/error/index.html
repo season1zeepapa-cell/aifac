@@ -4186,23 +4186,28 @@ function loadSettings(){
 }
 
 function openSettings(){
-  // 현재 메모리에 있는 aiSettings 값을 UI에 반영 (리셋하지 않음)
-  // Gemini
+  console.log('[설정 열기] aiSettings:', JSON.parse(JSON.stringify(aiSettings)));
+  // Gemini UI 반영
   document.getElementById('geminiModelSelect').value = aiSettings.gemini.model;
+  // 먼저 UI 토글 (keepValues=true로 값 건드리지 않음)
+  onGeminiModelChange(true);
+  // 토글 후에 저장된 값을 UI에 세팅
   document.getElementById('geminiThinkingLevel').value = aiSettings.gemini.thinkingLevel ?? 'high';
   document.getElementById('geminiThinkingBudget').value = String(aiSettings.gemini.thinkingBudget ?? 0);
   const gTemp = parseFloat(aiSettings.gemini.temperature ?? 1.0);
   document.getElementById('geminiTemp').value = gTemp;
   document.getElementById('geminiTempVal').textContent = gTemp.toFixed(1);
-  // OpenAI
+
+  // OpenAI UI 반영
   document.getElementById('openaiModelSelect').value = aiSettings.openai.model;
-  document.getElementById('openaiReasoningEffort').value = aiSettings.openai.reasoningEffort ?? 'medium';
+  // 먼저 UI 토글
+  onOpenAIModelChange(true);
+  // 토글 후에 저장된 값을 UI에 세팅
+  document.getElementById('openaiReasoningEffort').value = aiSettings.openai.reasoningEffort ?? 'high';
   const oTemp = parseFloat(aiSettings.openai.temperature ?? 1.0);
   document.getElementById('openaiTemp').value = oTemp;
   document.getElementById('openaiTempVal').textContent = oTemp.toFixed(1);
-  // 옵션 UI 갱신 (모달 열 때는 기본값 리셋 없이 토글만)
-  onGeminiModelChange(true);
-  onOpenAIModelChange(true);
+
   document.getElementById('settingsModal').classList.add('show');
 }
 
