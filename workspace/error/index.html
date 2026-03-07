@@ -104,7 +104,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 /* DB 문제풀이 필터 버튼 */
 /* DB 문제풀이 레이아웃 */
 .db-quiz-layout{display:none;gap:0;max-width:1320px;margin:0 auto;padding:0 20px}
-.db-quiz-layout.show{display:flex}
+.db-quiz-layout.show{display:flex !important}
 .db-quiz-layout .sidebar{top:94px}
 .db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
 .db-filter-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);
@@ -722,6 +722,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 <!-- 관리자 네비게이션 -->
 <nav class="admin-nav" id="adminNav">
   <div class="admin-nav-inner">
+    <button class="nav-item" data-page="study" onclick="navTo('study')">📖 오답풀이</button>
     <button class="nav-item" data-page="dbquiz" onclick="navTo('dbquiz')">📝 DB문제풀이</button>
     <button class="nav-item" data-page="questions" onclick="navTo('questions')">📋 문제관리</button>
     <button class="nav-item" data-page="users" onclick="navTo('users')">👤 회원관리</button>
@@ -6786,8 +6787,10 @@ function checkAuth(){
     adminNav.classList.toggle('show', admin);
     // 관리자가 아닌 경우 헤더에 설정 버튼 표시
     settingsBtn.style.display = admin ? 'none' : '';
-    // 관리자 최초 접속 시 DB문제풀이로 이동
-    if(admin && currentPage === 'study') navTo('dbquiz');
+    // 관리자 최초 접속 시 오답풀이 탭 활성 표시
+    if(admin && currentPage === 'study'){
+      document.querySelector('.nav-item[data-page="study"]')?.classList.add('active');
+    }
   } else {
     overlay.classList.remove('hidden');
     logoutBtn.style.display = 'none';
