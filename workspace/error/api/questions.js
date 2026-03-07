@@ -8,11 +8,37 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  const { action } = req.body || req.query || {};
+
+  // ── 공개 문제 조회 (비인증, DB 문제풀이 페이지용) ──
+  if (req.method === 'GET' && action === 'public') {
+    try {
+      const { exam_id } = req.query || {};
+      let where = 'WHERE 1=1';
+      const params = [];
+      let idx = 1;
+      if (exam_id) { where += ` AND q.exam_id = $${idx++}`; params.push(exam_id); }
+
+      const result = await query(`
+        SELECT q.*, e.title as exam_title, s.name as subject_name
+        FROM questions q
+        LEFT JOIN exams e ON q.exam_id = e.id
+        LEFT JOIN subjects s ON q.subject_id = s.id
+        ${where}
+        ORDER BY q.question_number
+      `, params);
+
+      const exams = await query('SELECT * FROM exams ORDER BY sort_order');
+      return res.json({ questions: result.rows, exams: exams.rows });
+    } catch (err) {
+      console.error('[Questions Public] 에러:', err);
+      return res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+    }
+  }
+
   const token = extractToken(req);
   const payload = verifyToken(token);
   if (!payload) return res.status(401).json({ error: '인증이 필요합니다.' });
-
-  const { action } = req.body || req.query || {};
 
   try {
     // ── 문제 목록 조회 (모든 사용자) ──

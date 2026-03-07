@@ -101,6 +101,39 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .admin-page.show{display:block}
 .admin-page-title{font-size:20px;font-weight:800;color:var(--text);margin-bottom:20px;
   display:flex;align-items:center;gap:8px}
+/* DB 문제풀이 카드 */
+.db-card{background:var(--card-bg);border-radius:14px;padding:0;margin-bottom:14px;
+  box-shadow:0 3px 16px var(--shadow);border-top:4px solid var(--card-border);overflow:hidden}
+.db-card-header{display:flex;align-items:center;gap:10px;padding:14px 20px;cursor:pointer;
+  transition:.15s;user-select:none}
+.db-card-header:hover{background:var(--accent-light)}
+.db-card-num{font-size:13px;font-weight:800;color:var(--accent);min-width:36px}
+.db-card-preview{font-size:13px;color:var(--text-sub);flex:1;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.db-card-badge{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700;
+  background:var(--accent-light);color:var(--accent);white-space:nowrap}
+.db-card.open .db-card-body{max-height:5000px;padding:0 20px 20px}
+.db-card-body{max-height:0;overflow:hidden;transition:max-height .35s ease,padding .3s ease;padding:0 20px}
+.db-card-body .question-body{font-size:15px;line-height:1.8;margin-bottom:14px;color:var(--text)}
+.db-card-body .choices{list-style:none;display:flex;flex-direction:column;gap:8px;margin-bottom:16px;padding:0}
+.db-card-body .choices li{display:flex;align-items:flex-start;gap:10px;padding:11px 16px;
+  border-radius:10px;background:var(--choice-bg);font-size:15px;color:var(--text);
+  transition:.15s;line-height:1.7;cursor:pointer}
+.db-card-body .choices li:hover{background:var(--choice-hover)}
+.db-card-body .choices li.correct{background:#dcfce7;border:2px solid #22c55e}
+.db-card-body .choices li.wrong{background:#fee2e2;border:2px solid #ef4444}
+[data-theme="dark"] .db-card-body .choices li.correct{background:#052e16;border-color:#4ade80}
+[data-theme="dark"] .db-card-body .choices li.wrong{background:#3b1515;border-color:#f87171}
+.db-card-body .explanation{margin-top:16px;background:var(--box-bg);border-radius:10px;
+  padding:16px 18px;border-left:4px solid var(--accent);display:none}
+.db-card-body .explanation.show{display:block}
+.db-card-body .screenshot-wrap{margin-top:14px;text-align:center}
+.db-card-body .screenshot-wrap img{max-width:100%;border-radius:8px;border:1px solid var(--border)}
+.db-filter-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);
+  background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
+  cursor:pointer;transition:.2s}
+.db-filter-btn:hover{border-color:var(--accent);color:var(--accent)}
+.db-filter-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .admin-page-card{background:var(--card-bg);border-radius:14px;padding:24px;
   box-shadow:0 3px 16px var(--shadow);border-top:4px solid var(--card-border)}
 .header-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -711,6 +744,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 <!-- 관리자 네비게이션 -->
 <nav class="admin-nav" id="adminNav">
   <div class="admin-nav-inner">
+    <button class="nav-item" data-page="dbquiz" onclick="navTo('dbquiz')">📝 DB문제풀이</button>
     <button class="nav-item" data-page="questions" onclick="navTo('questions')">📋 문제관리</button>
     <button class="nav-item" data-page="users" onclick="navTo('users')">👤 회원관리</button>
     <button class="nav-item" data-page="settings" onclick="navTo('settings')">⚙️ AI설정</button>
@@ -6380,6 +6414,21 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 </div>
 
 <!-- AI설정 페이지 -->
+<!-- DB 문제풀이 (검증용) -->
+<div class="admin-page" id="pageDbQuiz" style="max-width:1100px">
+  <div class="admin-page-title">📝 DB 문제풀이 <span style="font-size:12px;color:var(--text-sub);font-weight:400">(검증용 — DB 데이터로 렌더링)</span></div>
+  <!-- 그룹 필터 -->
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap" id="dbQuizFilters"></div>
+  <!-- 카드 영역 -->
+  <div id="dbQuizCards"></div>
+  <div id="dbQuizLoading" style="text-align:center;padding:40px;color:var(--text-sub);display:none">
+    <div class="spinner"></div> 문제 불러오는 중...
+  </div>
+  <div id="dbQuizEmpty" style="text-align:center;padding:40px;color:var(--text-sub);display:none">
+    표시할 문제가 없습니다.
+  </div>
+</div>
+
 <div class="admin-page" id="pageSettings">
   <div class="admin-page-title">⚙️ AI 모델 설정</div>
   <div class="admin-page-card" id="settingsPageContent"></div>
@@ -6894,6 +6943,9 @@ function navTo(page){
     moveSettingsToPage();
     document.getElementById('pageSettings').classList.add('show');
     openSettings();
+  } else if(page === 'dbquiz'){
+    document.getElementById('pageDbQuiz').classList.add('show');
+    loadDbQuiz();
   }
 
   window.scrollTo({top:0});
@@ -8408,6 +8460,173 @@ initQuizChoices();
 // 법령 키워드 자동 링크 변환 → 클릭 이벤트 초기화
 autoLinkLaws();
 initLawKeywords();
+
+// ═══════════════════════════════════
+// DB 문제풀이 페이지 (검증용)
+// ═══════════════════════════════════
+let dbQuizData = null;    // 캐싱된 전체 문제 데이터
+let dbQuizExamId = null;  // 현재 선택된 시험 그룹
+
+async function loadDbQuiz(examId) {
+  const cardsEl = document.getElementById('dbQuizCards');
+  const loadingEl = document.getElementById('dbQuizLoading');
+  const emptyEl = document.getElementById('dbQuizEmpty');
+
+  // 최초 로딩 시 전체 데이터 fetch
+  if (!dbQuizData) {
+    loadingEl.style.display = '';
+    cardsEl.innerHTML = '';
+    emptyEl.style.display = 'none';
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch('/api/questions?action=public');
+      if (!res.ok) throw new Error('API 오류');
+      dbQuizData = await res.json();
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      cardsEl.innerHTML = '<p style="color:#ef4444;text-align:center">문제를 불러올 수 없습니다.</p>';
+      return;
+    }
+    loadingEl.style.display = 'none';
+
+    // 필터 버튼 생성
+    renderDbQuizFilters();
+  }
+
+  // 기본 그룹: 오답풀이(exam_id=1)
+  if (examId === undefined) examId = dbQuizExamId || 1;
+  dbQuizExamId = examId;
+
+  // 필터 버튼 활성화
+  document.querySelectorAll('.db-filter-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.examId) === examId);
+  });
+
+  // 카드 렌더링
+  const filtered = examId === 0
+    ? dbQuizData.questions
+    : dbQuizData.questions.filter(q => q.exam_id === examId);
+
+  if (filtered.length === 0) {
+    cardsEl.innerHTML = '';
+    emptyEl.style.display = '';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  cardsEl.innerHTML = '';
+  filtered.forEach(q => cardsEl.appendChild(renderDbCard(q)));
+
+  // 법령 키워드 자동 링크
+  autoLinkLaws();
+  initLawKeywords();
+}
+
+function renderDbQuizFilters() {
+  const filtersEl = document.getElementById('dbQuizFilters');
+  if (!dbQuizData) return;
+
+  // 전체 버튼 + 시험별 버튼
+  const exams = dbQuizData.exams || [];
+  let html = '<button class="db-filter-btn" data-exam-id="0" onclick="loadDbQuiz(0)">전체</button>';
+  exams.forEach(e => {
+    html += `<button class="db-filter-btn" data-exam-id="${e.id}" onclick="loadDbQuiz(${e.id})">${e.title}</button>`;
+  });
+  filtersEl.innerHTML = html;
+}
+
+// DB 레코드 → 카드 DOM 생성
+function renderDbCard(q) {
+  const num = String(q.question_number).padStart(3, '0');
+  const cardId = 'db-q' + num;
+  const choices = typeof q.choices === 'string' ? JSON.parse(q.choices) : q.choices;
+  const circleNums = ['①','②','③','④'];
+
+  const card = document.createElement('div');
+  card.className = 'db-card';
+  card.id = cardId;
+
+  // 본문 미리보기 (HTML 태그 제거, 60자)
+  const previewText = (q.body || '').replace(/<[^>]*>/g, '').trim().slice(0, 60);
+
+  // 카드 헤더
+  const header = document.createElement('div');
+  header.className = 'db-card-header';
+  header.innerHTML = `
+    <span class="db-card-num">${q.original_number || num}.</span>
+    <span class="db-card-preview">${previewText}</span>
+    <span class="db-card-badge">${q.exam_title || ''}</span>
+  `;
+  header.addEventListener('click', () => card.classList.toggle('open'));
+
+  // 카드 본문
+  const body = document.createElement('div');
+  body.className = 'db-card-body';
+
+  // 문제 본문
+  const questionBody = document.createElement('div');
+  questionBody.className = 'question-body';
+  questionBody.innerHTML = q.body || '';
+  body.appendChild(questionBody);
+
+  // 선택지
+  const ul = document.createElement('ul');
+  ul.className = 'choices';
+  ul.dataset.answer = q.answer;
+  choices.forEach((c, i) => {
+    const li = document.createElement('li');
+    li.dataset.num = c.num || (i + 1);
+    li.innerHTML = `<span class="c-num" style="font-weight:800;color:var(--accent);min-width:22px;flex-shrink:0">${circleNums[i] || ''}</span> ${c.text || ''}`;
+    li.addEventListener('click', () => {
+      // 이미 선택된 상태면 무시
+      if (ul.dataset.answered) return;
+      ul.dataset.answered = '1';
+      const correct = parseInt(ul.dataset.answer);
+      const selected = parseInt(li.dataset.num);
+      if (selected === correct) {
+        li.classList.add('correct');
+      } else {
+        li.classList.add('wrong');
+        // 정답 표시
+        ul.querySelectorAll('li').forEach(item => {
+          if (parseInt(item.dataset.num) === correct) item.classList.add('correct');
+        });
+      }
+      // 해설 표시
+      const expEl = card.querySelector('.explanation');
+      if (expEl) expEl.classList.add('show');
+    });
+    ul.appendChild(li);
+  });
+  body.appendChild(ul);
+
+  // 해설
+  if (q.explanation) {
+    const exp = document.createElement('div');
+    exp.className = 'explanation';
+    exp.innerHTML = q.explanation;
+    body.appendChild(exp);
+  }
+
+  // 원본 이미지
+  if (q.image_url) {
+    const imgWrap = document.createElement('div');
+    imgWrap.className = 'screenshot-wrap';
+    imgWrap.style.marginTop = '14px';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = q.image_url;
+    img.alt = `문제 ${num} 원본`;
+    img.style.maxWidth = '100%';
+    img.style.borderRadius = '8px';
+    img.style.border = '1px solid var(--border)';
+    imgWrap.appendChild(img);
+    body.appendChild(imgWrap);
+  }
+
+  card.appendChild(header);
+  card.appendChild(body);
+  return card;
+}
 
 // 사이드바 토글
 document.getElementById('sidebarToggle').addEventListener('click',()=>{
