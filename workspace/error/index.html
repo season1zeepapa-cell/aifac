@@ -7340,11 +7340,6 @@ document.getElementById('signupPwConfirm').addEventListener('keydown', e=>{
 // 페이지 로드 시 인증 확인
 checkAuth();
 
-// 초기 페이지: DB 문제풀이
-document.querySelector('.layout').style.display = 'none';
-document.getElementById('pageDbQuiz').classList.add('show');
-loadDbQuiz();
-
 // ═══════════════════════════════════
 // 다크모드
 // ═══════════════════════════════════
@@ -9312,6 +9307,12 @@ const observer = new IntersectionObserver(entries=>{
   });
 },{rootMargin:`-${HEADER_HEIGHT}px 0px -70% 0px`});
 cards.forEach(c=>observer.observe(c));
+
+// 초기 페이지: DB 문제풀이
+document.querySelector('.layout').style.display = 'none';
+document.getElementById('pageDbQuiz').classList.add('show');
+document.querySelector('.top-btn').style.display = '';
+loadDbQuiz();
 </script>
 </body>
 </html>
