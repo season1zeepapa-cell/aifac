@@ -4,5 +4,19 @@
     "api/gemini.js": { "maxDuration": 300 },
     "api/openai.js": { "maxDuration": 300 },
     "api/law.js": { "maxDuration": 15 }
-  }
+  },
+  "headers": [
+    {
+      "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    }
+  ]
 }
