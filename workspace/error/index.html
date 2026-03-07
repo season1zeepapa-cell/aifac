@@ -9064,7 +9064,9 @@ function renderDbCard(q) {
   exp.className = 'explanation';
   exp.id = 'exp-' + cardId;
   if (q.explanation && q.explanation.replace(/<[^>]*>/g, '').trim().length > 10) {
-    exp.innerHTML = `<div class="exp-result"></div><div class="exp-body">${q.explanation}</div>`;
+    // DB 데이터에 이미 exp-result, exp-body 래퍼가 포함되어 있음
+    const hasWrapper = q.explanation.includes('exp-body') || q.explanation.includes('exp-result');
+    exp.innerHTML = hasWrapper ? q.explanation : `<div class="exp-result"></div><div class="exp-body">${q.explanation}</div>`;
   } else {
     exp.innerHTML = '<div class="exp-result"></div>';
   }
