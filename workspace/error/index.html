@@ -118,38 +118,46 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 .db-quiz-layout .explanation.show{max-height:none;overflow:visible}
 .db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
 /* 메모 영역 */
-.memo-area{border-bottom:1.5px dashed var(--border);margin-bottom:12px;position:relative}
-.memo-header{display:flex;align-items:center;gap:6px;padding:8px 0;cursor:pointer;font-size:12px;
-  font-weight:700;color:var(--text-sub);user-select:none;transition:color .2s}
-.memo-header:hover{color:var(--accent)}
-.memo-header .memo-icon{font-size:14px}
-.memo-header .memo-count{font-size:10px;background:var(--accent);color:#fff;border-radius:10px;
+.memo-area{margin-bottom:14px}
+.memo-toggle{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;
+  font-size:12px;font-weight:700;color:var(--text-sub);user-select:none;transition:.2s;
+  border:1.5px dashed var(--border);border-radius:8px;background:transparent}
+.memo-toggle:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.memo-toggle .memo-count{font-size:10px;background:#f59e0b;color:#fff;border-radius:10px;
   padding:1px 6px;min-width:16px;text-align:center;line-height:1.4}
-.memo-body{max-height:0;overflow:hidden;transition:max-height .3s ease}
-.memo-area.open .memo-body{max-height:2000px;overflow:visible}
-.memo-item{display:flex;gap:8px;padding:8px 10px;margin-bottom:6px;background:var(--box-bg);
-  border-radius:8px;border-left:3px solid #f59e0b;font-size:13px;line-height:1.6;align-items:flex-start}
-.memo-item .memo-text{flex:1;white-space:pre-wrap;word-break:break-word;color:var(--text)}
-.memo-item .memo-actions{display:flex;gap:4px;flex-shrink:0}
-.memo-item .memo-actions button{background:none;border:none;cursor:pointer;font-size:12px;
-  padding:2px 4px;border-radius:4px;color:var(--text-sub);transition:.2s}
-.memo-item .memo-actions button:hover{background:var(--accent-light);color:var(--accent)}
-.memo-item .memo-date{font-size:10px;color:var(--text-sub);white-space:nowrap;align-self:flex-end}
-.memo-input-wrap{display:flex;gap:6px;margin-top:4px;margin-bottom:8px}
-.memo-input-wrap textarea{flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;
-  font-size:13px;background:var(--card-bg);color:var(--text);resize:vertical;min-height:36px;
-  font-family:inherit;line-height:1.5;transition:border-color .2s}
-.memo-input-wrap textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-light)}
-.memo-input-wrap button{padding:6px 14px;border-radius:8px;border:none;background:var(--accent);
-  color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;transition:.2s}
-.memo-input-wrap button:hover{opacity:.85}
-.memo-edit-wrap{display:flex;gap:6px;margin-top:6px}
-.memo-edit-wrap textarea{flex:1;padding:6px 8px;border:1.5px solid var(--accent);border-radius:6px;
-  font-size:13px;background:var(--card-bg);color:var(--text);resize:vertical;min-height:32px;font-family:inherit}
-.memo-edit-wrap button{padding:4px 10px;border-radius:6px;border:none;font-size:11px;
+.memo-panel{display:none;margin-top:8px;padding:12px;background:var(--box-bg);
+  border-radius:10px;border:1.5px solid #f59e0b33}
+.memo-area.open .memo-panel{display:block}
+.memo-list{margin-bottom:10px}
+.memo-item{padding:10px 12px;margin-bottom:8px;background:var(--card-bg);
+  border-radius:8px;border-left:3px solid #f59e0b;font-size:13px;line-height:1.7}
+.memo-item-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.memo-item-top .memo-date{font-size:10px;color:var(--text-sub)}
+.memo-item-top .memo-actions{display:flex;gap:2px}
+.memo-item-top .memo-actions button{background:none;border:none;cursor:pointer;font-size:11px;
+  padding:2px 6px;border-radius:4px;color:var(--text-sub);transition:.2s}
+.memo-item-top .memo-actions button:hover{background:var(--accent-light);color:var(--accent)}
+.memo-item .memo-text{white-space:pre-wrap;word-break:break-word;color:var(--text)}
+.memo-input-area{display:flex;flex-direction:column;gap:6px}
+.memo-input-area textarea{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;
+  font-size:13px;background:var(--card-bg);color:var(--text);resize:vertical;min-height:80px;max-height:300px;
+  font-family:inherit;line-height:1.6;transition:border-color .2s;box-sizing:border-box;
+  overflow-y:auto}
+.memo-input-area textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-light)}
+.memo-input-area .memo-btn-row{display:flex;justify-content:flex-end}
+.memo-input-area .memo-add-btn{padding:7px 18px;border-radius:8px;border:none;background:#f59e0b;
+  color:#fff;font-size:12px;font-weight:700;cursor:pointer;transition:.2s}
+.memo-input-area .memo-add-btn:hover{background:#d97706}
+.memo-input-area .memo-add-btn:disabled{opacity:.5;cursor:default}
+.memo-edit-area{margin-top:8px}
+.memo-edit-area textarea{width:100%;padding:8px 10px;border:1.5px solid var(--accent);border-radius:6px;
+  font-size:13px;background:var(--card-bg);color:var(--text);resize:vertical;min-height:60px;max-height:200px;
+  font-family:inherit;line-height:1.5;box-sizing:border-box;overflow-y:auto}
+.memo-edit-area .memo-edit-btns{display:flex;gap:6px;margin-top:6px;justify-content:flex-end}
+.memo-edit-area .memo-edit-btns button{padding:5px 12px;border-radius:6px;border:none;font-size:11px;
   font-weight:700;cursor:pointer;transition:.2s}
-.memo-edit-wrap .memo-save-btn{background:var(--accent);color:#fff}
-.memo-edit-wrap .memo-cancel-btn{background:var(--border);color:var(--text-sub)}
+.memo-edit-area .memo-edit-save{background:var(--accent);color:#fff}
+.memo-edit-area .memo-edit-cancel{background:var(--border);color:var(--text-sub)}
 .db-filter-btn{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);
   background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
   cursor:pointer;transition:.2s}
@@ -8538,92 +8546,96 @@ initLawKeywords();
 // 문제별 메모 (question_memos 테이블)
 // ═══════════════════════════════════
 
-// 메모 API 호출
+// 메모 API
 async function fetchMemos(questionId) {
-  const res = await fetch(`/api/memos?action=list&question_id=${questionId}`);
-  if (!res.ok) throw new Error('메모 로드 실패');
-  return (await res.json()).memos || [];
+  const r = await fetch(`/api/memos?action=list&question_id=${questionId}`);
+  if (!r.ok) throw new Error('메모 로드 실패');
+  return (await r.json()).memos || [];
+}
+async function saveMemoApi(questionId, content) {
+  const r = await fetch('/api/memos', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ action:'save', question_id:questionId, content }) });
+  if (!r.ok) throw new Error('메모 저장 실패');
+  return r.json();
+}
+async function updateMemoApi(id, content) {
+  const r = await fetch('/api/memos', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ action:'update', id, content }) });
+  if (!r.ok) throw new Error('메모 수정 실패');
+  return r.json();
+}
+async function deleteMemoApi(id) {
+  const r = await fetch('/api/memos', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ action:'delete', id }) });
+  if (!r.ok) throw new Error('메모 삭제 실패');
+  return r.json();
 }
 
-async function saveMemo(questionId, content) {
-  const res = await fetch('/api/memos', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'save', question_id: questionId, content })
-  });
-  if (!res.ok) throw new Error('메모 저장 실패');
-  return res.json();
+// 메모 개수 배지 업데이트
+function updateMemoCount(memoList, countEl) {
+  const cnt = memoList.querySelectorAll('.memo-item').length;
+  countEl.textContent = cnt;
+  countEl.style.display = cnt > 0 ? '' : 'none';
 }
 
-async function updateMemo(id, content) {
-  const res = await fetch('/api/memos', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'update', id, content })
-  });
-  if (!res.ok) throw new Error('메모 수정 실패');
-  return res.json();
-}
+// 메모 1건 DOM
+function buildMemoItem(memo, memoList, countEl) {
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const dateStr = new Date(memo.updated_at || memo.created_at)
+    .toLocaleDateString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
 
-async function deleteMemo(id) {
-  const res = await fetch('/api/memos', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'delete', id })
-  });
-  if (!res.ok) throw new Error('메모 삭제 실패');
-  return res.json();
-}
-
-// 메모 1건 DOM 생성
-function createMemoItem(memo, memoList, countEl) {
-  const dateStr = new Date(memo.updated_at || memo.created_at).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const item = document.createElement('div');
   item.className = 'memo-item';
-  item.dataset.memoId = memo.id;
   item.innerHTML = `
-    <div class="memo-text">${memo.content.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
-    <div class="memo-date">${dateStr}</div>
-    <div class="memo-actions">
-      <button class="memo-edit-btn" title="수정">✏️</button>
-      <button class="memo-del-btn" title="삭제">🗑️</button>
-    </div>`;
+    <div class="memo-item-top">
+      <span class="memo-date">${dateStr}</span>
+      <div class="memo-actions">
+        <button class="memo-edit-btn" title="수정">✏️ 수정</button>
+        <button class="memo-del-btn" title="삭제">🗑️ 삭제</button>
+      </div>
+    </div>
+    <div class="memo-text">${esc(memo.content)}</div>`;
+
+  const textEl = item.querySelector('.memo-text');
 
   // 수정
   item.querySelector('.memo-edit-btn').addEventListener('click', () => {
-    const textEl = item.querySelector('.memo-text');
-    const existing = item.querySelector('.memo-edit-wrap');
-    if (existing) { existing.remove(); return; }
-    const wrap = document.createElement('div');
-    wrap.className = 'memo-edit-wrap';
+    if (item.querySelector('.memo-edit-area')) return;
+    const editArea = document.createElement('div');
+    editArea.className = 'memo-edit-area';
     const ta = document.createElement('textarea');
     ta.value = memo.content;
-    ta.rows = 2;
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'memo-save-btn';
-    saveBtn.textContent = '저장';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'memo-cancel-btn';
-    cancelBtn.textContent = '취소';
-    wrap.appendChild(ta);
-    wrap.appendChild(saveBtn);
-    wrap.appendChild(cancelBtn);
-    textEl.after(wrap);
+    ta.rows = 4;
+    const btns = document.createElement('div');
+    btns.className = 'memo-edit-btns';
+    btns.innerHTML = '<button class="memo-edit-save">저장</button><button class="memo-edit-cancel">취소</button>';
+    editArea.appendChild(ta);
+    editArea.appendChild(btns);
+    textEl.style.display = 'none';
+    textEl.after(editArea);
     ta.focus();
 
-    cancelBtn.addEventListener('click', () => wrap.remove());
-    saveBtn.addEventListener('click', async () => {
+    btns.querySelector('.memo-edit-cancel').addEventListener('click', () => {
+      editArea.remove();
+      textEl.style.display = '';
+    });
+    btns.querySelector('.memo-edit-save').addEventListener('click', async () => {
       const val = ta.value.trim();
-      if (!val) return;
+      if (!val) { showToast('내용을 입력하세요.', 'warn'); return; }
+      const saveBtn = btns.querySelector('.memo-edit-save');
       try {
         saveBtn.disabled = true;
-        await updateMemo(memo.id, val);
+        saveBtn.textContent = '저장 중...';
+        await updateMemoApi(memo.id, val);
         memo.content = val;
+        memo.updated_at = new Date().toISOString();
         textEl.textContent = val;
-        wrap.remove();
+        editArea.remove();
+        textEl.style.display = '';
         showToast('메모가 수정되었습니다.', 'info');
       } catch (e) {
         saveBtn.disabled = false;
+        saveBtn.textContent = '저장';
         showToast('수정 실패: ' + e.message, 'error');
       }
     });
@@ -8633,11 +8645,9 @@ function createMemoItem(memo, memoList, countEl) {
   item.querySelector('.memo-del-btn').addEventListener('click', async () => {
     if (!confirm('이 메모를 삭제하시겠습니까?')) return;
     try {
-      await deleteMemo(memo.id);
+      await deleteMemoApi(memo.id);
       item.remove();
-      const cnt = memoList.querySelectorAll('.memo-item').length;
-      countEl.textContent = cnt;
-      countEl.style.display = cnt > 0 ? '' : 'none';
+      updateMemoCount(memoList, countEl);
       showToast('메모가 삭제되었습니다.', 'info');
     } catch (e) {
       showToast('삭제 실패: ' + e.message, 'error');
@@ -8652,90 +8662,72 @@ function createMemoArea(card, questionId) {
   const area = document.createElement('div');
   area.className = 'memo-area';
 
-  // 헤더 (마우스 오버 시 펼침)
-  const header = document.createElement('div');
-  header.className = 'memo-header';
-  header.innerHTML = '<span class="memo-icon">📝</span> <span>메모</span> <span class="memo-count" style="display:none">0</span>';
-  const countEl = header.querySelector('.memo-count');
+  // 토글 버튼
+  const toggle = document.createElement('div');
+  toggle.className = 'memo-toggle';
+  toggle.innerHTML = '📝 메모 <span class="memo-count" style="display:none">0</span>';
+  const countEl = toggle.querySelector('.memo-count');
 
-  // 본문 (접혀있음)
-  const body = document.createElement('div');
-  body.className = 'memo-body';
+  // 패널
+  const panel = document.createElement('div');
+  panel.className = 'memo-panel';
 
   const memoList = document.createElement('div');
   memoList.className = 'memo-list';
 
-  // 입력
-  const inputWrap = document.createElement('div');
-  inputWrap.className = 'memo-input-wrap';
+  // 입력 영역
+  const inputArea = document.createElement('div');
+  inputArea.className = 'memo-input-area';
   const ta = document.createElement('textarea');
-  ta.placeholder = '메모를 입력하세요...';
-  ta.rows = 1;
+  ta.placeholder = '메모를 입력하세요... (Shift+Enter로 줄바꿈)';
+  ta.rows = 3;
+  const btnRow = document.createElement('div');
+  btnRow.className = 'memo-btn-row';
   const addBtn = document.createElement('button');
-  addBtn.textContent = '추가';
-  inputWrap.appendChild(ta);
-  inputWrap.appendChild(addBtn);
+  addBtn.className = 'memo-add-btn';
+  addBtn.textContent = '메모 추가';
+  btnRow.appendChild(addBtn);
+  inputArea.appendChild(ta);
+  inputArea.appendChild(btnRow);
 
-  body.appendChild(memoList);
-  body.appendChild(inputWrap);
-  area.appendChild(header);
-  area.appendChild(body);
+  panel.appendChild(memoList);
+  panel.appendChild(inputArea);
+  area.appendChild(toggle);
+  area.appendChild(panel);
 
-  // 마우스 오버/아웃으로 펼침/접기
-  let hoverTimeout;
-  area.addEventListener('mouseenter', () => {
-    clearTimeout(hoverTimeout);
-    area.classList.add('open');
-  });
-  area.addEventListener('mouseleave', () => {
-    // 편집 중이면 접지 않음
-    if (area.querySelector('textarea:focus, .memo-edit-wrap')) return;
-    hoverTimeout = setTimeout(() => area.classList.remove('open'), 300);
-  });
-  // 클릭으로도 토글 (모바일 대응)
-  header.addEventListener('click', () => area.classList.toggle('open'));
+  // 클릭 토글
+  toggle.addEventListener('click', () => area.classList.toggle('open'));
 
-  // 포커스가 있으면 접지 않음
-  body.addEventListener('focusin', () => { clearTimeout(hoverTimeout); area.classList.add('open'); });
-  body.addEventListener('focusout', (e) => {
-    if (body.contains(e.relatedTarget)) return;
-    hoverTimeout = setTimeout(() => area.classList.remove('open'), 500);
-  });
-
-  // 추가 버튼
+  // 추가
   addBtn.addEventListener('click', async () => {
     const val = ta.value.trim();
-    if (!val) return;
+    if (!val) { showToast('메모 내용을 입력하세요.', 'warn'); ta.focus(); return; }
     try {
       addBtn.disabled = true;
-      addBtn.textContent = '...';
-      const result = await saveMemo(questionId, val);
+      addBtn.textContent = '저장 중...';
+      const result = await saveMemoApi(questionId, val);
       const memo = { id: result.id, content: val, created_at: result.created_at, updated_at: result.created_at };
-      memoList.prepend(createMemoItem(memo, memoList, countEl));
+      memoList.prepend(buildMemoItem(memo, memoList, countEl));
       ta.value = '';
-      const cnt = memoList.querySelectorAll('.memo-item').length;
-      countEl.textContent = cnt;
-      countEl.style.display = cnt > 0 ? '' : 'none';
+      updateMemoCount(memoList, countEl);
       showToast('메모가 추가되었습니다.', 'info');
     } catch (e) {
       showToast('저장 실패: ' + e.message, 'error');
     } finally {
       addBtn.disabled = false;
-      addBtn.textContent = '추가';
+      addBtn.textContent = '메모 추가';
     }
   });
 
-  // Enter로 추가 (Shift+Enter는 줄바꿈)
+  // Ctrl+Enter로 추가
   ta.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addBtn.click(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addBtn.click(); }
   });
 
   // DB에서 메모 로드
   fetchMemos(questionId).then(memos => {
-    memos.forEach(m => memoList.appendChild(createMemoItem(m, memoList, countEl)));
-    const cnt = memos.length;
-    countEl.textContent = cnt;
-    countEl.style.display = cnt > 0 ? '' : 'none';
+    memos.forEach(m => memoList.appendChild(buildMemoItem(m, memoList, countEl)));
+    updateMemoCount(memoList, countEl);
   }).catch(e => console.warn('[메모] 로드 실패:', e));
 
   return area;
