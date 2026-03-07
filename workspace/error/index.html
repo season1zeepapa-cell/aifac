@@ -105,7 +105,13 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 /* DB 문제풀이 레이아웃 */
 .db-quiz-layout{display:none;gap:24px;max-width:1320px;margin:0 auto;padding:28px 20px;align-items:flex-start}
 .db-quiz-layout.show{display:flex !important}
-.db-quiz-layout .sidebar{top:112px;max-height:calc(100vh - 130px)}
+.db-quiz-layout .sidebar{top:112px;max-height:calc(100vh - 130px);min-width:100px;max-width:400px}
+.db-resize-handle{width:6px;cursor:col-resize;background:transparent;flex-shrink:0;
+  position:relative;border-radius:3px;transition:background .2s;align-self:stretch}
+.db-resize-handle:hover,.db-resize-handle.active{background:var(--accent);opacity:.4}
+.db-resize-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:2px;height:32px;border-radius:2px;background:var(--border)}
+.db-resize-handle:hover::after,.db-resize-handle.active::after{background:var(--accent)}
 .db-quiz-layout .card{scroll-margin-top:100px}
 .db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
 .db-filter-btn{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);
@@ -113,7 +119,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
   cursor:pointer;transition:.2s}
 .db-filter-btn:hover{border-color:var(--accent);color:var(--accent)}
 .db-filter-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-@media(max-width:768px){.db-quiz-layout .sidebar{display:none}
+@media(max-width:768px){.db-quiz-layout .sidebar,.db-resize-handle{display:none}
   .db-quiz-layout{padding:16px 12px;gap:0}}
 .admin-page-card{background:var(--card-bg);border-radius:14px;padding:24px;
   box-shadow:0 3px 16px var(--shadow);border-top:4px solid var(--card-border)}
@@ -6410,6 +6416,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
     </div>
     <div class="toc-groups" id="dbTocGroups"></div>
   </nav>
+  <div class="db-resize-handle" id="dbResizeHandle" title="드래그하여 사이드바 크기 조정"></div>
   <!-- 메인 -->
   <main class="main">
     <div style="display:flex;gap:8px;margin:10px 0 16px;flex-wrap:wrap;padding:0 4px" id="dbQuizFilters"></div>
@@ -8693,6 +8700,61 @@ function buildDbToc(questions) {
 document.getElementById('dbSidebarToggle').addEventListener('click', () => {
   document.getElementById('dbSidebar').classList.toggle('collapsed');
 });
+
+// DB 사이드바 리사이즈 (드래그)
+(function(){
+  const handle = document.getElementById('dbResizeHandle');
+  const sidebar = document.getElementById('dbSidebar');
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    dragging = true;
+    startX = e.clientX;
+    startW = sidebar.offsetWidth;
+    handle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const diff = e.clientX - startX;
+    const newW = Math.min(400, Math.max(100, startW + diff));
+    sidebar.style.width = newW + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+
+  // 터치 지원
+  handle.addEventListener('touchstart', e => {
+    dragging = true;
+    startX = e.touches[0].clientX;
+    startW = sidebar.offsetWidth;
+    handle.classList.add('active');
+  }, { passive: true });
+
+  document.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    const diff = e.touches[0].clientX - startX;
+    const newW = Math.min(400, Math.max(100, startW + diff));
+    sidebar.style.width = newW + 'px';
+  }, { passive: true });
+
+  document.addEventListener('touchend', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('active');
+  });
+})();
 
 // DB 번호 점프
 document.getElementById('dbTocJumpInput').addEventListener('keydown', e => {
