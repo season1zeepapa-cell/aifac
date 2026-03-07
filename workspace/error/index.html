@@ -4217,15 +4217,10 @@ function openSettings(){
   document.getElementById('geminiTemp').value = gTemp;
   document.getElementById('geminiTempVal').textContent = gTemp.toFixed(1);
 
-  const targetEffort = aiSettings.openai.reasoningEffort ?? 'high';
-  setSelectValue('openaiReasoningEffort', targetEffort);
-  const actualEffort = document.getElementById('openaiReasoningEffort').value;
+  setSelectValue('openaiReasoningEffort', aiSettings.openai.reasoningEffort ?? 'high');
   const oTemp = parseFloat(aiSettings.openai.temperature ?? 1.0);
   document.getElementById('openaiTemp').value = oTemp;
   document.getElementById('openaiTempVal').textContent = oTemp.toFixed(1);
-
-  // 디버그: 세팅 직후 실제 값 확인
-  alert('메모리: ' + targetEffort + '\nDOM 세팅 후: ' + actualEffort + '\n일치: ' + (targetEffort === actualEffort));
 }
 
 function closeSettings(){
@@ -4291,19 +4286,7 @@ function saveSettings(){
 
   aiModels = { gemini: aiSettings.gemini.model, openai: aiSettings.openai.model };
   updateAllModelBadges();
-  // 저장 확인 토스트
-  showSaveToast();
   closeSettings();
-}
-function showSaveToast(){
-  const g = aiSettings.gemini;
-  const o = aiSettings.openai;
-  const msg = `✅ 저장됨\nGemini: ${g.model} (level:${g.thinkingLevel}, budget:${g.thinkingBudget}, temp:${g.temperature})\nGPT: ${o.model} (effort:${o.reasoningEffort}, temp:${o.temperature})`;
-  const toast = document.createElement('div');
-  toast.textContent = msg;
-  toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;white-space:pre-line;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:opacity .5s';
-  document.body.appendChild(toast);
-  setTimeout(()=>{ toast.style.opacity='0'; setTimeout(()=>toast.remove(),500); },3000);
 }
 
 // 모든 카드의 버튼 라벨 업데이트
