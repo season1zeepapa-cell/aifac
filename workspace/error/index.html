@@ -8858,7 +8858,7 @@ async function loadDbQuiz(examId) {
     renderDbQuizFilters();
   }
 
-  if (examId === undefined) examId = dbQuizExamId || 1;
+  if (examId === undefined) examId = dbQuizExamId ?? 0;
   dbQuizExamId = examId;
 
   document.querySelectorAll('.db-filter-btn').forEach(btn => {
