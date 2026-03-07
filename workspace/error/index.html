@@ -8726,11 +8726,16 @@ function createMemoArea(card, questionId) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addBtn.click(); }
   });
 
-  // DB에서 메모 로드
-  fetchMemos(questionId).then(memos => {
-    memos.forEach(m => memoList.appendChild(buildMemoItem(m, memoList, countEl)));
-    updateMemoCount(memoList, countEl);
-  }).catch(e => console.warn('[메모] 로드 실패:', e));
+  // 메모 로드 함수 (카드 열릴 때 호출)
+  let memoLoaded = false;
+  area._loadMemos = () => {
+    if (memoLoaded) return;
+    memoLoaded = true;
+    fetchMemos(questionId).then(memos => {
+      memos.forEach(m => memoList.appendChild(buildMemoItem(m, memoList, countEl)));
+      updateMemoCount(memoList, countEl);
+    }).catch(e => console.warn('[메모] 로드 실패:', e));
+  };
 
   return area;
 }
@@ -9193,17 +9198,22 @@ function renderDbCard(q) {
   card.appendChild(screenshotWrap);
   card.appendChild(content);
 
-  // 헤더 클릭 → 펼치기/접기
+  // 헤더 클릭 → 펼치기/접기 + 지연 로딩
+  let lazyLoaded = false;
   header.addEventListener('click', () => {
     const wasOpen = card.classList.toggle('open');
     if (!wasOpen && screenshotWrap.classList.contains('show')) {
       screenshotWrap.classList.remove('show');
       imgBtn.textContent = '🖼 원본';
     }
+    // 카드가 열릴 때 메모/해설 지연 로드 (최초 1회)
+    if (wasOpen && !lazyLoaded && q.id) {
+      lazyLoaded = true;
+      const ma = card.querySelector('.memo-area');
+      if (ma?._loadMemos) ma._loadMemos();
+      loadAndRenderDbExplanations(card, q.id);
+    }
   });
-
-  // DB 저장된 AI 해설 로드 (비동기)
-  if (q.id) loadAndRenderDbExplanations(card, q.id);
 
   return card;
 }

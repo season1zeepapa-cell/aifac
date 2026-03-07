@@ -9,7 +9,7 @@ function getPool() {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: { rejectUnauthorized: false }, // Supabase 필수
-      max: 5,                             // 최대 연결 수
+      max: 2,                             // 서버리스 환경 최소 연결
       idleTimeoutMillis: 30000,           // 유휴 연결 30초 후 해제
       connectionTimeoutMillis: 10000,     // 연결 타임아웃 10초
     });
