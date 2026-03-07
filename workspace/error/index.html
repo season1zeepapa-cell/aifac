@@ -4258,14 +4258,30 @@ function onOpenAIModelChange(keepValues){
 }
 
 function saveSettings(){
-  aiSettings.gemini.model          = document.getElementById('geminiModelSelect').value;
-  aiSettings.gemini.temperature    = parseFloat(document.getElementById('geminiTemp').value);
-  aiSettings.gemini.thinkingLevel  = document.getElementById('geminiThinkingLevel').value;
-  aiSettings.gemini.thinkingBudget = parseInt(document.getElementById('geminiThinkingBudget').value) || 0;
-  aiSettings.openai.model          = document.getElementById('openaiModelSelect').value;
-  aiSettings.openai.temperature    = parseFloat(document.getElementById('openaiTemp').value);
-  aiSettings.openai.reasoningEffort= document.getElementById('openaiReasoningEffort').value;
+  // Gemini 설정 저장
+  const gModel = document.getElementById('geminiModelSelect').value;
+  const gInfo = GEMINI_CATALOG.find(c=>c.id===gModel);
+  const isG3 = gModel.startsWith('gemini-3');
+  aiSettings.gemini.model       = gModel;
+  aiSettings.gemini.temperature = parseFloat(document.getElementById('geminiTemp').value);
+  if(gInfo?.thinking && isG3){
+    aiSettings.gemini.thinkingLevel = document.getElementById('geminiThinkingLevel').value;
+  } else if(gInfo?.thinking){
+    aiSettings.gemini.thinkingBudget = parseInt(document.getElementById('geminiThinkingBudget').value) || 0;
+  }
+
+  // OpenAI 설정 저장
+  const oModel = document.getElementById('openaiModelSelect').value;
+  const oInfo = OPENAI_CATALOG.find(c=>c.id===oModel);
+  aiSettings.openai.model = oModel;
+  if(oInfo?.reasoning){
+    aiSettings.openai.reasoningEffort = document.getElementById('openaiReasoningEffort').value;
+  } else {
+    aiSettings.openai.temperature = parseFloat(document.getElementById('openaiTemp').value);
+  }
+
   aiModels = { gemini: aiSettings.gemini.model, openai: aiSettings.openai.model };
+  console.log('[설정 저장]', JSON.parse(JSON.stringify(aiSettings)));
   updateAllModelBadges();
   closeSettings();
 }
