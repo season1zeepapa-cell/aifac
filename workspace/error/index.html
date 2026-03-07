@@ -4168,7 +4168,7 @@ const TIER_COLOR = {
 };
 
 // ═══════════════════════════════════
-// AI 설정 (model + options, localStorage 저장)
+// AI 설정 (model + options, 세션 내 유지 / 새로고침 시 추천값 복원)
 // ═══════════════════════════════════
 const DEFAULT_SETTINGS = {
   gemini:{ model:'gemini-3.1-pro-preview', temperature:1.0, thinkingBudget:0, thinkingLevel:'high' },
@@ -4179,23 +4179,9 @@ let aiSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
 let aiModels = { gemini: aiSettings.gemini.model, openai: aiSettings.openai.model };
 
 function loadSettings(){
-  try{
-    let saved = JSON.parse(localStorage.getItem('aiSettings') || 'null');
-    // 구 'aiModels' 키 하위 호환 마이그레이션
-    if(!saved){
-      const old = JSON.parse(localStorage.getItem('aiModels') || '{}');
-      if(old.gemini || old.openai){
-        saved = {
-          gemini: old.gemini ? { model: old.gemini } : {},
-          openai: old.openai ? { model: old.openai } : {}
-        };
-      }
-    }
-    aiSettings = {
-      gemini: { ...DEFAULT_SETTINGS.gemini, ...(saved?.gemini||{}) },
-      openai: { ...DEFAULT_SETTINGS.openai, ...(saved?.openai||{}) }
-    };
-  }catch(e){ aiSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)); }
+  // 새로고침/브라우저 변경 시 항상 추천 모델(DEFAULT_SETTINGS)로 시작
+  // 세션 중 saveSettings()로 변경한 값은 메모리에만 유지됨
+  aiSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   aiModels = { gemini: aiSettings.gemini.model, openai: aiSettings.openai.model };
 }
 
@@ -4270,7 +4256,6 @@ function saveSettings(){
   aiSettings.openai.model          = document.getElementById('openaiModelSelect').value;
   aiSettings.openai.temperature    = parseFloat(document.getElementById('openaiTemp').value);
   aiSettings.openai.reasoningEffort= document.getElementById('openaiReasoningEffort').value;
-  localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
   aiModels = { gemini: aiSettings.gemini.model, openai: aiSettings.openai.model };
   updateAllModelBadges();
   closeSettings();
