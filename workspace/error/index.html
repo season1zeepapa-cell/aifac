@@ -14,7 +14,7 @@
   --card-bg: #ffffff;
   --card-border: #4f46e5;
   --text: #111827;
-  --text-sub: #6b7280;
+  --text-sub: #4b5563;
   --text-law: #4338ca;
   --border: #e5e7eb;
   --accent: #4f46e5;
@@ -517,9 +517,20 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
   .badge{display:none}
   .btn-header{display:none}
 }
+/* ───── 토스트 알림 ───── */
+.toast-container{position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:12px 20px;border-radius:10px;font-size:14px;color:#fff;pointer-events:auto;
+  animation:toastIn .3s ease,toastOut .3s ease 2.7s forwards;
+  box-shadow:0 4px 12px rgba(0,0,0,.15);max-width:340px}
+.toast.info{background:#3b82f6}
+.toast.warn{background:#f59e0b;color:#1a1a1a}
+.toast.error{background:#ef4444}
+@keyframes toastIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0;transform:translateY(-10px)}}
 </style>
 </head>
 <body>
+<div class="toast-container" id="toastContainer"></div>
 
 <!-- 상단 헤더 -->
 <header class="site-header">
@@ -528,9 +539,9 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
     <span class="badge">전체 110문항</span>
   </div>
   <div class="header-right">
-    <button class="btn-header" onclick="toggleAll(true)">전체 펼치기</button>
-    <button class="btn-header" onclick="toggleAll(false)">전체 접기</button>
-    <button class="btn-header" id="settingsBtn" onclick="openSettings()" title="AI 모델 설정">⚙️ 설정</button>
+    <button class="btn-header" onclick="toggleAll(true)" aria-label="전체 문항 펼치기">전체 펼치기</button>
+    <button class="btn-header" onclick="toggleAll(false)" aria-label="전체 문항 접기">전체 접기</button>
+    <button class="btn-header" id="settingsBtn" onclick="openSettings()" title="AI 모델 설정" aria-label="AI 모델 설정">⚙️ 설정</button>
     <button class="dark-toggle" id="darkToggle" title="다크모드 전환" aria-label="다크모드 전환"></button>
   </div>
 </header>
@@ -542,7 +553,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-title">
       <span class="sidebar-title-text">목차</span>
-      <button class="sidebar-toggle" id="sidebarToggle" title="목차 접기/펼치기">◀</button>
+      <button class="sidebar-toggle" id="sidebarToggle" title="목차 접기/펼치기" aria-label="목차 접기/펼치기">◀</button>
     </div>
     <!-- JS가 자동 생성 -->
   </nav>
@@ -4227,20 +4238,23 @@ function closeSettings(){
   document.getElementById('settingsModal').classList.remove('show');
 }
 
+// 가격 정보 HTML 생성 (공통 헬퍼)
+function renderPriceInfo(info){
+  const color = TIER_COLOR[info.tier] || '#6b7280';
+  return `<span style="display:inline-block;font-size:10px;font-weight:800;color:#fff;background:${color};padding:1px 7px;border-radius:4px;margin-right:6px">${info.tier}</span>` +
+    `입력 <strong>${info.inputP}</strong> · 출력 <strong>${info.outputP}</strong> / 1M tokens<br>` +
+    `<span style="color:var(--text)">${info.desc}</span>`;
+}
+
 function onGeminiModelChange(keepValues){
   const model = document.getElementById('geminiModelSelect').value;
   const info = GEMINI_CATALOG.find(m=>m.id===model) || GEMINI_CATALOG[1];
-  const color = TIER_COLOR[info.tier] || '#6b7280';
-  document.getElementById('geminiPriceInfo').innerHTML =
-    `<span style="display:inline-block;font-size:10px;font-weight:800;color:#fff;background:${color};padding:1px 7px;border-radius:4px;margin-right:6px">${info.tier}</span>` +
-    `입력 <strong>${info.inputP}</strong> · 출력 <strong>${info.outputP}</strong> / 1M tokens<br>` +
-    `<span style="color:var(--text)">${info.desc}</span>`;
+  document.getElementById('geminiPriceInfo').innerHTML = renderPriceInfo(info);
   const isGemini3 = model.startsWith('gemini-3');
   const showLevel = info.thinking && isGemini3;
   const showBudget = info.thinking && !isGemini3;
   document.getElementById('geminiThinkingLevelRow').classList.toggle('s-hidden', !showLevel);
   document.getElementById('geminiThinkingRow').classList.toggle('s-hidden', !showBudget);
-  // 모델 변경 시 해당 모델의 추천 기본값으로 세팅 (모달 열 때는 저장된 값 유지)
   if(!keepValues){
     const d = info.defaults || {};
     if(showLevel) document.getElementById('geminiThinkingLevel').value = d.thinkingLevel || 'high';
@@ -4254,14 +4268,9 @@ function onGeminiModelChange(keepValues){
 function onOpenAIModelChange(keepValues){
   const model = document.getElementById('openaiModelSelect').value;
   const info = OPENAI_CATALOG.find(m=>m.id===model) || OPENAI_CATALOG[3];
-  const color = TIER_COLOR[info.tier] || '#6b7280';
-  document.getElementById('openaiPriceInfo').innerHTML =
-    `<span style="display:inline-block;font-size:10px;font-weight:800;color:#fff;background:${color};padding:1px 7px;border-radius:4px;margin-right:6px">${info.tier}</span>` +
-    `입력 <strong>${info.inputP}</strong> · 출력 <strong>${info.outputP}</strong> / 1M tokens<br>` +
-    `<span style="color:var(--text)">${info.desc}</span>`;
+  document.getElementById('openaiPriceInfo').innerHTML = renderPriceInfo(info);
   document.getElementById('openaiReasoningRow').classList.toggle('s-hidden', !info.reasoning);
   document.getElementById('openaiTempRow').classList.toggle('s-hidden', info.reasoning);
-  // 모델 변경 시 해당 모델의 추천 기본값으로 세팅 (모달 열 때는 저장된 값 유지)
   if(!keepValues){
     const d = info.defaults || {};
     if(info.reasoning){
@@ -4327,7 +4336,15 @@ darkBtn.addEventListener('click',()=>{
 const modal = document.getElementById('imgModal');
 const modalImg = document.getElementById('modalImg');
 modal.addEventListener('click',()=>modal.classList.remove('show'));
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') modal.classList.remove('show'); });
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    modal.classList.remove('show');
+    // 설정 모달도 Esc로 닫기
+    closeSettings();
+    // 법령 툴팁도 Esc로 닫기
+    closeLawTooltip();
+  }
+});
 function openModal(src){ modalImg.src=src; modal.classList.add('show'); }
 
 // ═══════════════════════════════════
@@ -4735,7 +4752,7 @@ async function prepareAIRequest(card){
     try{
       imageBase64 = await fetchImageBase64(card.id+'.png');
       mimeType = 'image/png';
-    }catch(e){ console.warn('이미지 로드 실패, 텍스트로만 요청합니다.'); }
+    }catch(e){ showToast('이미지 로드 실패 — 텍스트로만 요청합니다', 'warn'); }
   }
   return {text, imageBase64, mimeType};
 }
@@ -4760,14 +4777,38 @@ function getProviderOpts(provider){
   }
 }
 
+// 토스트 알림 표시 (type: 'info' | 'warn' | 'error')
+function showToast(message, type='info'){
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(()=> toast.remove(), 3000);
+}
+
+// fetch에 타임아웃을 적용하는 헬퍼 (기본 60초, 스트리밍은 180초)
+const AI_TIMEOUT_MS = 180000; // 3분 (AI 추론 모델 대응)
+function fetchWithTimeout(url, options, timeoutMs = AI_TIMEOUT_MS){
+  const controller = new AbortController();
+  const timer = setTimeout(()=> controller.abort(), timeoutMs);
+  return fetch(url, {...options, signal: controller.signal})
+    .finally(()=> clearTimeout(timer));
+}
+
 const SYS_PROMPT_TEXT = '당신은 영상정보관리사 자격증 시험 전문 강사입니다. 주어진 문제를 분석하고 다음 형식으로 답변해주세요:\n\n**정답**: [번호 및 내용]\n\n**해설**: [상세한 해설]\n\n**핵심 키워드**: [관련 법령, 용어 등]';
 
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>'); }
 
-function buildDebugPanel(provider, model, opts, text, hasImage){
-  const optEntries = Object.entries(opts)
+// 옵션 객체를 디버그 태그 HTML로 변환
+function optionsToTags(opts){
+  return Object.entries(opts)
     .filter(([,v])=> v !== undefined && v !== null && v !== 0 && v !== '')
     .map(([k,v])=> `<span class="dbg-tag">${k}: <strong>${v}</strong></span>`).join(' ');
+}
+
+function buildDebugPanel(provider, model, opts, text, hasImage){
+  const optEntries = optionsToTags(opts);
   return `<div class="ai-debug-panel open">
     <div class="dbg-toggle" onclick="this.parentElement.classList.toggle('open')">
       <span>📋 요청 정보</span><span class="dbg-arrow">▶</span>
@@ -4810,7 +4851,7 @@ async function askAI(provider, card, btnEl, respArea){
       `<div class="ai-resp-header">${providerName} <span class="model-badge">${modelName}</span> 분석 중...</div>
        <div class="ai-loading"><div class="spinner"></div> AI가 문제를 분석하고 있어요...</div>`;
 
-    const resp = await fetch(endpoint,{
+    const resp = await fetchWithTimeout(endpoint,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text, imageBase64, mimeType, model, stream:true, ...opts})
@@ -4838,7 +4879,7 @@ async function askAI(provider, card, btnEl, respArea){
     if(!fullText){
       console.warn('[SSE] 스트리밍 빈 결과 → 일반 모드 재시도');
       bodyEl.innerHTML = '<div class="ai-loading"><div class="spinner"></div> 재시도 중 (일반 모드)...</div>';
-      const resp2 = await fetch(endpoint,{
+      const resp2 = await fetchWithTimeout(endpoint,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({text, imageBase64, mimeType, model, stream:false, ...opts})
@@ -4853,9 +4894,10 @@ async function askAI(provider, card, btnEl, respArea){
     addSaveButton(respArea, card.id, provider, modelName, rendered);
   }catch(e){
     const debugKeep = respArea.querySelector('.ai-debug-panel')?.outerHTML || '';
+    const msg = e.name==='AbortError' ? '⏱️ 요청 시간이 초과되었습니다 (3분). 다시 시도해주세요.' : e.message;
     respArea.innerHTML = debugKeep + `
       <div class="ai-resp-header" style="color:#ef4444">오류 발생</div>
-      <div style="color:#ef4444;font-size:14px">${e.message}</div>`;
+      <div style="color:#ef4444;font-size:14px">${msg}</div>`;
   }finally{
     btnEl.disabled = false;
     if(otherBtn) otherBtn.disabled = false;
@@ -4884,29 +4926,14 @@ async function askBoth(card, allBtns, respArea){
       </div>
     </div>`;
 
-  // 디버그 패널은 텍스트 준비 후 삽입 (아래에서)
-
-  // 텍스트 + 이미지 공통 준비
-  let text = extractCardText(card);
-  const extraInput = card.querySelector('.ai-extra-input');
-  const extra = extraInput?.value.trim();
-  if(extra) text = '[추가 지시사항]\n' + extra + '\n\n' + text;
-
-  const useImage = card.querySelector('.img-use-toggle')?.checked;
-  let imageBase64 = null, mimeType = null;
-  if(useImage){
-    const num = card.id;
-    try{
-      imageBase64 = await fetchImageBase64(num+'.png');
-      mimeType = 'image/png';
-    }catch(e){ console.warn('이미지 로드 실패'); }
-  }
+  // 텍스트 + 이미지 공통 준비 (prepareAIRequest 재사용)
+  const {text, imageBase64, mimeType} = await prepareAIRequest(card);
 
   // 디버그 패널 삽입 (두 모델 옵션 나란히)
   const gOpts = getProviderOpts('gemini');
   const oOpts = getProviderOpts('openai');
-  const gOptTags = Object.entries(gOpts).filter(([,v])=>v!==undefined&&v!==null&&v!==0&&v!=='').map(([k,v])=>`<span class="dbg-tag">${k}: <strong>${v}</strong></span>`).join(' ');
-  const oOptTags = Object.entries(oOpts).filter(([,v])=>v!==undefined&&v!==null&&v!==0&&v!=='').map(([k,v])=>`<span class="dbg-tag">${k}: <strong>${v}</strong></span>`).join(' ');
+  const gOptTags = optionsToTags(gOpts);
+  const oOptTags = optionsToTags(oOpts);
   const dualDebug = `<div class="ai-debug-panel open">
     <div class="dbg-toggle" onclick="this.parentElement.classList.toggle('open')">
       <span>📋 요청 정보</span><span class="dbg-arrow">▶</span>
@@ -4930,7 +4957,7 @@ async function askBoth(card, allBtns, respArea){
     const providerName = provider==='gemini'?'✨ Gemini':'✨ GPT';
     try{
       const opts = getProviderOpts(provider);
-      const resp = await fetch(endpoint,{
+      const resp = await fetchWithTimeout(endpoint,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({text, imageBase64, mimeType, model, stream:true, ...opts})
@@ -4956,7 +4983,7 @@ async function askBoth(card, allBtns, respArea){
       if(!fullText){
         console.warn('[SSE] 스트리밍 빈 결과 → 일반 모드 재시도 (' + provider + ')');
         bodyEl.innerHTML = '<div class="ai-loading"><div class="spinner"></div> 재시도 중...</div>';
-        const resp2 = await fetch(endpoint,{
+        const resp2 = await fetchWithTimeout(endpoint,{
           method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({text, imageBase64, mimeType, model, stream:false, ...opts})
@@ -4971,9 +4998,10 @@ async function askBoth(card, allBtns, respArea){
       addSaveButton(panel, card.id, provider, model, rendered);
     }catch(e){
       const panel = respArea.querySelector('#'+panelId);
+      const msg = e.name==='AbortError' ? '⏱️ 요청 시간 초과 (3분)' : e.message;
       if(panel) panel.innerHTML = `
         <div class="dual-panel-header" style="color:#ef4444">오류 발생</div>
-        <div style="color:#ef4444;font-size:14px">${e.message}</div>`;
+        <div style="color:#ef4444;font-size:14px">${msg}</div>`;
     }
   }
 
@@ -5152,6 +5180,12 @@ function initQuizChoices() {
     const screenWrap = cardEl?.querySelector('.screenshot-wrap');
 
     ul.querySelectorAll('li[data-num]').forEach(li => {
+      li.setAttribute('tabindex', '0');
+      li.setAttribute('role', 'button');
+      // Enter/Space 키로도 선택 가능
+      li.addEventListener('keydown', e => {
+        if(e.key==='Enter' || e.key===' '){ e.preventDefault(); li.click(); }
+      });
       li.addEventListener('click', () => {
         const chosen = li.getAttribute('data-num');
         const alreadySelected = li.classList.contains('chosen-correct') || li.classList.contains('chosen-wrong');
@@ -5221,6 +5255,7 @@ document.getElementById('sidebarToggle').addEventListener('click',()=>{
 // ═══════════════════════════════════
 const tocItems = document.querySelectorAll('.toc-item');
 const cards    = document.querySelectorAll('.card');
+const HEADER_HEIGHT = 60; // 헤더 높이 (px)
 const observer = new IntersectionObserver(entries=>{
   entries.forEach(entry=>{
     if(entry.isIntersecting){
@@ -5230,7 +5265,7 @@ const observer = new IntersectionObserver(entries=>{
       });
     }
   });
-},{rootMargin:'-60px 0px -70% 0px'});
+},{rootMargin:`-${HEADER_HEIGHT}px 0px -70% 0px`});
 cards.forEach(c=>observer.observe(c));
 </script>
 </body>
