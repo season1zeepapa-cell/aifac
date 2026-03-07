@@ -146,6 +146,11 @@ const questionsHandler = require('./api/questions');
 app.get('/api/questions', (req, res) => questionsHandler(req, res));
 app.post('/api/questions', (req, res) => questionsHandler(req, res));
 
+// ── /api/explanations (GET, POST) ────────────────────
+const explanationsHandler = require('./api/explanations');
+app.get('/api/explanations', (req, res) => explanationsHandler(req, res));
+app.post('/api/explanations', (req, res) => explanationsHandler(req, res));
+
 // ── POST /api/law ────────────────────────────────────
 const lawHandler = require('./api/law');
 app.post('/api/law', (req, res) => lawHandler(req, res));

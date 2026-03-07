@@ -6786,6 +6786,8 @@ function checkAuth(){
     adminNav.classList.toggle('show', admin);
     // 관리자가 아닌 경우 헤더에 설정 버튼 표시
     settingsBtn.style.display = admin ? 'none' : '';
+    // 관리자 최초 접속 시 DB문제풀이로 이동
+    if(admin && currentPage === 'study') navTo('dbquiz');
   } else {
     overlay.classList.remove('hidden');
     logoutBtn.style.display = 'none';
@@ -6905,8 +6907,8 @@ function doLogout(){
 let currentPage = 'study';
 
 function navTo(page){
-  // 같은 페이지 클릭 시 메인으로 복귀
-  if(currentPage === page) page = 'study';
+  // 같은 페이지 클릭 시 무시
+  if(currentPage === page) return;
   currentPage = page;
 
   // 탭 활성화 표시
@@ -7774,6 +7776,9 @@ function addSaveButton(respArea, qId, provider, model, html){
   respArea.querySelector('.btn-save-ai')?.remove();
   respArea.querySelector('.btn-replace-exp')?.remove();
 
+  const isDbCard = qId.startsWith('db-q');
+  const card = respArea.closest('.card');
+
   // 버튼 컨테이너
   const btnWrap = document.createElement('div');
   btnWrap.style.display = 'flex';
@@ -7785,30 +7790,57 @@ function addSaveButton(respArea, qId, provider, model, html){
   const saveBtn = document.createElement('button');
   saveBtn.className = 'btn-save-ai';
   saveBtn.textContent = '💾 이 해설 저장';
-  saveBtn.addEventListener('click',()=>{
-    saveAIExplanation(qId, provider, model, html);
-    const card = respArea.closest('.card');
-    if(card){
-      renderSavedAI(card, qId, provider);
-      const saved = card.querySelector(`#saved-ai-${qId}-${provider}`);
-      if(saved) saved.classList.add('show');
-    }
-    respArea.classList.remove('show');
-    respArea.innerHTML = '';
-  });
 
-  // 📝 교체 버튼
-  const replaceBtn = document.createElement('button');
-  replaceBtn.className = 'btn-replace-exp';
-  replaceBtn.textContent = '📝 기본 해설로 교체';
-  replaceBtn.addEventListener('click',()=>{
-    replaceExplanation(qId, html, model);
-    respArea.classList.remove('show');
-    respArea.innerHTML = '';
-  });
+  if (isDbCard) {
+    // DB 카드: question_explanations 테이블에 저장
+    saveBtn.addEventListener('click', async () => {
+      const questionId = card?.dataset?.questionId;
+      if (!questionId) { showToast('문제 ID를 찾을 수 없습니다.', 'error'); return; }
+      const extraInput = card.querySelector('.ai-extra-input');
+      const extraPrompt = extraInput?.value?.trim() || null;
+      try {
+        saveBtn.disabled = true;
+        saveBtn.textContent = '저장 중...';
+        const result = await saveDbExplanation(parseInt(questionId), provider, model, html, extraPrompt);
+        // 저장된 해설을 바로 렌더링
+        renderDbExplanation(card, { id: result.id, provider, model, content: html, created_at: result.created_at });
+        respArea.classList.remove('show');
+        respArea.innerHTML = '';
+        showToast('AI 해설이 DB에 저장되었습니다.', 'info');
+      } catch (e) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '💾 이 해설 저장';
+        showToast('저장 실패: ' + e.message, 'error');
+      }
+    });
+  } else {
+    // 기존 HTML 카드: localStorage에 저장
+    saveBtn.addEventListener('click',()=>{
+      saveAIExplanation(qId, provider, model, html);
+      if(card){
+        renderSavedAI(card, qId, provider);
+        const saved = card.querySelector(`#saved-ai-${qId}-${provider}`);
+        if(saved) saved.classList.add('show');
+      }
+      respArea.classList.remove('show');
+      respArea.innerHTML = '';
+    });
+  }
 
+  // 📝 교체 버튼 (기존 HTML 카드에서만 표시)
   btnWrap.appendChild(saveBtn);
-  btnWrap.appendChild(replaceBtn);
+  if (!isDbCard) {
+    const replaceBtn = document.createElement('button');
+    replaceBtn.className = 'btn-replace-exp';
+    replaceBtn.textContent = '📝 기본 해설로 교체';
+    replaceBtn.addEventListener('click',()=>{
+      replaceExplanation(qId, html, model);
+      respArea.classList.remove('show');
+      respArea.innerHTML = '';
+    });
+    btnWrap.appendChild(replaceBtn);
+  }
+
   respArea.appendChild(btnWrap);
 }
 
@@ -8454,6 +8486,95 @@ autoLinkLaws();
 initLawKeywords();
 
 // ═══════════════════════════════════
+// DB 해설 저장/로드 (question_explanations 테이블)
+// ═══════════════════════════════════
+
+// DB에 AI 해설 저장
+async function saveDbExplanation(questionId, provider, model, html, extraPrompt) {
+  const res = await fetch('/api/explanations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'save', question_id: questionId, provider, model, content: html, extra_prompt: extraPrompt || null })
+  });
+  if (!res.ok) throw new Error('해설 저장 실패');
+  return res.json();
+}
+
+// DB에서 해설 삭제
+async function deleteDbExplanation(id) {
+  const res = await fetch('/api/explanations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'delete', id })
+  });
+  if (!res.ok) throw new Error('해설 삭제 실패');
+  return res.json();
+}
+
+// DB에서 해설 목록 로드
+async function loadDbExplanations(questionId) {
+  const res = await fetch(`/api/explanations?action=list&question_id=${questionId}`);
+  if (!res.ok) throw new Error('해설 로드 실패');
+  const data = await res.json();
+  return data.explanations || [];
+}
+
+// DB 해설을 카드에 렌더링
+function renderDbExplanation(card, explanation) {
+  const containerId = `db-exp-${explanation.id}`;
+  if (card.querySelector('#' + containerId)) return;
+
+  const providerLabel = explanation.provider === 'gemini' ? 'Gemini' : 'GPT';
+  const dateStr = new Date(explanation.created_at).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  const div = document.createElement('div');
+  div.className = 'saved-ai-area';
+  div.id = containerId;
+  div.innerHTML = `
+    <div class="saved-ai-header">
+      <span>🤖 AI 해설 · ${providerLabel} <span class="model-badge">${explanation.model}</span> <span style="font-size:11px;color:var(--muted)">${dateStr}</span></span>
+      <button class="btn-delete-ai" data-exp-id="${explanation.id}">삭제</button>
+    </div>
+    <div class="saved-ai-body">${explanation.content}</div>`;
+
+  div.querySelector('.btn-delete-ai').addEventListener('click', async () => {
+    if (!confirm('이 AI 해설을 삭제하시겠습니까?')) return;
+    try {
+      await deleteDbExplanation(explanation.id);
+      div.remove();
+      showToast('해설이 삭제되었습니다.', 'info');
+    } catch (e) {
+      showToast('삭제 실패: ' + e.message, 'error');
+    }
+  });
+
+  // 기존 해설(.explanation) 바로 뒤에 삽입, 이미 있는 saved-ai-area 뒤에 추가
+  const content = card.querySelector('.card-content');
+  const existingSaved = content?.querySelectorAll('.saved-ai-area');
+  if (existingSaved && existingSaved.length > 0) {
+    existingSaved[existingSaved.length - 1].insertAdjacentElement('afterend', div);
+  } else {
+    const expEl = content?.querySelector('.explanation');
+    if (expEl) expEl.insertAdjacentElement('afterend', div);
+    else {
+      const respArea = content?.querySelector('.ai-response-area');
+      if (respArea) content.insertBefore(div, respArea);
+      else content?.appendChild(div);
+    }
+  }
+}
+
+// DB 카드에 해설 목록 로드 + 렌더링
+async function loadAndRenderDbExplanations(card, questionId) {
+  try {
+    const explanations = await loadDbExplanations(questionId);
+    explanations.reverse().forEach(exp => renderDbExplanation(card, exp));
+  } catch (e) {
+    console.warn('[DB 해설] 로드 실패:', e);
+  }
+}
+
+// ═══════════════════════════════════
 // DB 문제풀이 페이지 (검증용)
 // ═══════════════════════════════════
 let dbQuizData = null;
@@ -8604,6 +8725,7 @@ function renderDbCard(q) {
   const card = document.createElement('div');
   card.className = 'card';
   card.id = cardId;
+  card.dataset.questionId = q.id;
 
   // ── 카드 내부 원본 DOM 구성 (meta + question-body + choices + explanation) ──
   // meta
@@ -8771,9 +8893,8 @@ function renderDbCard(q) {
     }
   });
 
-  // 저장된 AI 해설 로드
-  renderSavedAI(card, cardId, 'gemini');
-  renderSavedAI(card, cardId, 'openai');
+  // DB 저장된 AI 해설 로드 (비동기)
+  if (q.id) loadAndRenderDbExplanations(card, q.id);
 
   return card;
 }
