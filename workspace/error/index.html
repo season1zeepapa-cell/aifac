@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>영상정보관리사 오답노트 110문항</title>
+<title>영상정보관리사 문제풀이</title>
 <style>
 /* ───── 색상 변수 (라이트/다크) ───── */
 :root {
@@ -716,7 +716,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
     <h1>📹 영상정보관리사</h1>
-    <p>오답노트 190문항 · 로그인 후 이용 가능</p>
+    <p>문제풀이 · 로그인 후 이용 가능</p>
 
     <!-- 탭 버튼 -->
     <div class="auth-tabs">
@@ -758,7 +758,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 <header class="site-header">
   <div class="header-left">
     <span class="site-title" onclick="location.reload()" style="cursor:pointer">📹 영상정보관리사 문제풀이</span>
-    <span class="badge">전체 190문항</span>
+    <span class="badge" id="totalBadge">전체 190문항</span>
   </div>
   <div class="header-right">
     <span class="user-name" id="userName"></span>
@@ -6978,6 +6978,12 @@ function navTo(page){
   mainLayout.style.display = isStudy ? '' : 'none';
   topBtn.style.display = showTopBtn ? '' : 'none';
 
+  // 배지 업데이트 (study: HTML 카드 수)
+  if (isStudy) {
+    const cardCount = document.querySelectorAll('.layout .card').length;
+    document.getElementById('totalBadge').textContent = '전체 ' + cardCount + '문항';
+  }
+
   // 페이지 섹션 전환
   document.querySelectorAll('.admin-page').forEach(el => el.classList.remove('show'));
   document.getElementById('pageDbQuiz').classList.remove('show');
@@ -8877,6 +8883,9 @@ async function loadDbQuiz(examId) {
   emptyEl.style.display = 'none';
   cardsEl.innerHTML = '';
   filtered.forEach(q => cardsEl.appendChild(renderDbCard(q)));
+
+  // 배지 업데이트
+  document.getElementById('totalBadge').textContent = '전체 ' + filtered.length + '문항';
 
   // 기존 페이지와 동일한 초기화 체인
   initQuizChoices();
