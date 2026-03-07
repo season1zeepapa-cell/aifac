@@ -4263,32 +4263,30 @@ function onOpenAIModelChange(keepValues){
 }
 
 function saveSettings(){
-  // Gemini 설정 저장
-  const gModel = document.getElementById('geminiModelSelect').value;
-  const gInfo = GEMINI_CATALOG.find(c=>c.id===gModel);
-  const isG3 = gModel.startsWith('gemini-3');
-  aiSettings.gemini.model       = gModel;
-  aiSettings.gemini.temperature = parseFloat(document.getElementById('geminiTemp').value);
-  if(gInfo?.thinking && isG3){
-    aiSettings.gemini.thinkingLevel = document.getElementById('geminiThinkingLevel').value;
-  } else if(gInfo?.thinking){
-    aiSettings.gemini.thinkingBudget = parseInt(document.getElementById('geminiThinkingBudget').value) || 0;
-  }
-
-  // OpenAI 설정 저장
-  const oModel = document.getElementById('openaiModelSelect').value;
-  const oInfo = OPENAI_CATALOG.find(c=>c.id===oModel);
-  aiSettings.openai.model = oModel;
-  if(oInfo?.reasoning){
-    aiSettings.openai.reasoningEffort = document.getElementById('openaiReasoningEffort').value;
-  } else {
-    aiSettings.openai.temperature = parseFloat(document.getElementById('openaiTemp').value);
-  }
+  // 모든 UI 값을 무조건 저장 (조건 분기 없이)
+  aiSettings.gemini.model          = document.getElementById('geminiModelSelect').value;
+  aiSettings.gemini.temperature    = parseFloat(document.getElementById('geminiTemp').value);
+  aiSettings.gemini.thinkingLevel  = document.getElementById('geminiThinkingLevel').value;
+  aiSettings.gemini.thinkingBudget = parseInt(document.getElementById('geminiThinkingBudget').value) || 0;
+  aiSettings.openai.model          = document.getElementById('openaiModelSelect').value;
+  aiSettings.openai.temperature    = parseFloat(document.getElementById('openaiTemp').value);
+  aiSettings.openai.reasoningEffort= document.getElementById('openaiReasoningEffort').value;
 
   aiModels = { gemini: aiSettings.gemini.model, openai: aiSettings.openai.model };
-  console.log('[설정 저장]', JSON.parse(JSON.stringify(aiSettings)));
   updateAllModelBadges();
+  // 저장 확인 토스트
+  showSaveToast();
   closeSettings();
+}
+function showSaveToast(){
+  const g = aiSettings.gemini;
+  const o = aiSettings.openai;
+  const msg = `✅ 저장됨\nGemini: ${g.model} (level:${g.thinkingLevel}, budget:${g.thinkingBudget}, temp:${g.temperature})\nGPT: ${o.model} (effort:${o.reasoningEffort}, temp:${o.temperature})`;
+  const toast = document.createElement('div');
+  toast.textContent = msg;
+  toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;white-space:pre-line;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:opacity .5s';
+  document.body.appendChild(toast);
+  setTimeout(()=>{ toast.style.opacity='0'; setTimeout(()=>toast.remove(),500); },3000);
 }
 
 // 모든 카드의 버튼 라벨 업데이트
