@@ -8382,12 +8382,20 @@ function filterByGroup(grpId) {
     const n = parseInt(m[1], 10);
     card.style.display = (n >= start && n <= end) ? '' : 'none';
   });
-  // 활성 그룹 표시 + TOC 목록 펼치기
+  // 활성 그룹 표시 + TOC 목록 펼치기/접기
   document.querySelectorAll('.toc-group-title').forEach(t => {
     if (t.id === grpId) {
-      t.classList.add('active', 'open');
+      t.classList.add('active');
+      // 이미 활성인 그룹을 다시 클릭하면 목록만 접기/펼치기
+      if (t._wasActive) {
+        t.classList.toggle('open');
+      } else {
+        t.classList.add('open');
+      }
+      t._wasActive = true;
     } else {
       t.classList.remove('active', 'open');
+      t._wasActive = false;
     }
   });
 }
