@@ -94,14 +94,18 @@ module.exports = async (req, res) => {
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
 
       completionParams.stream = true;
       const stream = await openai.chat.completions.create(completionParams);
 
       for await (const chunk of stream) {
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (delta) {
-          res.write(`data: ${JSON.stringify({ t: delta })}\n\n`);
+        const delta = chunk.choices?.[0]?.delta;
+        if (delta?.content) {
+          res.write(`data: ${JSON.stringify({ t: delta.content })}\n\n`);
+        } else {
+          // 추론 모델의 thinking 단계에서 연결 유지용 SSE 코멘트
+          res.write(`: heartbeat\n\n`);
         }
       }
       res.write('data: [DONE]\n\n');

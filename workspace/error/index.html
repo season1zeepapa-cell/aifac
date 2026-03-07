@@ -252,6 +252,23 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 /* ───── AI 응답 ───── */
 .ai-response-area{margin-top:12px;background:var(--ai-resp-bg);border:1px solid var(--ai-resp-border);
   border-radius:10px;padding:16px 20px;font-size:15px;line-height:1.9;color:var(--text);display:none}
+.ai-debug-panel{margin-bottom:12px;border:1px solid var(--ai-resp-border);border-radius:8px;overflow:hidden;font-size:12px}
+.ai-debug-panel .dbg-toggle{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;
+  background:var(--card-bg);cursor:pointer;user-select:none;font-weight:600;color:var(--text-sub)}
+.ai-debug-panel .dbg-toggle:hover{filter:brightness(.95)}
+.ai-debug-panel .dbg-arrow{transition:transform .2s;font-size:10px}
+.ai-debug-panel.open .dbg-arrow{transform:rotate(90deg)}
+.ai-debug-panel .dbg-body{display:none;padding:10px 12px;background:var(--bg);border-top:1px solid var(--ai-resp-border)}
+.ai-debug-panel.open .dbg-body{display:block}
+.dbg-row{margin-bottom:6px;display:flex;gap:8px;align-items:flex-start}
+.dbg-row:last-child{margin-bottom:0}
+.dbg-label{min-width:52px;font-weight:700;color:var(--accent);flex-shrink:0}
+.dbg-tag{display:inline-block;background:var(--accent-light);color:var(--accent);padding:1px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.dbg-tag.model{background:var(--accent);color:#fff}
+.dbg-code{background:var(--card-bg);border:1px solid var(--ai-resp-border);border-radius:6px;padding:6px 10px;
+  font-size:11px;line-height:1.6;color:var(--text-sub);max-height:400px;overflow-y:auto;word-break:break-all;flex:1}
+.dbg-sys{max-height:40px;opacity:.6;cursor:pointer;transition:max-height .3s}
+.dbg-sys:hover,.dbg-sys.expanded{max-height:400px;opacity:1}
 .ai-response-area.show{display:block}
 .ai-resp-header{font-size:11px;font-weight:700;color:var(--text-sub);
   text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
@@ -4216,8 +4233,13 @@ function onGeminiModelChange(){
     `입력 <strong>${info.inputP}</strong> · 출력 <strong>${info.outputP}</strong> / 1M tokens<br>` +
     `<span style="color:var(--text)">${info.desc}</span>`;
   const isGemini3 = model.startsWith('gemini-3');
-  document.getElementById('geminiThinkingLevelRow').classList.toggle('s-hidden', !(info.thinking && isGemini3));
-  document.getElementById('geminiThinkingRow').classList.toggle('s-hidden', !(info.thinking && !isGemini3));
+  const showLevel = info.thinking && isGemini3;
+  const showBudget = info.thinking && !isGemini3;
+  document.getElementById('geminiThinkingLevelRow').classList.toggle('s-hidden', !showLevel);
+  document.getElementById('geminiThinkingRow').classList.toggle('s-hidden', !showBudget);
+  // 모델 변경 시 기본값 리셋
+  if(showLevel) document.getElementById('geminiThinkingLevel').value = 'high';
+  if(showBudget) document.getElementById('geminiThinkingBudget').value = '0';
 }
 
 function onOpenAIModelChange(){
@@ -4228,9 +4250,16 @@ function onOpenAIModelChange(){
     `<span style="display:inline-block;font-size:10px;font-weight:800;color:#fff;background:${color};padding:1px 7px;border-radius:4px;margin-right:6px">${info.tier}</span>` +
     `입력 <strong>${info.inputP}</strong> · 출력 <strong>${info.outputP}</strong> / 1M tokens<br>` +
     `<span style="color:var(--text)">${info.desc}</span>`;
-  // o-시리즈: reasoning_effort 표시 / temperature 숨김
   document.getElementById('openaiReasoningRow').classList.toggle('s-hidden', !info.reasoning);
   document.getElementById('openaiTempRow').classList.toggle('s-hidden', info.reasoning);
+  // 모델 변경 시 기본값 리셋
+  if(info.reasoning){
+    document.getElementById('openaiReasoningEffort').value = 'high';
+  } else {
+    const temp = document.getElementById('openaiTemp');
+    temp.value = 1.0;
+    document.getElementById('openaiTempVal').textContent = '1.0';
+  }
 }
 
 function saveSettings(){
@@ -4315,13 +4344,11 @@ function renderMarkdown(text){
 // 카드 텍스트 추출
 // ═══════════════════════════════════
 function extractCardText(card){
-  const clone = card.cloneNode(true);
-  clone.querySelector('.card-header')?.remove();
-  clone.querySelector('.screenshot-wrap')?.remove();
-  clone.querySelector('.ai-controls')?.remove();
-  clone.querySelector('.ai-response-area')?.remove();
-  // 메타 정보 포함해서 전체 텍스트
-  return clone.innerText.trim();
+  // 복사 버튼과 동일: 문제 텍스트 + 선지만 추출 (해설·메타 제외)
+  const qText = card.querySelector('.question-body')?.innerText.trim() || '';
+  const choiceLines = Array.from(card.querySelectorAll('.choices li'))
+    .map(li => li.innerText.trim()).join('\n');
+  return qText + (choiceLines ? '\n' + choiceLines : '');
 }
 
 // ═══════════════════════════════════
@@ -4617,28 +4644,66 @@ async function fetchImageBase64(src){
 // SSE 스트림 읽기 헬퍼
 // ═══════════════════════════════════
 async function readSSEStream(resp, onChunk){
+  // ReadableStream 미지원 시 일반 JSON 폴백
+  if(!resp.body || typeof resp.body.getReader !== 'function'){
+    const text = await resp.text();
+    console.log('[SSE] No ReadableStream, raw response:', text.slice(0, 300));
+    try{
+      const data = JSON.parse(text);
+      const answer = data.answer || '';
+      if(answer) onChunk(answer);
+      return answer;
+    }catch(_){
+      // SSE 텍스트를 수동 파싱
+      let full = '';
+      for(const line of text.split('\n')){
+        const t = line.trim();
+        if(t.startsWith('data: ') && t !== 'data: [DONE]'){
+          try{
+            const json = JSON.parse(t.slice(6));
+            if(json.t) full += json.t;
+          }catch(_2){}
+        }
+      }
+      if(full) onChunk(full);
+      return full;
+    }
+  }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let full = '';
+  let chunkCount = 0;
   while(true){
     const {done, value} = await reader.read();
     if(done) break;
     buffer += decoder.decode(value, {stream:true});
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop(); // 마지막 불완전한 청크는 버퍼에 유지
-    for(const part of parts){
-      const line = part.trim();
-      if(line === 'data: [DONE]') continue;
-      if(line.startsWith('data: ')){
+    chunkCount++;
+    // 각 줄 단위로 파싱
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // 마지막 불완전한 줄은 버퍼에 유지
+    for(const line of lines){
+      const trimmed = line.trim();
+      if(!trimmed || trimmed.startsWith(':') || trimmed === 'data: [DONE]') continue;
+      if(trimmed.startsWith('data: ')){
         try{
-          const json = JSON.parse(line.slice(6));
+          const json = JSON.parse(trimmed.slice(6));
           if(json.error) throw new Error(json.error);
           if(json.t){ full += json.t; onChunk(full); }
-        }catch(e){ if(e.message !== 'Unexpected end of JSON input') throw e; }
+        }catch(e){
+          if(e.message && !e.message.includes('JSON')) throw e;
+        }
       }
     }
   }
+  // 버퍼에 남은 데이터 처리
+  if(buffer.trim().startsWith('data: ') && buffer.trim() !== 'data: [DONE]'){
+    try{
+      const json = JSON.parse(buffer.trim().slice(6));
+      if(json.t){ full += json.t; onChunk(full); }
+    }catch(_){}
+  }
+  console.log('[SSE] Stream finished. Chunks:', chunkCount, 'Result length:', full.length);
   return full;
 }
 
@@ -4663,9 +4728,44 @@ async function prepareAIRequest(card){
 }
 
 function getProviderOpts(provider){
-  return provider==='gemini'
-    ? { temperature: aiSettings.gemini.temperature, thinkingBudget: aiSettings.gemini.thinkingBudget, thinkingLevel: aiSettings.gemini.thinkingLevel }
-    : { temperature: aiSettings.openai.temperature, reasoningEffort: aiSettings.openai.reasoningEffort };
+  if(provider==='gemini'){
+    const m = aiModels.gemini;
+    const isG3 = m.startsWith('gemini-3');
+    const info = GEMINI_CATALOG.find(c=>c.id===m);
+    const opts = { temperature: aiSettings.gemini.temperature };
+    if(info?.thinking && isG3) opts.thinkingLevel = aiSettings.gemini.thinkingLevel;
+    else if(info?.thinking) opts.thinkingBudget = aiSettings.gemini.thinkingBudget;
+    return opts;
+  } else {
+    const m = aiModels.openai;
+    const info = OPENAI_CATALOG.find(c=>c.id===m);
+    if(info?.reasoning){
+      return { reasoningEffort: aiSettings.openai.reasoningEffort };
+    } else {
+      return { temperature: aiSettings.openai.temperature };
+    }
+  }
+}
+
+const SYS_PROMPT_TEXT = '당신은 영상정보관리사 자격증 시험 전문 강사입니다. 주어진 문제를 분석하고 다음 형식으로 답변해주세요:\n\n**정답**: [번호 및 내용]\n\n**해설**: [상세한 해설]\n\n**핵심 키워드**: [관련 법령, 용어 등]';
+
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>'); }
+
+function buildDebugPanel(provider, model, opts, text, hasImage){
+  const optEntries = Object.entries(opts)
+    .filter(([,v])=> v !== undefined && v !== null && v !== 0 && v !== '')
+    .map(([k,v])=> `<span class="dbg-tag">${k}: <strong>${v}</strong></span>`).join(' ');
+  return `<div class="ai-debug-panel open">
+    <div class="dbg-toggle" onclick="this.parentElement.classList.toggle('open')">
+      <span>📋 요청 정보</span><span class="dbg-arrow">▶</span>
+    </div>
+    <div class="dbg-body">
+      <div class="dbg-row"><span class="dbg-label">모델</span><span class="dbg-tag model">${model}</span> ${optEntries}</div>
+      <div class="dbg-row"><span class="dbg-label">이미지</span>${hasImage ? '✅ 포함' : '❌ 미포함'}</div>
+      <div class="dbg-row"><span class="dbg-label">system</span><div class="dbg-code dbg-sys">${esc(SYS_PROMPT_TEXT)}</div></div>
+      <div class="dbg-row"><span class="dbg-label">user</span><div class="dbg-code">${esc(text)}</div></div>
+    </div>
+  </div>`;
 }
 
 // ═══════════════════════════════════
@@ -4691,6 +4791,12 @@ async function askAI(provider, card, btnEl, respArea){
     const model = provider==='gemini' ? aiModels.gemini : aiModels.openai;
     const opts = getProviderOpts(provider);
 
+    // 디버그 패널 표시
+    respArea.innerHTML =
+      buildDebugPanel(provider, model, opts, text, !!imageBase64) +
+      `<div class="ai-resp-header">${providerName} <span class="model-badge">${modelName}</span> 분석 중...</div>
+       <div class="ai-loading"><div class="spinner"></div> AI가 문제를 분석하고 있어요...</div>`;
+
     const resp = await fetch(endpoint,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -4704,10 +4810,11 @@ async function askAI(provider, card, btnEl, respArea){
       throw new Error(errMsg||`HTTP ${resp.status}`);
     }
 
-    // 스트리밍 응답을 실시간 렌더링
+    // 스트리밍 응답을 실시간 렌더링 (디버그 패널 유지)
+    const debugHtml = respArea.querySelector('.ai-debug-panel')?.outerHTML || '';
     const bodyEl = document.createElement('div');
     bodyEl.className = 'ai-resp-body';
-    respArea.innerHTML = `<div class="ai-resp-header">${providerName} <span class="model-badge">${modelName}</span> 해설</div>`;
+    respArea.innerHTML = debugHtml + `<div class="ai-resp-header">${providerName} <span class="model-badge">${modelName}</span> 해설</div>`;
     respArea.appendChild(bodyEl);
 
     const fullText = await readSSEStream(resp, chunk => {
@@ -4718,7 +4825,8 @@ async function askAI(provider, card, btnEl, respArea){
     bodyEl.innerHTML = rendered;
     addSaveButton(respArea, card.id, provider, modelName, rendered);
   }catch(e){
-    respArea.innerHTML = `
+    const debugKeep = respArea.querySelector('.ai-debug-panel')?.outerHTML || '';
+    respArea.innerHTML = debugKeep + `
       <div class="ai-resp-header" style="color:#ef4444">오류 발생</div>
       <div style="color:#ef4444;font-size:14px">${e.message}</div>`;
   }finally{
@@ -4749,6 +4857,8 @@ async function askBoth(card, allBtns, respArea){
       </div>
     </div>`;
 
+  // 디버그 패널은 텍스트 준비 후 삽입 (아래에서)
+
   // 텍스트 + 이미지 공통 준비
   let text = extractCardText(card);
   const extraInput = card.querySelector('.ai-extra-input');
@@ -4764,6 +4874,25 @@ async function askBoth(card, allBtns, respArea){
       mimeType = 'image/png';
     }catch(e){ console.warn('이미지 로드 실패'); }
   }
+
+  // 디버그 패널 삽입 (두 모델 옵션 나란히)
+  const gOpts = getProviderOpts('gemini');
+  const oOpts = getProviderOpts('openai');
+  const gOptTags = Object.entries(gOpts).filter(([,v])=>v!==undefined&&v!==null&&v!==0&&v!=='').map(([k,v])=>`<span class="dbg-tag">${k}: <strong>${v}</strong></span>`).join(' ');
+  const oOptTags = Object.entries(oOpts).filter(([,v])=>v!==undefined&&v!==null&&v!==0&&v!=='').map(([k,v])=>`<span class="dbg-tag">${k}: <strong>${v}</strong></span>`).join(' ');
+  const dualDebug = `<div class="ai-debug-panel open">
+    <div class="dbg-toggle" onclick="this.parentElement.classList.toggle('open')">
+      <span>📋 요청 정보</span><span class="dbg-arrow">▶</span>
+    </div>
+    <div class="dbg-body">
+      <div class="dbg-row"><span class="dbg-label">Gemini</span><span class="dbg-tag model">${aiModels.gemini}</span> ${gOptTags}</div>
+      <div class="dbg-row"><span class="dbg-label">GPT</span><span class="dbg-tag model">${aiModels.openai}</span> ${oOptTags}</div>
+      <div class="dbg-row"><span class="dbg-label">이미지</span>${imageBase64 ? '✅ 포함' : '❌ 미포함'}</div>
+      <div class="dbg-row"><span class="dbg-label">system</span><div class="dbg-code dbg-sys">${esc(SYS_PROMPT_TEXT)}</div></div>
+      <div class="dbg-row"><span class="dbg-label">user</span><div class="dbg-code">${esc(text)}</div></div>
+    </div>
+  </div>`;
+  respArea.insertAdjacentHTML('afterbegin', dualDebug);
 
   // 각 API를 병렬 스트리밍 호출하는 헬퍼
   async function callOne(provider){
