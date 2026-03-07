@@ -4817,9 +4817,23 @@ async function askAI(provider, card, btnEl, respArea){
     respArea.innerHTML = debugHtml + `<div class="ai-resp-header">${providerName} <span class="model-badge">${modelName}</span> 해설</div>`;
     respArea.appendChild(bodyEl);
 
-    const fullText = await readSSEStream(resp, chunk => {
+    let fullText = await readSSEStream(resp, chunk => {
       bodyEl.innerHTML = renderMarkdown(chunk);
     });
+
+    // 스트리밍 결과가 비어있으면 일반 모드로 재시도
+    if(!fullText){
+      console.warn('[SSE] 스트리밍 빈 결과 → 일반 모드 재시도');
+      bodyEl.innerHTML = '<div class="ai-loading"><div class="spinner"></div> 재시도 중 (일반 모드)...</div>';
+      const resp2 = await fetch(endpoint,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text, imageBase64, mimeType, model, stream:false, ...opts})
+      });
+      const data2 = await resp2.json();
+      if(!resp2.ok) throw new Error(data2?.error || `HTTP ${resp2.status}`);
+      fullText = data2.answer || '';
+    }
 
     const rendered = renderMarkdown(fullText || '응답이 없습니다.');
     bodyEl.innerHTML = rendered;
@@ -4921,9 +4935,24 @@ async function askBoth(card, allBtns, respArea){
       panel.innerHTML = `<div class="dual-panel-header" style="color:${providerColor}">${providerName} <span class="model-badge">${model}</span> 해설</div>`;
       panel.appendChild(bodyEl);
 
-      const fullText = await readSSEStream(resp, chunk => {
+      let fullText = await readSSEStream(resp, chunk => {
         bodyEl.innerHTML = renderMarkdown(chunk);
       });
+
+      // 스트리밍 결과가 비어있으면 일반 모드로 재시도
+      if(!fullText){
+        console.warn('[SSE] 스트리밍 빈 결과 → 일반 모드 재시도 (' + provider + ')');
+        bodyEl.innerHTML = '<div class="ai-loading"><div class="spinner"></div> 재시도 중...</div>';
+        const resp2 = await fetch(endpoint,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({text, imageBase64, mimeType, model, stream:false, ...opts})
+        });
+        const data2 = await resp2.json();
+        if(!resp2.ok) throw new Error(data2?.error || `HTTP ${resp2.status}`);
+        fullText = data2.answer || '';
+      }
+
       const rendered = renderMarkdown(fullText || '응답이 없습니다.');
       bodyEl.innerHTML = rendered;
       addSaveButton(panel, card.id, provider, model, rendered);
