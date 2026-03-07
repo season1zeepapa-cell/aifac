@@ -105,7 +105,8 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 /* DB 문제풀이 레이아웃 */
 .db-quiz-layout{display:none;gap:24px;max-width:1320px;margin:0 auto;padding:28px 20px;align-items:flex-start}
 .db-quiz-layout.show{display:flex !important}
-.db-quiz-layout .sidebar{top:94px}
+.db-quiz-layout .sidebar{top:112px;max-height:calc(100vh - 130px)}
+.db-quiz-layout .card{scroll-margin-top:100px}
 .db-quiz-layout .card-header{position:sticky;top:94px;z-index:100;background:var(--card-bg)}
 .db-filter-btn{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);
   background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
