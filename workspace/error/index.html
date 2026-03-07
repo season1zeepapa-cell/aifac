@@ -655,6 +655,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 @media(max-width:480px){
   .badge{display:none}
   .btn-header{display:none}
+  #expandAllBtn,#collapseAllBtn{display:inline-flex;font-size:11px;padding:4px 8px}
 }
 /* ───── 토스트 알림 ───── */
 .toast-container{position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
@@ -786,6 +787,8 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
     <span class="badge" id="totalBadge">전체 190문항</span>
   </div>
   <div class="header-right">
+    <button class="btn-header" id="expandAllBtn" onclick="toggleAllCards(true)" title="모두 펼치기">▼ 펼치기</button>
+    <button class="btn-header" id="collapseAllBtn" onclick="toggleAllCards(false)" title="모두 접기">▲ 접기</button>
     <span class="user-name" id="userName"></span>
     <button class="btn-header" id="settingsBtn" onclick="openSettings()" title="AI 모델 설정" aria-label="AI 모델 설정" style="display:none">⚙️ 설정</button>
     <button class="dark-toggle" id="darkToggle" title="다크모드 전환" aria-label="다크모드 전환"></button>
@@ -3366,6 +3369,17 @@ async function loadAndRenderDbExplanations(card, questionId) {
 // ═══════════════════════════════════
 let dbQuizData = null;
 let dbQuizExamId = null;
+
+// 전체 카드 펼치기/접기
+function toggleAllCards(open) {
+  document.querySelectorAll('#dbQuizCards .card').forEach(c => {
+    c.classList.toggle('open', open);
+    if (open) {
+      const ma = c.querySelector('.memo-area');
+      if (ma?._loadMemos) ma._loadMemos();
+    }
+  });
+}
 
 async function loadDbQuiz(examId) {
   const cardsEl = document.getElementById('dbQuizCards');
