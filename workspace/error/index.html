@@ -757,7 +757,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
 <!-- 상단 헤더 -->
 <header class="site-header">
   <div class="header-left">
-    <span class="site-title" onclick="location.reload()" style="cursor:pointer">📹 영상정보관리사 문제풀이</span>
+    <span class="site-title" onclick="navTo('dbquiz')" style="cursor:pointer">📹 영상정보관리사 문제풀이</span>
     <span class="badge" id="totalBadge">전체 190문항</span>
   </div>
   <div class="header-right">
@@ -6601,7 +6601,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
     </div>
 
     <div class="settings-footer">
-      <button class="btn-settings-cancel" onclick="currentPage==='settings'?navTo('study'):closeSettings()">닫기</button>
+      <button class="btn-settings-cancel" onclick="currentPage==='settings'?navTo('dbquiz'):closeSettings()">닫기</button>
       <button class="btn-settings-save" onclick="saveSettings()">저장</button>
     </div>
   </div>
@@ -6838,9 +6838,9 @@ function checkAuth(){
     adminNav.classList.toggle('show', admin);
     // 관리자가 아닌 경우 헤더에 설정 버튼 표시
     settingsBtn.style.display = admin ? 'none' : '';
-    // 관리자 최초 접속 시 오답풀이 탭 활성 표시
-    if(admin && currentPage === 'study'){
-      document.querySelector('.nav-item[data-page="study"]')?.classList.add('active');
+    // 관리자 최초 접속 시 DB문제풀이 탭 활성 표시
+    if(admin && currentPage === 'dbquiz'){
+      document.querySelector('.nav-item[data-page="dbquiz"]')?.classList.add('active');
     }
   } else {
     overlay.classList.remove('hidden');
@@ -6948,9 +6948,9 @@ function doLogout(){
   localStorage.removeItem('auth-token');
   localStorage.removeItem('auth-name');
   // 관리자 페이지에서 로그아웃 시 메인으로 복귀
-  if(currentPage !== 'study'){
+  if(currentPage !== 'dbquiz'){
     moveSettingsToModal();
-    navTo('study');
+    navTo('dbquiz');
   }
   checkAuth();
 }
@@ -6958,7 +6958,7 @@ function doLogout(){
 // ═══════════════════════════════════
 // 관리자 네비게이션 (페이지 전환)
 // ═══════════════════════════════════
-let currentPage = 'study';
+let currentPage = 'dbquiz';
 
 function navTo(page){
   // 같은 페이지 클릭 시 무시
@@ -7339,6 +7339,11 @@ document.getElementById('signupPwConfirm').addEventListener('keydown', e=>{
 
 // 페이지 로드 시 인증 확인
 checkAuth();
+
+// 초기 페이지: DB 문제풀이
+document.querySelector('.layout').style.display = 'none';
+document.getElementById('pageDbQuiz').classList.add('show');
+loadDbQuiz();
 
 // ═══════════════════════════════════
 // 다크모드
