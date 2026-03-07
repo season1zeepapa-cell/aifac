@@ -153,6 +153,36 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif
   font-weight:700;cursor:pointer;transition:.2s}
 .memo-edit-area .memo-edit-save{background:var(--accent);color:#fff}
 .memo-edit-area .memo-edit-cancel{background:var(--border);color:var(--text-sub)}
+/* 메모 파일 첨부 */
+.memo-file-row{display:flex;align-items:center;gap:6px;margin-top:4px}
+.memo-file-btn{display:flex;align-items:center;gap:4px;padding:5px 12px;border-radius:8px;border:1.5px dashed var(--border);
+  background:transparent;color:var(--text-sub);font-size:11px;font-weight:600;cursor:pointer;transition:.2s}
+.memo-file-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.memo-file-pending{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.memo-file-pending-item{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;
+  background:var(--accent-light);font-size:11px;color:var(--accent);border:1px solid var(--accent);max-width:200px}
+.memo-file-pending-item .pfname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px}
+.memo-file-pending-item .pfremove{cursor:pointer;font-weight:700;margin-left:2px;opacity:.7}
+.memo-file-pending-item .pfremove:hover{opacity:1}
+.memo-files-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.memo-file-chip{position:relative;display:inline-flex;align-items:center;gap:4px;padding:4px 10px;
+  border-radius:6px;background:var(--box-bg);border:1px solid var(--border);font-size:11px;
+  color:var(--text);cursor:pointer;transition:.2s;max-width:220px;text-decoration:none}
+.memo-file-chip:hover{border-color:var(--accent);background:var(--accent-light);color:var(--accent)}
+.memo-file-chip .fc-icon{flex-shrink:0;font-size:13px}
+.memo-file-chip .fc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.memo-file-chip .fc-size{font-size:9px;color:var(--text-sub);flex-shrink:0}
+.memo-file-chip .fc-del{position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;
+  background:#ef4444;color:#fff;border:none;font-size:10px;line-height:16px;text-align:center;
+  cursor:pointer;display:none;padding:0}
+.memo-file-chip:hover .fc-del{display:block}
+/* 파일 미리보기 툴팁 */
+.memo-file-preview{position:fixed;z-index:9999;pointer-events:none;background:var(--card-bg);
+  border:1.5px solid var(--border);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.25);
+  padding:8px;max-width:320px;max-height:280px;overflow:hidden}
+.memo-file-preview img{display:block;max-width:300px;max-height:260px;border-radius:6px;object-fit:contain}
+.memo-file-preview .pfp-noimg{padding:16px 24px;text-align:center;font-size:12px;color:var(--text-sub)}
+.memo-file-preview .pfp-noimg .pfp-icon{font-size:36px;margin-bottom:6px}
 .db-filter-btn{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);
   background:var(--card-bg);color:var(--text-sub);font-size:12px;font-weight:600;
   cursor:pointer;transition:.2s}
@@ -2852,6 +2882,139 @@ async function deleteMemoApi(id) {
   return r.json();
 }
 
+// 메모 파일 API
+async function uploadMemoFiles(memoId, files) {
+  const r = await fetch('/api/memo-files', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ action:'upload', memo_id: memoId, files }) });
+  if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.error || '파일 업로드 실패'); }
+  return r.json();
+}
+async function fetchMemoFiles(memoIds) {
+  if (!memoIds.length) return [];
+  const r = await fetch(`/api/memo-files?action=batch&memo_ids=${memoIds.join(',')}`);
+  if (!r.ok) return [];
+  return (await r.json()).files || [];
+}
+async function downloadMemoFile(fileId) {
+  const r = await fetch(`/api/memo-files?action=download&id=${fileId}`);
+  if (!r.ok) throw new Error('다운로드 실패');
+  return r.json();
+}
+async function deleteMemoFile(fileId) {
+  const r = await fetch('/api/memo-files', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ action:'delete', id: fileId }) });
+  if (!r.ok) throw new Error('파일 삭제 실패');
+  return r.json();
+}
+
+// 파일을 base64로 변환
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// 파일 크기 포맷
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + 'KB';
+  return (bytes/(1024*1024)).toFixed(1) + 'MB';
+}
+
+// 파일 아이콘
+function fileIcon(mime) {
+  if (mime.startsWith('image/')) return '🖼️';
+  if (mime === 'application/pdf') return '📄';
+  if (mime.includes('word') || mime.includes('document')) return '📝';
+  if (mime.includes('sheet') || mime.includes('excel')) return '📊';
+  if (mime.includes('zip') || mime.includes('compressed')) return '📦';
+  return '📎';
+}
+
+// 이미지 MIME인지 체크
+function isImageMime(mime) { return mime && mime.startsWith('image/'); }
+
+// 파일 미리보기 툴팁 표시/숨김
+let _previewEl = null;
+function showFilePreview(e, file) {
+  hideFilePreview();
+  _previewEl = document.createElement('div');
+  _previewEl.className = 'memo-file-preview';
+  if (isImageMime(file.mime_type)) {
+    // 이미지: 실제 데이터 로드해서 보여줌
+    _previewEl.innerHTML = '<img alt="미리보기 로딩중..." style="min-width:60px;min-height:60px;background:var(--border)">';
+    downloadMemoFile(file.id).then(d => {
+      if (_previewEl) _previewEl.querySelector('img').src = `data:${d.mime_type};base64,${d.data}`;
+    }).catch(() => {});
+  } else {
+    _previewEl.innerHTML = `<div class="pfp-noimg"><div class="pfp-icon">${fileIcon(file.mime_type)}</div>${file.filename}<br><span style="font-size:10px;color:var(--text-sub)">${formatFileSize(file.size)}</span></div>`;
+  }
+  document.body.appendChild(_previewEl);
+  positionPreview(e);
+}
+function positionPreview(e) {
+  if (!_previewEl) return;
+  let x = e.clientX + 16, y = e.clientY + 16;
+  const pw = _previewEl.offsetWidth || 200, ph = _previewEl.offsetHeight || 150;
+  if (x + pw > window.innerWidth - 10) x = e.clientX - pw - 10;
+  if (y + ph > window.innerHeight - 10) y = e.clientY - ph - 10;
+  _previewEl.style.left = Math.max(4, x) + 'px';
+  _previewEl.style.top = Math.max(4, y) + 'px';
+}
+function hideFilePreview() {
+  if (_previewEl) { _previewEl.remove(); _previewEl = null; }
+}
+
+// 파일 칩 (첨부파일 1개 표시) 생성
+function buildFileChip(file, onDelete) {
+  const chip = document.createElement('span');
+  chip.className = 'memo-file-chip';
+  chip.title = `${file.filename} (${formatFileSize(file.size)}) - 클릭하여 다운로드`;
+  chip.innerHTML = `<span class="fc-icon">${fileIcon(file.mime_type)}</span><span class="fc-name">${file.filename}</span><span class="fc-size">${formatFileSize(file.size)}</span><button class="fc-del" title="삭제">×</button>`;
+
+  // 마우스 오버 미리보기
+  chip.addEventListener('mouseenter', e => showFilePreview(e, file));
+  chip.addEventListener('mousemove', e => positionPreview(e));
+  chip.addEventListener('mouseleave', () => hideFilePreview());
+
+  // 클릭 → 다운로드
+  chip.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (e.target.classList.contains('fc-del')) return;
+    try {
+      showToast('다운로드 중...', 'info');
+      const d = await downloadMemoFile(file.id);
+      const a = document.createElement('a');
+      a.href = `data:${d.mime_type};base64,${d.data}`;
+      a.download = d.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      showToast('다운로드 실패: ' + err.message, 'error');
+    }
+  });
+
+  // 삭제 버튼
+  chip.querySelector('.fc-del').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm(`"${file.filename}" 파일을 삭제하시겠습니까?`)) return;
+    try {
+      await deleteMemoFile(file.id);
+      chip.remove();
+      if (onDelete) onDelete();
+      showToast('파일이 삭제되었습니다.', 'info');
+    } catch (err) {
+      showToast('삭제 실패: ' + err.message, 'error');
+    }
+  });
+
+  return chip;
+}
+
 // 메모 개수 배지 업데이트
 function updateMemoCount(memoList, countEl) {
   const cnt = memoList.querySelectorAll('.memo-item').length;
@@ -2875,9 +3038,16 @@ function buildMemoItem(memo, memoList, countEl) {
         <button class="memo-del-btn" title="삭제">🗑️ 삭제</button>
       </div>
     </div>
-    <div class="memo-text">${esc(memo.content)}</div>`;
+    <div class="memo-text">${esc(memo.content)}</div>
+    <div class="memo-files-list"></div>`;
 
   const textEl = item.querySelector('.memo-text');
+  const filesListEl = item.querySelector('.memo-files-list');
+
+  // 첨부파일 렌더링 (memo._files가 있으면 사용)
+  if (memo._files && memo._files.length > 0) {
+    memo._files.forEach(f => filesListEl.appendChild(buildFileChip(f)));
+  }
 
   // 수정
   item.querySelector('.memo-edit-btn').addEventListener('click', () => {
@@ -2962,13 +3132,64 @@ function createMemoArea(card, questionId) {
   const ta = document.createElement('textarea');
   ta.placeholder = '메모를 입력하세요... (Shift+Enter로 줄바꿈)';
   ta.rows = 3;
+
+  // 파일 첨부 영역
+  const fileRow = document.createElement('div');
+  fileRow.className = 'memo-file-row';
+  const fileBtn = document.createElement('button');
+  fileBtn.type = 'button';
+  fileBtn.className = 'memo-file-btn';
+  fileBtn.innerHTML = '📎 파일 첨부';
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.multiple = true;
+  fileInput.style.display = 'none';
+  fileInput.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.hwp,.txt,.zip';
+  fileBtn.addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+  fileRow.appendChild(fileBtn);
+  fileRow.appendChild(fileInput);
+
+  // 대기 중인 파일 목록
+  const pendingBox = document.createElement('div');
+  pendingBox.className = 'memo-file-pending';
+  let pendingFiles = [];
+
+  function renderPending() {
+    pendingBox.innerHTML = '';
+    pendingFiles.forEach((pf, idx) => {
+      const tag = document.createElement('span');
+      tag.className = 'memo-file-pending-item';
+      tag.innerHTML = `<span class="pfname">${pf.name}</span><span class="pfremove">×</span>`;
+      tag.querySelector('.pfremove').addEventListener('click', e => {
+        e.stopPropagation();
+        pendingFiles.splice(idx, 1);
+        renderPending();
+      });
+      pendingBox.appendChild(tag);
+    });
+  }
+
+  fileInput.addEventListener('change', () => {
+    const maxSize = 5 * 1024 * 1024;
+    for (const f of fileInput.files) {
+      if (f.size > maxSize) { showToast(`${f.name}: 5MB 이하 파일만 가능합니다.`, 'warn'); continue; }
+      if (pendingFiles.length >= 10) { showToast('최대 10개까지 첨부 가능합니다.', 'warn'); break; }
+      pendingFiles.push(f);
+    }
+    fileInput.value = '';
+    renderPending();
+  });
+
   const btnRow = document.createElement('div');
   btnRow.className = 'memo-btn-row';
+  btnRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center';
   const addBtn = document.createElement('button');
   addBtn.className = 'memo-add-btn';
   addBtn.textContent = '메모 추가';
+  btnRow.appendChild(fileRow);
   btnRow.appendChild(addBtn);
   inputArea.appendChild(ta);
+  inputArea.appendChild(pendingBox);
   inputArea.appendChild(btnRow);
 
   panel.appendChild(memoList);
@@ -2983,14 +3204,32 @@ function createMemoArea(card, questionId) {
   addBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const val = ta.value.trim();
-    if (!val) { showToast('메모 내용을 입력하세요.', 'warn'); ta.focus(); return; }
+    if (!val && pendingFiles.length === 0) { showToast('메모 내용을 입력하세요.', 'warn'); ta.focus(); return; }
+    const content = val || (pendingFiles.length > 0 ? '(첨부파일)' : '');
     try {
       addBtn.disabled = true;
-      addBtn.textContent = '저장 중...';
-      const result = await saveMemoApi(questionId, val);
-      const memo = { id: result.id, content: val, created_at: result.created_at, updated_at: result.created_at };
+      addBtn.textContent = pendingFiles.length > 0 ? '업로드 중...' : '저장 중...';
+
+      // 1) 메모 저장
+      const result = await saveMemoApi(questionId, content);
+
+      // 2) 파일이 있으면 업로드
+      let uploadedFiles = [];
+      if (pendingFiles.length > 0) {
+        const filesData = [];
+        for (const pf of pendingFiles) {
+          const b64 = await fileToBase64(pf);
+          filesData.push({ filename: pf.name, mime_type: pf.type || 'application/octet-stream', data: b64 });
+        }
+        const upResult = await uploadMemoFiles(result.id, filesData);
+        uploadedFiles = upResult.files || [];
+      }
+
+      const memo = { id: result.id, content, created_at: result.created_at, updated_at: result.created_at, _files: uploadedFiles };
       memoList.prepend(buildMemoItem(memo, memoList, countEl));
       ta.value = '';
+      pendingFiles = [];
+      renderPending();
       updateMemoCount(memoList, countEl);
       showToast('메모가 추가되었습니다.', 'info');
     } catch (e) {
@@ -3015,7 +3254,16 @@ function createMemoArea(card, questionId) {
   area._loadMemos = () => {
     if (memoLoaded) return;
     memoLoaded = true;
-    fetchMemos(questionId).then(memos => {
+    fetchMemos(questionId).then(async memos => {
+      // 메모에 연결된 파일 일괄 조회
+      const memoIds = memos.map(m => m.id);
+      let allFiles = [];
+      try { allFiles = await fetchMemoFiles(memoIds); } catch(e) {}
+      // 메모별 파일 그룹핑
+      const fileMap = {};
+      allFiles.forEach(f => { (fileMap[f.memo_id] = fileMap[f.memo_id] || []).push(f); });
+      memos.forEach(m => { m._files = fileMap[m.id] || []; });
+
       memos.forEach(m => memoList.appendChild(buildMemoItem(m, memoList, countEl)));
       updateMemoCount(memoList, countEl);
     }).catch(e => console.warn('[메모] 로드 실패:', e));

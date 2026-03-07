@@ -156,6 +156,11 @@ const memosHandler = require('./api/memos');
 app.get('/api/memos', (req, res) => memosHandler(req, res));
 app.post('/api/memos', (req, res) => memosHandler(req, res));
 
+// ── /api/memo-files (GET, POST) ─────────────────────
+const memoFilesHandler = require('./api/memo-files');
+app.get('/api/memo-files', (req, res) => memoFilesHandler(req, res));
+app.post('/api/memo-files', (req, res) => memoFilesHandler(req, res));
+
 // ── POST /api/law ────────────────────────────────────
 const lawHandler = require('./api/law');
 app.post('/api/law', (req, res) => lawHandler(req, res));
