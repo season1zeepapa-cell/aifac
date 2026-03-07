@@ -72,9 +72,10 @@ module.exports = async (req, res) => {
     };
 
     if (isOSeries) {
-      if (reasoningEffort && ['low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
-        completionParams.reasoning_effort = reasoningEffort;
-      }
+      // xhigh는 OpenAI API 미지원 → high로 매핑
+      const VALID_EFFORT = { low: 'low', medium: 'medium', high: 'high', xhigh: 'high' };
+      const effort = VALID_EFFORT[reasoningEffort] || 'high';
+      completionParams.reasoning_effort = effort;
       delete completionParams.max_tokens;
       completionParams.max_completion_tokens = 4000;
     } else if (isGPT5) {
@@ -97,16 +98,22 @@ module.exports = async (req, res) => {
       res.setHeader('X-Accel-Buffering', 'no');
 
       completionParams.stream = true;
+      console.log('[OpenAI] 스트리밍 요청:', selectedModel, JSON.stringify(completionParams.reasoning_effort || completionParams.temperature));
       const stream = await openai.chat.completions.create(completionParams);
 
+      let hasContent = false;
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta;
         if (delta?.content) {
+          hasContent = true;
           res.write(`data: ${JSON.stringify({ t: delta.content })}\n\n`);
         } else {
           // 추론 모델의 thinking 단계에서 연결 유지용 SSE 코멘트
           res.write(`: heartbeat\n\n`);
         }
+      }
+      if (!hasContent) {
+        console.warn('[OpenAI] 스트리밍 완료했지만 content 없음:', selectedModel);
       }
       res.write('data: [DONE]\n\n');
       res.end();
