@@ -5,7 +5,9 @@
   "outputDirectory": ".",
   "functions": {
     "api/upload.js": { "maxDuration": 300 },
-    "api/search.js": { "maxDuration": 30 }
+    "api/search.js": { "maxDuration": 30 },
+    "api/law.js": { "maxDuration": 30 },
+    "api/law-import.js": { "maxDuration": 300 }
   },
   "headers": [
     {

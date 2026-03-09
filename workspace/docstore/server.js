@@ -19,6 +19,14 @@ app.post('/api/documents', (req, res) => documentsHandler(req, res));
 const uploadHandler = require('./api/upload');
 app.post('/api/upload', (req, res) => uploadHandler(req, res));
 
+// ── POST /api/law ───────────────────────────────────
+const lawHandler = require('./api/law');
+app.post('/api/law', (req, res) => lawHandler(req, res));
+
+// ── POST /api/law-import ────────────────────────────
+const lawImportHandler = require('./api/law-import');
+app.post('/api/law-import', (req, res) => lawImportHandler(req, res));
+
 // ── GET /api/search ───────────────────────────────────
 const searchHandler = require('./api/search');
 app.get('/api/search', (req, res) => searchHandler(req, res));

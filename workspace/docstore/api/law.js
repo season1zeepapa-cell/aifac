@@ -1,0 +1,37 @@
+// 법제처 국가법령정보 API 프록시
+// - action: 'search' → 법령명 검색
+// - action: 'detail' → 조문 상세 조회
+const { searchLaw, getLawDetail } = require('../lib/law-fetcher');
+
+module.exports = async (req, res) => {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
+
+  const OC = (process.env.LAW_API_OC || '').trim();
+  if (!OC) return res.status(500).json({ error: 'LAW_API_OC가 설정되지 않았습니다.' });
+
+  const { action, query, lawId } = req.body;
+
+  try {
+    if (action === 'search') {
+      if (!query) return res.status(400).json({ error: '검색어(query)가 필요합니다.' });
+      const result = await searchLaw(query, OC);
+      return res.json(result);
+    }
+
+    if (action === 'detail') {
+      if (!lawId) return res.status(400).json({ error: '법령ID(lawId)가 필요합니다.' });
+      const result = await getLawDetail(lawId, OC);
+      return res.json(result);
+    }
+
+    return res.status(400).json({ error: 'action은 search 또는 detail이어야 합니다.' });
+  } catch (err) {
+    console.error('법령 API 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
+};

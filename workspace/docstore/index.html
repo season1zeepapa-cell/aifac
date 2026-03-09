@@ -322,9 +322,13 @@
     }
 
     // ========================================
-    // 업로드 탭
+    // 업로드 탭 (PDF 업로드 + 법령 검색 모드)
     // ========================================
     function UploadTab({ onUploadComplete }) {
+      // 모드 토글: 'pdf' 또는 'law'
+      const [uploadMode, setUploadMode] = useState('pdf');
+
+      // ── PDF 모드 state ──
       const [file, setFile] = useState(null);
       const [title, setTitle] = useState('');
       const [category, setCategory] = useState('법령');
@@ -337,7 +341,15 @@
       const [dragOver, setDragOver] = useState(false);
       const fileInputRef = useRef(null);
 
-      // 파일 선택 핸들러
+      // ── 법령 검색 모드 state ──
+      const [lawQuery, setLawQuery] = useState('');
+      const [lawResults, setLawResults] = useState([]);
+      const [lawSearching, setLawSearching] = useState(false);
+      const [importing, setImporting] = useState(null);
+      const [lawError, setLawError] = useState(null);
+      const [lawResult, setLawResult] = useState(null);
+
+      // ── PDF 모드 핸들러 ──
       const handleFileSelect = useCallback((selectedFile) => {
         if (!selectedFile) return;
         if (selectedFile.type !== 'application/pdf') {
@@ -347,36 +359,25 @@
         setFile(selectedFile);
         setError(null);
         setResult(null);
-        // 파일명에서 .pdf 제거하여 기본 제목으로 설정
         if (!title) {
           setTitle(selectedFile.name.replace(/\.pdf$/i, ''));
         }
       }, [title]);
 
-      // 드래그 앤 드롭 핸들러
-      const handleDragOver = useCallback((e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }, []);
-      const handleDragLeave = useCallback((e) => {
-        e.preventDefault();
-        setDragOver(false);
-      }, []);
+      const handleDragOver = useCallback((e) => { e.preventDefault(); setDragOver(true); }, []);
+      const handleDragLeave = useCallback((e) => { e.preventDefault(); setDragOver(false); }, []);
       const handleDrop = useCallback((e) => {
         e.preventDefault();
         setDragOver(false);
-        const droppedFile = e.dataTransfer.files[0];
-        handleFileSelect(droppedFile);
+        handleFileSelect(e.dataTransfer.files[0]);
       }, [handleFileSelect]);
 
-      // 업로드
       const handleUpload = useCallback(async () => {
         if (!file) return;
         setUploading(true);
         setProgress(10);
         setError(null);
         setResult(null);
-
         try {
           const formData = new FormData();
           formData.append('file', file);
@@ -386,30 +387,18 @@
           if (sectionType === 'custom' && customDelimiter) {
             formData.append('customDelimiter', customDelimiter);
           }
-
           setProgress(30);
-
-          const res = await fetch(`${API_BASE_URL}/upload`, {
-            method: 'POST',
-            body: formData,
-          });
-
+          const res = await fetch(`${API_BASE_URL}/upload`, { method: 'POST', body: formData });
           setProgress(80);
-
           if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
             throw new Error(errData.error || `업로드 실패 (${res.status})`);
           }
-
           const data = await res.json();
           setProgress(100);
           setResult(data);
-
-          // 완료 후 폼 초기화
           setTimeout(() => {
-            setFile(null);
-            setTitle('');
-            setProgress(0);
+            setFile(null); setTitle(''); setProgress(0);
             if (fileInputRef.current) fileInputRef.current.value = '';
             if (onUploadComplete) onUploadComplete();
           }, 2000);
@@ -421,129 +410,239 @@
         }
       }, [file, title, category, sectionType, customDelimiter, onUploadComplete]);
 
-      // 폼 초기화
       const handleReset = useCallback(() => {
-        setFile(null);
-        setTitle('');
-        setCategory('법령');
-        setSectionType('page');
-        setCustomDelimiter('');
-        setError(null);
-        setResult(null);
-        setProgress(0);
+        setFile(null); setTitle(''); setCategory('법령'); setSectionType('page');
+        setCustomDelimiter(''); setError(null); setResult(null); setProgress(0);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }, []);
 
+      // ── 법령 검색 핸들러 ──
+      const handleLawSearch = useCallback(async () => {
+        if (!lawQuery.trim()) return;
+        setLawSearching(true);
+        setLawError(null);
+        setLawResults([]);
+        setLawResult(null);
+        try {
+          const res = await fetch(`${API_BASE_URL}/law`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'search', query: lawQuery.trim() }),
+          });
+          if (!res.ok) throw new Error('법령 검색에 실패했습니다.');
+          const data = await res.json();
+          setLawResults(data.results || []);
+          if ((data.results || []).length === 0) {
+            setLawError('검색 결과가 없습니다. 다른 법령명으로 시도해보세요.');
+          }
+        } catch (err) {
+          setLawError(err.message);
+        } finally {
+          setLawSearching(false);
+        }
+      }, [lawQuery]);
+
+      // 법령 임포트
+      const handleLawImport = useCallback(async (law) => {
+        setImporting(law.id);
+        setLawError(null);
+        setLawResult(null);
+        try {
+          const res = await fetch(`${API_BASE_URL}/law-import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lawId: law.id, lawName: law.name }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `임포트 실패 (${res.status})`);
+          setLawResult(data);
+          if (onUploadComplete) onUploadComplete();
+        } catch (err) {
+          setLawError(err.message);
+        } finally {
+          setImporting(null);
+        }
+      }, [onUploadComplete]);
+
       return (
         <div className="space-y-5 fade-in">
-          {/* 파일 드롭존 */}
-          <div
-            className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf"
-              className="hidden"
-              onChange={e => handleFileSelect(e.target.files[0])}
-            />
-            {file ? (
-              <div className="space-y-2">
-                <svg className="w-10 h-10 mx-auto text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <p className="text-text font-medium">{file.name}</p>
-                <p className="text-sm text-text-secondary">{formatFileSize(file.size)}</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <svg className="w-10 h-10 mx-auto text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                <p className="text-text-secondary">PDF 파일을 드래그하거나 클릭하여 선택</p>
-                <p className="text-xs text-text-secondary/60">PDF 파일만 지원됩니다</p>
-              </div>
-            )}
+          {/* 모드 토글 */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setUploadMode('pdf')}
+              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                uploadMode === 'pdf' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+              }`}
+            >
+              PDF 업로드
+            </button>
+            <button
+              onClick={() => setUploadMode('law')}
+              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                uploadMode === 'law' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+              }`}
+            >
+              법령 검색
+            </button>
           </div>
 
-          {/* 업로드 옵션 */}
-          <Card>
-            <div className="space-y-4">
-              <Input
-                label="제목"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="문서 제목을 입력하세요"
-              />
-              <Select
-                label="카테고리"
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                options={CATEGORIES.filter(c => c.value !== '')}
-              />
-              <Select
-                label="추출 단위"
-                value={sectionType}
-                onChange={e => setSectionType(e.target.value)}
-                options={SECTION_TYPES}
-              />
-              {sectionType === 'custom' && (
-                <Input
-                  label="구분자"
-                  value={customDelimiter}
-                  onChange={e => setCustomDelimiter(e.target.value)}
-                  placeholder="예: --- 또는 ## 등"
-                />
-              )}
-            </div>
-          </Card>
-
-          {/* 프로그레스 바 */}
-          {progress > 0 && (
-            <div className="space-y-2">
-              <ProgressBar value={progress} />
-              <p className="text-xs text-text-secondary text-center">
-                {progress < 100 ? '업로드 중...' : '완료!'}
-              </p>
-            </div>
-          )}
-
-          {/* 에러 메시지 */}
-          {error && (
-            <Card className="border-red-500/30 bg-red-500/10">
-              <p className="text-sm text-red-400">{error}</p>
-            </Card>
-          )}
-
-          {/* 업로드 결과 */}
-          {result && (
-            <Card className="border-green-500/30 bg-green-500/10">
-              <div className="space-y-1">
-                <p className="text-sm text-green-400 font-medium">업로드 완료!</p>
-                {result.document && (
-                  <p className="text-xs text-text-secondary">
-                    "{result.document.title}" - {result.sectionsCount || result.sections?.length || 0}개 섹션 추출됨
-                  </p>
+          {/* ── PDF 업로드 모드 ── */}
+          {uploadMode === 'pdf' && (
+            <>
+              {/* 파일 드롭존 */}
+              <div
+                className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={e => handleFileSelect(e.target.files[0])} />
+                {file ? (
+                  <div className="space-y-2">
+                    <svg className="w-10 h-10 mx-auto text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <p className="text-text font-medium">{file.name}</p>
+                    <p className="text-sm text-text-secondary">{formatFileSize(file.size)}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <svg className="w-10 h-10 mx-auto text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                    <p className="text-text-secondary">PDF 파일을 드래그하거나 클릭하여 선택</p>
+                    <p className="text-xs text-text-secondary/60">PDF 파일만 지원됩니다</p>
+                  </div>
                 )}
               </div>
-            </Card>
+
+              {/* 업로드 옵션 */}
+              <Card>
+                <div className="space-y-4">
+                  <Input label="제목" value={title} onChange={e => setTitle(e.target.value)} placeholder="문서 제목을 입력하세요" />
+                  <Select label="카테고리" value={category} onChange={e => setCategory(e.target.value)} options={CATEGORIES.filter(c => c.value !== '')} />
+                  <Select label="추출 단위" value={sectionType} onChange={e => setSectionType(e.target.value)} options={SECTION_TYPES} />
+                  {sectionType === 'custom' && (
+                    <Input label="구분자" value={customDelimiter} onChange={e => setCustomDelimiter(e.target.value)} placeholder="예: --- 또는 ## 등" />
+                  )}
+                </div>
+              </Card>
+
+              {progress > 0 && (
+                <div className="space-y-2">
+                  <ProgressBar value={progress} />
+                  <p className="text-xs text-text-secondary text-center">{progress < 100 ? '업로드 중...' : '완료!'}</p>
+                </div>
+              )}
+
+              {error && (
+                <Card className="border-red-500/30 bg-red-500/10">
+                  <p className="text-sm text-red-400">{error}</p>
+                </Card>
+              )}
+
+              {result && (
+                <Card className="border-green-500/30 bg-green-500/10">
+                  <div className="space-y-1">
+                    <p className="text-sm text-green-400 font-medium">업로드 완료!</p>
+                    {result.document && (
+                      <p className="text-xs text-text-secondary">
+                        "{result.document.title}" - {result.sectionsCount || result.sections?.length || 0}개 섹션 추출됨
+                      </p>
+                    )}
+                  </div>
+                </Card>
+              )}
+
+              <div className="flex gap-3">
+                <Button variant="primary" size="lg" className="flex-1" disabled={!file || uploading} onClick={handleUpload}>
+                  {uploading ? '업로드 중...' : '업로드'}
+                </Button>
+                <Button variant="ghost" size="lg" onClick={handleReset} disabled={uploading}>초기화</Button>
+              </div>
+            </>
           )}
 
-          {/* 버튼 영역 */}
-          <div className="flex gap-3">
-            <Button
-              variant="primary"
-              size="lg"
-              className="flex-1"
-              disabled={!file || uploading}
-              onClick={handleUpload}
-            >
-              {uploading ? '업로드 중...' : '업로드'}
-            </Button>
-            <Button variant="ghost" size="lg" onClick={handleReset} disabled={uploading}>
-              초기화
-            </Button>
-          </div>
+          {/* ── 법령 검색 모드 ── */}
+          {uploadMode === 'law' && (
+            <>
+              {/* 검색 입력 */}
+              <Card>
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={lawQuery}
+                      onChange={e => setLawQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleLawSearch()}
+                      placeholder="법령명을 입력하세요 (예: 개인정보보호법)"
+                      className="flex-1 px-3 py-2 bg-bg border border-border rounded-lg text-text placeholder-text-secondary/50 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                    />
+                    <Button onClick={handleLawSearch} disabled={lawSearching || !lawQuery.trim()}>
+                      {lawSearching ? '검색 중...' : '검색'}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-text-secondary">
+                    법제처 국가법령정보에서 법령을 검색하여 조문별로 DB에 저장합니다.
+                  </p>
+                </div>
+              </Card>
+
+              {/* 에러 메시지 */}
+              {lawError && (
+                <Card className="border-red-500/30 bg-red-500/10">
+                  <p className="text-sm text-red-400">{lawError}</p>
+                </Card>
+              )}
+
+              {/* 임포트 완료 결과 */}
+              {lawResult && (
+                <Card className="border-green-500/30 bg-green-500/10">
+                  <div className="space-y-1">
+                    <p className="text-sm text-green-400 font-medium">법령 임포트 완료!</p>
+                    <p className="text-xs text-text-secondary">
+                      "{lawResult.title}" - {lawResult.articleCount}개 조문 저장됨
+                    </p>
+                  </div>
+                </Card>
+              )}
+
+              {/* 검색 결과 목록 */}
+              {lawResults.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-sm text-text-secondary">{lawResults.length}건의 법령을 찾았습니다.</p>
+                  {lawResults.map(law => (
+                    <Card key={law.id}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-medium text-text">{law.name}</h3>
+                          {law.shortName && <p className="text-xs text-text-secondary mt-0.5">({law.shortName})</p>}
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <Badge color="primary">{law.ministry || '소관부처 미상'}</Badge>
+                            {law.enforcementDate && (
+                              <span className="text-xs text-text-secondary">시행 {law.enforcementDate}</span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={importing !== null}
+                          onClick={() => handleLawImport(law)}
+                        >
+                          {importing === law.id ? '임포트 중...' : '임포트'}
+                        </Button>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {/* 로딩 */}
+              {lawSearching && (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+            </>
+          )}
         </div>
       );
     }
