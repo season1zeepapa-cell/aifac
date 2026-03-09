@@ -56,7 +56,27 @@ module.exports = async function handler(req, res) {
       const { action, id } = req.body;
 
       if (action === 'delete' && id) {
+        // 손자(chunks) → 자식(sections) → 부모(documents) 순서로 삭제
+        // 1) 해당 문서의 섹션 ID 목록 조회
+        const sectionRows = await query(
+          'SELECT id FROM document_sections WHERE document_id = $1', [id]
+        );
+        const sectionIds = sectionRows.rows.map(r => r.id);
+
+        // 2) 섹션에 연결된 청크(임베딩) 삭제
+        if (sectionIds.length > 0) {
+          await query(
+            `DELETE FROM document_chunks WHERE section_id = ANY($1)`,
+            [sectionIds]
+          );
+        }
+
+        // 3) 섹션 삭제
+        await query('DELETE FROM document_sections WHERE document_id = $1', [id]);
+
+        // 4) 문서 삭제
         await query('DELETE FROM documents WHERE id = $1', [id]);
+
         return res.json({ success: true, message: '문서가 삭제되었습니다.' });
       }
 
