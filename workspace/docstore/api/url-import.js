@@ -118,10 +118,11 @@ module.exports = async (req, res) => {
     // 4) 섹션 분할
     const paragraphs = splitIntoParagraphs(extractedText);
 
-    // 5) DB 저장
+    // 5) DB 저장 (원본 HTML도 함께 저장)
+    const htmlBuffer = Buffer.from(html, 'utf-8');
     const docResult = await query(
-      `INSERT INTO documents (title, file_type, category, metadata)
-       VALUES ($1, 'url', $2, $3)
+      `INSERT INTO documents (title, file_type, category, metadata, original_file, original_filename, original_mimetype, file_size)
+       VALUES ($1, 'url', $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         title,
@@ -131,6 +132,10 @@ module.exports = async (req, res) => {
           charCount: extractedText.length,
           sectionCount: paragraphs.length,
         }),
+        htmlBuffer,
+        `${title}.html`,
+        'text/html',
+        htmlBuffer.length,
       ]
     );
     const documentId = docResult.rows[0].id;

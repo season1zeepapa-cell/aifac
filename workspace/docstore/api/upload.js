@@ -103,10 +103,10 @@ module.exports = async function handler(req, res) {
     }
 
     // ── DB 저장 ──
-    // 1) documents 테이블
+    // 1) documents 테이블 (원본 파일 포함)
     const docResult = await query(
-      `INSERT INTO documents (title, file_type, category, metadata)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO documents (title, file_type, category, metadata, original_file, original_filename, original_mimetype, file_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
       [
         title,
@@ -120,6 +120,10 @@ module.exports = async function handler(req, res) {
           columns: extracted.columns || null,
           fields: extracted.fields || null,
         }),
+        fileBuffer,       // 원본 파일 바이너리 (BYTEA)
+        filename,         // 원본 파일명
+        mimetype,         // MIME 타입
+        fileBuffer.length, // 파일 크기 (bytes)
       ]
     );
     const documentId = docResult.rows[0].id;
