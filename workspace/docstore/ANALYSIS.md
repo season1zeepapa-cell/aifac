@@ -61,7 +61,7 @@ workspace/docstore/
 ### 3단계: 파이프라인 확장
 
 - [ ] 웹 URL 크롤링 소스 추가
-- [ ] 조문/섹션별 AI 요약 생성
+- [x] 조문/섹션별 AI 요약 생성
 - [x] 조문 간 참조 관계 파싱
 
 ### 최종: RAG 질의응답
@@ -124,10 +124,10 @@ workspace/docstore/
 - [x] 역참조 표시 ("이 조문을 참조하는 조문")
 
 #### 4단계: 조문별 AI 요약
-- [ ] `api/summary.js` 신규 (Gemini 1-2줄 요약)
-- [ ] 요약 결과 metadata.summary 캐싱
-- [ ] 문서 상세 모달에 요약 표시/생성 버튼
-- [ ] 전체 요약 일괄 생성 옵션
+- [x] `api/summary.js` 신규 (Gemini 1-2줄 요약)
+- [x] 요약 결과 metadata.summary 캐싱
+- [x] 문서 상세 모달에 요약 표시/생성 버튼
+- [x] 전체 요약 일괄 생성 옵션
 
 #### 5단계: 웹 URL 크롤링 + RAG 개선
 - [ ] `api/url-import.js` 신규 (HTML → 텍스트 추출)

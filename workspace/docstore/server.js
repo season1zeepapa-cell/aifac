@@ -35,6 +35,10 @@ app.get('/api/search', (req, res) => searchHandler(req, res));
 const ragHandler = require('./api/rag');
 app.post('/api/rag', (req, res) => ragHandler(req, res));
 
+// ── POST /api/summary ────────────────────────────────
+const summaryHandler = require('./api/summary');
+app.post('/api/summary', (req, res) => summaryHandler(req, res));
+
 // ── 서버 시작 / Vercel 서버리스 export ────────────────
 if (require.main === module) {
   app.listen(PORT, () => {

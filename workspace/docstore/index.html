@@ -901,6 +901,9 @@
       const [error, setError] = useState(null);
       const [expandedChapters, setExpandedChapters] = useState({}); // 장별 펼침 상태
       const [allExpanded, setAllExpanded] = useState(false);
+      const [summaries, setSummaries] = useState({}); // sectionId → summary
+      const [summarizing, setSummarizing] = useState({}); // sectionId → true (로딩)
+      const [bulkSummarizing, setBulkSummarizing] = useState(false);
 
       useEffect(() => {
         if (!isOpen || !documentId) return;
@@ -969,6 +972,66 @@
         }
       }, [allExpanded, groupedSections]);
 
+      // 단일 섹션 AI 요약
+      const handleSummarize = useCallback(async (sectionId) => {
+        setSummarizing(prev => ({ ...prev, [sectionId]: true }));
+        try {
+          const res = await fetch(`${API_BASE_URL}/summary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sectionId }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '요약 실패');
+          setSummaries(prev => ({ ...prev, [sectionId]: data.summary }));
+        } catch (err) {
+          setSummaries(prev => ({ ...prev, [sectionId]: `요약 실패: ${err.message}` }));
+        } finally {
+          setSummarizing(prev => ({ ...prev, [sectionId]: false }));
+        }
+      }, []);
+
+      // 문서 전체 일괄 요약
+      const handleBulkSummarize = useCallback(async () => {
+        if (!documentId) return;
+        setBulkSummarizing(true);
+        try {
+          const res = await fetch(`${API_BASE_URL}/summary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documentId }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '일괄 요약 실패');
+          // 완료 후 문서 데이터 새로고침 (캐싱된 요약 포함)
+          const docRes = await fetch(`${API_BASE_URL}/documents?id=${documentId}`);
+          if (docRes.ok) {
+            const docData = await docRes.json();
+            setData(docData);
+            // 요약 state 업데이트
+            const newSummaries = {};
+            (docData.sections || []).forEach(s => {
+              if (s.metadata?.summary) newSummaries[s.id] = s.metadata.summary;
+            });
+            setSummaries(newSummaries);
+          }
+        } catch (err) {
+          alert(`일괄 요약 실패: ${err.message}`);
+        } finally {
+          setBulkSummarizing(false);
+        }
+      }, [documentId]);
+
+      // 데이터 로드 시 기존 요약 캐시 반영
+      useEffect(() => {
+        if (!data?.sections) return;
+        const cached = {};
+        data.sections.forEach(s => {
+          if (s.metadata?.summary) cached[s.id] = s.metadata.summary;
+        });
+        setSummaries(cached);
+      }, [data]);
+
       // 조문 ID로 스크롤 이동
       const scrollToArticle = useCallback((refId) => {
         // refId: "제10조", "제3조의2" 등
@@ -1036,6 +1099,26 @@
               </pre>
             )}
 
+            {/* AI 요약 */}
+            {section.id && (
+              <div className="mt-2">
+                {summaries[section.id] ? (
+                  <div className="p-2 bg-primary/10 rounded-md border border-primary/20">
+                    <p className="text-xs text-primary font-medium mb-0.5">AI 요약</p>
+                    <p className="text-xs text-text leading-relaxed">{summaries[section.id]}</p>
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleSummarize(section.id); }}
+                    disabled={summarizing[section.id]}
+                    className="text-xs text-primary hover:text-primary-hover underline disabled:opacity-50"
+                  >
+                    {summarizing[section.id] ? '요약 생성 중...' : 'AI 요약'}
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* 참조 관계 표시 */}
             {(references.length > 0 || referencedBy.length > 0) && (
               <div className="mt-2 pt-2 border-t border-border/50 flex flex-wrap gap-1.5">
@@ -1090,11 +1173,21 @@
                   <span>{formatDate(doc.created_at)}</span>
                   <span>{sections.length}개 섹션</span>
                 </div>
-                {hasGroups && (
-                  <Button variant="ghost" size="sm" onClick={toggleAll}>
-                    {allExpanded ? '전체 접기' : '전체 펼치기'}
+                <div className="flex gap-2">
+                  {hasGroups && (
+                    <Button variant="ghost" size="sm" onClick={toggleAll}>
+                      {allExpanded ? '전체 접기' : '전체 펼치기'}
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleBulkSummarize}
+                    disabled={bulkSummarizing}
+                  >
+                    {bulkSummarizing ? '요약 생성 중...' : '전체 AI 요약'}
                   </Button>
-                )}
+                </div>
               </div>
 
               {/* 섹션 목록 */}
