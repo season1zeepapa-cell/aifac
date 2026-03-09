@@ -58,12 +58,11 @@ module.exports = async (req, res) => {
     const documentId = docResult.rows[0].id;
     console.log(`  문서 저장: ID ${documentId}, "${title}"`);
 
-    // 4) 조문별로 document_sections에 저장
+    // 4) 조문별로 document_sections에 저장 (계층 라벨 포함)
     for (let i = 0; i < articles.length; i++) {
       const art = articles[i];
-      // 조문 텍스트 조합: "제N조(제목)\n내용"
-      const sectionTitle = `제${art.number}조` + (art.title ? `(${art.title})` : '');
-      const rawText = `${sectionTitle}\n${art.content}`;
+      // 조문 텍스트 조합: 라벨 + 내용
+      const rawText = `${art.label}\n${art.content}`;
 
       await dbQuery(
         `INSERT INTO document_sections (document_id, section_type, section_index, raw_text, metadata)
@@ -74,7 +73,13 @@ module.exports = async (req, res) => {
           rawText,
           JSON.stringify({
             articleNumber: art.number,
+            branchNumber: art.branchNumber,
             articleTitle: art.title,
+            part: art.part,
+            chapter: art.chapter,
+            section: art.section,
+            subsection: art.subsection,
+            label: art.label,
           }),
         ]
       );

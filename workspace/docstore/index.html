@@ -708,6 +708,14 @@
                               <Badge color="primary">문제 {meta.number}</Badge>
                               {meta.subject && <Badge color="yellow">{meta.subject}</Badge>}
                             </>
+                          ) : section.section_type === 'article' && meta.label ? (
+                            <>
+                              {meta.chapter && <Badge color="primary">{meta.chapter}</Badge>}
+                              {meta.section && <Badge color="yellow">{meta.section}</Badge>}
+                              <Badge color="gray">
+                                제{meta.articleNumber}조{meta.branchNumber ? `의${meta.branchNumber}` : ''}{meta.articleTitle ? `(${meta.articleTitle})` : ''}
+                              </Badge>
+                            </>
                           ) : (
                             <Badge color="gray">
                               {section.section_title || section.title || `섹션 ${idx + 1}`}

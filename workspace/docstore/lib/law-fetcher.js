@@ -68,13 +68,46 @@ async function getLawDetail(lawId, oc) {
       ministry: law['기본정보']?.['소관부처명'] || '',
     };
 
-    // 조문 파싱
+    // 조문 파싱 + 계층 라벨링 (편/장/절/관)
     const joItems = law['조문']?.['조문단위'] || [];
     const joArray = Array.isArray(joItems) ? joItems : [joItems];
 
-    const articles = joArray.map(jo => {
-      // 기본 조문 내용
-      let content = jo['조문내용'] || '';
+    // 현재 계층 위치 추적 (편 > 장 > 절 > 관)
+    let currentPart = '';    // 편
+    let currentChapter = ''; // 장
+    let currentSection = ''; // 절
+    let currentSubsection = ''; // 관
+
+    const articles = [];
+
+    for (const jo of joArray) {
+      const rawContent = (jo['조문내용'] || '').trim();
+      const hasTitle = !!jo['조문제목'];
+
+      // 조문제목이 없는 항목은 계층 구분자 (편/장/절/관)
+      if (!hasTitle && rawContent) {
+        // "제N편 ...", "제N장 ...", "제N절 ...", "제N관 ..." 패턴 감지
+        if (/제\d+편/.test(rawContent)) {
+          currentPart = rawContent.replace(/\s+/g, ' ').trim();
+          currentChapter = '';
+          currentSection = '';
+          currentSubsection = '';
+        } else if (/제\d+장/.test(rawContent)) {
+          currentChapter = rawContent.replace(/\s+/g, ' ').trim();
+          currentSection = '';
+          currentSubsection = '';
+        } else if (/제\d+절/.test(rawContent)) {
+          currentSection = rawContent.replace(/\s+/g, ' ').trim();
+          currentSubsection = '';
+        } else if (/제\d+관/.test(rawContent)) {
+          currentSubsection = rawContent.replace(/\s+/g, ' ').trim();
+        }
+        // 계층 구분자는 조문이 아니므로 건너뜀
+        continue;
+      }
+
+      // 실제 조문 파싱
+      let content = rawContent;
 
       // 항(hang) 데이터 병합
       const hangData = jo['항'];
@@ -85,7 +118,7 @@ async function getLawDetail(lawId, oc) {
           if (hangContent) {
             content += '\n' + hangContent;
           }
-          // 호(ho) 데이터도 있을 수 있음
+          // 호(ho) 데이터
           const hoData = hang['호'];
           if (hoData) {
             const hoArray = Array.isArray(hoData) ? hoData : [hoData];
@@ -99,12 +132,24 @@ async function getLawDetail(lawId, oc) {
         }
       }
 
-      return {
+      // 라벨 조합: "제1장 총칙 > 제1조(목적)"
+      const articleName = `제${jo['조문번호']}조` + (jo['조문가지번호'] ? `의${jo['조문가지번호']}` : '') + (jo['조문제목'] ? `(${jo['조문제목']})` : '');
+      const pathParts = [currentPart, currentChapter, currentSection, currentSubsection].filter(Boolean);
+      const label = pathParts.length > 0 ? `${pathParts.join(' > ')} > ${articleName}` : articleName;
+
+      articles.push({
         number: jo['조문번호'] || '',
+        branchNumber: jo['조문가지번호'] || '',
         title: jo['조문제목'] || '',
         content: content.trim(),
-      };
-    });
+        // 계층 라벨 정보
+        part: currentPart,
+        chapter: currentChapter,
+        section: currentSection,
+        subsection: currentSubsection,
+        label,
+      });
+    }
 
     return { info, articles };
   }
