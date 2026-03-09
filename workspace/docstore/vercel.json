@@ -4,7 +4,7 @@
   "buildCommand": "",
   "outputDirectory": ".",
   "functions": {
-    "api/upload.js": { "maxDuration": 60 },
+    "api/upload.js": { "maxDuration": 300 },
     "api/search.js": { "maxDuration": 30 }
   },
   "headers": [
