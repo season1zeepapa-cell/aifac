@@ -969,13 +969,38 @@
         }
       }, [allExpanded, groupedSections]);
 
+      // 조문 ID로 스크롤 이동
+      const scrollToArticle = useCallback((refId) => {
+        // refId: "제10조", "제3조의2" 등
+        // 해당 조문이 속한 장을 펼치고 스크롤
+        const target = sections.find(s => {
+          const m = s.metadata || {};
+          let artId = m.articleNumber ? `제${m.articleNumber}조` : '';
+          if (m.branchNumber) artId += `의${m.branchNumber}`;
+          return artId === refId;
+        });
+        if (target) {
+          const chapter = target.metadata?.chapter;
+          if (chapter) {
+            setExpandedChapters(prev => ({ ...prev, [chapter]: true }));
+          }
+          // DOM 스크롤 (약간 딜레이 후)
+          setTimeout(() => {
+            const el = document.getElementById(`section-${target.id}`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 100);
+        }
+      }, [sections]);
+
       // 단일 섹션 렌더링
       const renderSection = (section, idx) => {
         const meta = section.metadata || {};
         const isQuiz = section.section_type === 'quiz' && meta.body;
+        const references = meta.references || [];
+        const referencedBy = meta.referencedBy || [];
 
         return (
-          <div key={section.id || idx} className="bg-bg border border-border rounded-lg p-3">
+          <div key={section.id || idx} id={`section-${section.id}`} className="bg-bg border border-border rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
               {isQuiz ? (
                 <>
@@ -1009,6 +1034,36 @@
               <pre className="text-sm text-text whitespace-pre-wrap break-words leading-relaxed font-[inherit]">
                 {section.content || section.text || '(내용 없음)'}
               </pre>
+            )}
+
+            {/* 참조 관계 표시 */}
+            {(references.length > 0 || referencedBy.length > 0) && (
+              <div className="mt-2 pt-2 border-t border-border/50 flex flex-wrap gap-1.5">
+                {references.length > 0 && (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-xs text-text-secondary">참조:</span>
+                    {references.map((ref, ri) => (
+                      <button
+                        key={ri}
+                        onClick={() => scrollToArticle(ref)}
+                        className="text-xs text-primary hover:text-primary-hover underline"
+                      >{ref}</button>
+                    ))}
+                  </div>
+                )}
+                {referencedBy.length > 0 && (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-xs text-text-secondary ml-2">역참조:</span>
+                    {referencedBy.map((ref, ri) => (
+                      <button
+                        key={ri}
+                        onClick={() => scrollToArticle(ref)}
+                        className="text-xs text-yellow-400 hover:text-yellow-300 underline"
+                      >{ref}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         );
