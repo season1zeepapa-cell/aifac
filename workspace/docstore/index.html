@@ -893,17 +893,21 @@
     }
 
     // ========================================
-    // 문서 상세 모달
+    // 문서 상세 모달 (장/절 접기/펼치기 지원)
     // ========================================
     function DocumentDetailModal({ isOpen, onClose, documentId }) {
       const [data, setData] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
+      const [expandedChapters, setExpandedChapters] = useState({}); // 장별 펼침 상태
+      const [allExpanded, setAllExpanded] = useState(false);
 
       useEffect(() => {
         if (!isOpen || !documentId) return;
         setLoading(true);
         setError(null);
+        setExpandedChapters({});
+        setAllExpanded(false);
         fetch(`${API_BASE_URL}/documents?id=${documentId}`)
           .then(res => {
             if (!res.ok) throw new Error('문서를 불러올 수 없습니다.');
@@ -917,6 +921,101 @@
       const doc = data?.document;
       const sections = data?.sections || [];
 
+      // 장(chapter) 기준으로 섹션 그룹핑
+      const groupedSections = useMemo(() => {
+        if (sections.length === 0) return [];
+
+        // 법령 문서(article 타입)만 그룹핑
+        const hasChapters = sections.some(s => s.metadata?.chapter);
+        if (!hasChapters) return [{ chapter: null, sections }];
+
+        const groups = [];
+        let currentChapter = null;
+        let currentGroup = [];
+
+        for (const section of sections) {
+          const chapter = section.metadata?.chapter || null;
+          if (chapter !== currentChapter) {
+            if (currentGroup.length > 0) {
+              groups.push({ chapter: currentChapter, sections: currentGroup });
+            }
+            currentChapter = chapter;
+            currentGroup = [section];
+          } else {
+            currentGroup.push(section);
+          }
+        }
+        if (currentGroup.length > 0) {
+          groups.push({ chapter: currentChapter, sections: currentGroup });
+        }
+        return groups;
+      }, [sections]);
+
+      // 장 토글
+      const toggleChapter = useCallback((chapter) => {
+        setExpandedChapters(prev => ({ ...prev, [chapter]: !prev[chapter] }));
+      }, []);
+
+      // 전체 펼치기/접기
+      const toggleAll = useCallback(() => {
+        if (allExpanded) {
+          setExpandedChapters({});
+          setAllExpanded(false);
+        } else {
+          const all = {};
+          groupedSections.forEach(g => { if (g.chapter) all[g.chapter] = true; });
+          setExpandedChapters(all);
+          setAllExpanded(true);
+        }
+      }, [allExpanded, groupedSections]);
+
+      // 단일 섹션 렌더링
+      const renderSection = (section, idx) => {
+        const meta = section.metadata || {};
+        const isQuiz = section.section_type === 'quiz' && meta.body;
+
+        return (
+          <div key={section.id || idx} className="bg-bg border border-border rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {isQuiz ? (
+                <>
+                  <Badge color="primary">문제 {meta.number}</Badge>
+                  {meta.subject && <Badge color="yellow">{meta.subject}</Badge>}
+                </>
+              ) : section.section_type === 'article' && meta.label ? (
+                <>
+                  {meta.section && <Badge color="yellow">{meta.section}</Badge>}
+                  <Badge color="gray">
+                    제{meta.articleNumber}조{meta.branchNumber ? `의${meta.branchNumber}` : ''}{meta.articleTitle ? `(${meta.articleTitle})` : ''}
+                  </Badge>
+                </>
+              ) : (
+                <Badge color="gray">
+                  {meta.heading || section.section_title || section.title || `섹션 ${idx + 1}`}
+                </Badge>
+              )}
+            </div>
+
+            {isQuiz ? (
+              <div className="space-y-2">
+                <p className="text-sm text-text font-medium leading-relaxed">{meta.body}</p>
+                <div className="space-y-1 pl-2">
+                  {(meta.choices || []).map((choice, ci) => (
+                    <p key={ci} className="text-sm leading-relaxed text-text/80">{choice}</p>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <pre className="text-sm text-text whitespace-pre-wrap break-words leading-relaxed font-[inherit]">
+                {section.content || section.text || '(내용 없음)'}
+              </pre>
+            )}
+          </div>
+        );
+      };
+
+      const hasGroups = groupedSections.some(g => g.chapter);
+
       return (
         <Modal isOpen={isOpen} onClose={onClose} title={doc?.title || '문서 상세'} size="lg">
           {loading ? (
@@ -927,66 +1026,64 @@
             <p className="text-sm text-red-400 py-8 text-center">{error}</p>
           ) : doc ? (
             <div className="space-y-4">
-              {/* 문서 정보 */}
-              <div className="flex flex-wrap gap-3 text-sm text-text-secondary">
-                <Badge color={doc.category === '법령' ? 'primary' : doc.category === '기출' ? 'green' : doc.category === '규정' ? 'yellow' : 'gray'}>
-                  {doc.category}
-                </Badge>
-                <span>{formatDate(doc.created_at)}</span>
-                <span>{sections.length}개 섹션</span>
+              {/* 문서 정보 + 전체 토글 */}
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 items-center text-sm text-text-secondary">
+                  <Badge color={doc.category === '법령' ? 'primary' : doc.category === '기출' ? 'green' : doc.category === '규정' ? 'yellow' : 'gray'}>
+                    {doc.category}
+                  </Badge>
+                  <span>{formatDate(doc.created_at)}</span>
+                  <span>{sections.length}개 섹션</span>
+                </div>
+                {hasGroups && (
+                  <Button variant="ghost" size="sm" onClick={toggleAll}>
+                    {allExpanded ? '전체 접기' : '전체 펼치기'}
+                  </Button>
+                )}
               </div>
 
               {/* 섹션 목록 */}
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {sections.length === 0 ? (
                   <p className="text-sm text-text-secondary text-center py-4">추출된 섹션이 없습니다.</p>
-                ) : (
-                  sections.map((section, idx) => {
-                    const meta = section.metadata || {};
-                    const isQuiz = section.section_type === 'quiz' && meta.body;
-
+                ) : hasGroups ? (
+                  // 장별 그룹핑 표시 (접기/펼치기)
+                  groupedSections.map((group, gi) => {
+                    if (!group.chapter) {
+                      // chapter 없는 섹션은 바로 표시
+                      return group.sections.map((s, si) => renderSection(s, `${gi}-${si}`));
+                    }
+                    const isExpanded = expandedChapters[group.chapter] || false;
                     return (
-                      <div key={section.id || idx} className="bg-bg border border-border rounded-lg p-3">
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          {isQuiz ? (
-                            <>
-                              <Badge color="primary">문제 {meta.number}</Badge>
-                              {meta.subject && <Badge color="yellow">{meta.subject}</Badge>}
-                            </>
-                          ) : section.section_type === 'article' && meta.label ? (
-                            <>
-                              {meta.chapter && <Badge color="primary">{meta.chapter}</Badge>}
-                              {meta.section && <Badge color="yellow">{meta.section}</Badge>}
-                              <Badge color="gray">
-                                제{meta.articleNumber}조{meta.branchNumber ? `의${meta.branchNumber}` : ''}{meta.articleTitle ? `(${meta.articleTitle})` : ''}
-                              </Badge>
-                            </>
-                          ) : (
-                            <Badge color="gray">
-                              {section.section_title || section.title || `섹션 ${idx + 1}`}
-                            </Badge>
-                          )}
-                        </div>
-
-                        {isQuiz ? (
-                          <div className="space-y-2">
-                            <p className="text-sm text-text font-medium leading-relaxed">{meta.body}</p>
-                            <div className="space-y-1 pl-2">
-                              {(meta.choices || []).map((choice, ci) => (
-                                <p key={ci} className="text-sm leading-relaxed text-text/80">
-                                  {choice}
-                                </p>
-                              ))}
-                            </div>
+                      <div key={gi} className="border border-border rounded-lg overflow-hidden">
+                        {/* 장 헤더 (클릭으로 토글) */}
+                        <button
+                          onClick={() => toggleChapter(group.chapter)}
+                          className="w-full flex items-center justify-between px-4 py-3 bg-card-bg hover:bg-card-bg-hover transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Badge color="primary">{group.chapter}</Badge>
+                            <span className="text-sm text-text-secondary">{group.sections.length}개 조문</span>
                           </div>
-                        ) : (
-                          <pre className="text-sm text-text whitespace-pre-wrap break-words leading-relaxed font-[inherit]">
-                            {section.content || section.text || '(내용 없음)'}
-                          </pre>
+                          <svg
+                            className={`w-4 h-4 text-text-secondary transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {/* 장 내 섹션 (펼침 시에만 표시) */}
+                        {isExpanded && (
+                          <div className="p-3 space-y-2 bg-bg/50">
+                            {group.sections.map((s, si) => renderSection(s, `${gi}-${si}`))}
+                          </div>
                         )}
                       </div>
                     );
                   })
+                ) : (
+                  // 그룹핑 없이 모두 표시
+                  sections.map((section, idx) => renderSection(section, idx))
                 )}
               </div>
             </div>
@@ -1149,7 +1246,7 @@
     }
 
     // ========================================
-    // 검색 탭 (텍스트 / 벡터 / AI 질의)
+    // 검색 탭 (텍스트 / 벡터 / AI 질의 + 필터)
     // ========================================
     function SearchTab() {
       const [searchQuery, setSearchQuery] = useState('');
@@ -1157,8 +1254,22 @@
       const [results, setResults] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
-      // RAG 질의 결과
       const [ragResult, setRagResult] = useState(null);
+      // 필터
+      const [filterDocId, setFilterDocId] = useState('');
+      const [filterChapter, setFilterChapter] = useState('');
+      const [docList, setDocList] = useState([]); // 문서 목록 (필터용)
+      const [showFilters, setShowFilters] = useState(false);
+      // 검색 결과에서 문서 상세 이동
+      const [selectedDocId, setSelectedDocId] = useState(null);
+
+      // 문서 목록 불러오기 (필터 드롭다운용)
+      useEffect(() => {
+        fetch(`${API_BASE_URL}/documents`)
+          .then(r => r.json())
+          .then(data => setDocList(Array.isArray(data) ? data : data.documents || []))
+          .catch(() => {});
+      }, []);
 
       // 검색 실행
       const handleSearch = useCallback(async () => {
@@ -1170,58 +1281,54 @@
 
         try {
           if (searchType === 'rag') {
-            // AI 질의 (RAG)
+            const body = { question: searchQuery.trim(), topK: 5 };
+            if (filterDocId) body.docId = filterDocId;
             const res = await fetch(`${API_BASE_URL}/rag`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ question: searchQuery.trim(), topK: 5 }),
+              body: JSON.stringify(body),
             });
             if (!res.ok) {
               const errData = await res.json().catch(() => ({}));
               throw new Error(errData.error || `질의 실패 (${res.status})`);
             }
-            const data = await res.json();
-            setRagResult(data);
+            setRagResult(await res.json());
           } else {
-            // 텍스트/벡터 검색
             const params = new URLSearchParams({
               q: searchQuery.trim(),
               type: searchType,
               limit: '20',
             });
+            if (filterDocId) params.set('docId', filterDocId);
+            if (filterChapter) params.set('chapter', filterChapter);
             const res = await fetch(`${API_BASE_URL}/search?${params}`);
             if (!res.ok) {
               const errData = await res.json().catch(() => ({}));
               throw new Error(errData.error || `검색 실패 (${res.status})`);
             }
-            const data = await res.json();
-            setResults(data);
+            setResults(await res.json());
           }
         } catch (err) {
           setError(err.message);
         } finally {
           setLoading(false);
         }
-      }, [searchQuery, searchType]);
+      }, [searchQuery, searchType, filterDocId, filterChapter]);
 
-      // Enter 키로 검색
       const handleKeyDown = useCallback((e) => {
         if (e.key === 'Enter') handleSearch();
       }, [handleSearch]);
 
-      // 검색 결과에서 검색어 하이라이트
+      // 검색어 하이라이트
       const highlightText = useCallback((text, query) => {
         if (!query || !text) return text;
-        // 최대 300자만 표시
         const maxLen = 300;
         const lowerText = text.toLowerCase();
         const lowerQuery = query.toLowerCase();
         const idx = lowerText.indexOf(lowerQuery);
-
         let excerpt = text;
         if (text.length > maxLen) {
           if (idx >= 0) {
-            // 검색어 주변 텍스트만 잘라서 표시
             const start = Math.max(0, idx - 80);
             const end = Math.min(text.length, idx + query.length + 220);
             excerpt = (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '');
@@ -1229,10 +1336,7 @@
             excerpt = text.slice(0, maxLen) + '...';
           }
         }
-
         if (idx < 0) return excerpt;
-
-        // 하이라이트 적용
         const parts = excerpt.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
         return parts.map((part, i) =>
           part.toLowerCase() === lowerQuery
@@ -1240,6 +1344,13 @@
             : part
         );
       }, []);
+
+      // 검색 결과 카드 (클릭 시 문서 상세 이동)
+      const ResultCard = ({ r, children }) => (
+        <Card hoverable onClick={() => r.documentId && setSelectedDocId(r.documentId)}>
+          {children}
+        </Card>
+      );
 
       return (
         <div className="space-y-4 fade-in">
@@ -1260,32 +1371,59 @@
                 </Button>
               </div>
               {/* 검색 타입 선택 */}
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { key: 'text', label: '텍스트 검색' },
+                  { key: 'vector', label: '의미 검색' },
+                  { key: 'rag', label: 'AI 질의' },
+                ].map(t => (
+                  <button key={t.key}
+                    onClick={() => setSearchType(t.key)}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                      searchType === t.key ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                    }`}
+                  >{t.label}</button>
+                ))}
+                {/* 필터 토글 */}
                 <button
-                  onClick={() => setSearchType('text')}
+                  onClick={() => setShowFilters(!showFilters)}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                    searchType === 'text' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                    showFilters || filterDocId || filterChapter
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : 'bg-border text-text-secondary hover:text-text'
                   }`}
                 >
-                  텍스트 검색
-                </button>
-                <button
-                  onClick={() => setSearchType('vector')}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                    searchType === 'vector' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
-                  }`}
-                >
-                  의미 검색
-                </button>
-                <button
-                  onClick={() => setSearchType('rag')}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                    searchType === 'rag' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
-                  }`}
-                >
-                  AI 질의
+                  필터 {(filterDocId || filterChapter) ? '(활성)' : ''}
                 </button>
               </div>
+
+              {/* 필터 패널 */}
+              {showFilters && (
+                <div className="space-y-2 p-3 bg-bg rounded-lg border border-border">
+                  <Select
+                    label="문서 범위"
+                    value={filterDocId}
+                    onChange={e => setFilterDocId(e.target.value)}
+                    options={[
+                      { value: '', label: '전체 문서' },
+                      ...docList.map(d => ({ value: String(d.id), label: d.title })),
+                    ]}
+                  />
+                  <Input
+                    label="장/절 필터"
+                    value={filterChapter}
+                    onChange={e => setFilterChapter(e.target.value)}
+                    placeholder="예: 제1장, 총칙"
+                  />
+                  {(filterDocId || filterChapter) && (
+                    <button
+                      onClick={() => { setFilterDocId(''); setFilterChapter(''); }}
+                      className="text-xs text-red-400 hover:text-red-300"
+                    >필터 초기화</button>
+                  )}
+                </div>
+              )}
+
               <p className="text-xs text-text-secondary">
                 {searchType === 'text'
                   ? '입력한 단어가 포함된 문서를 검색합니다.'
@@ -1315,46 +1453,33 @@
             <div className="space-y-3">
               <p className="text-sm text-text-secondary">
                 "{results.query}" 검색 결과: <span className="text-text font-medium">{results.count}건</span>
+                <span className="text-xs ml-1">(클릭하면 문서 상세로 이동)</span>
               </p>
 
               {results.count === 0 ? (
-                <EmptyState
-                  icon="🔍"
-                  title="검색 결과가 없습니다"
-                  description="다른 검색어로 시도해보세요."
-                />
+                <EmptyState icon="🔍" title="검색 결과가 없습니다" description="다른 검색어로 시도해보세요." />
               ) : results.type === 'text' ? (
-                /* 텍스트 검색 결과 */
                 results.results.map((r, idx) => (
-                  <Card key={idx}>
+                  <ResultCard key={idx} r={r}>
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-text text-sm">{r.documentTitle}</span>
-                        <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>
-                          {r.category}
-                        </Badge>
-                        {r.label ? (
-                          <Badge color="gray">{r.label}</Badge>
-                        ) : (
-                          <Badge color="gray">섹션 {r.sectionIndex + 1}</Badge>
-                        )}
+                        <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>{r.category}</Badge>
+                        {r.label ? <Badge color="gray">{r.label}</Badge> : <Badge color="gray">섹션 {r.sectionIndex + 1}</Badge>}
                       </div>
                       <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
                         {highlightText(r.rawText, results.query)}
                       </p>
                     </div>
-                  </Card>
+                  </ResultCard>
                 ))
               ) : (
-                /* 벡터 검색 결과 */
                 results.results.map((r, idx) => (
-                  <Card key={idx}>
+                  <ResultCard key={idx} r={r}>
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-text text-sm">{r.documentTitle}</span>
-                        <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>
-                          {r.category}
-                        </Badge>
+                        <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>{r.category}</Badge>
                         <Badge color="green">유사도 {(r.similarity * 100).toFixed(1)}%</Badge>
                         {r.label && <Badge color="gray">{r.label}</Badge>}
                       </div>
@@ -1362,7 +1487,7 @@
                         {r.chunkText?.length > 300 ? r.chunkText.slice(0, 300) + '...' : r.chunkText}
                       </p>
                     </div>
-                  </Card>
+                  </ResultCard>
                 ))
               )}
             </div>
@@ -1371,7 +1496,6 @@
           {/* RAG 질의 결과 */}
           {ragResult && !loading && (
             <div className="space-y-4">
-              {/* AI 답변 */}
               <Card className="border-primary/30">
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
@@ -1383,8 +1507,6 @@
                   </div>
                 </div>
               </Card>
-
-              {/* 근거 자료 */}
               {ragResult.sources && ragResult.sources.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs text-text-secondary font-medium">근거 자료 ({ragResult.sources.length}건)</p>
@@ -1405,6 +1527,13 @@
               )}
             </div>
           )}
+
+          {/* 검색 결과에서 문서 상세 모달 */}
+          <DocumentDetailModal
+            isOpen={selectedDocId !== null}
+            onClose={() => setSelectedDocId(null)}
+            documentId={selectedDocId}
+          />
         </div>
       );
     }
