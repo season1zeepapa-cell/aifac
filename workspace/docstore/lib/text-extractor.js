@@ -372,55 +372,128 @@ function extractJson(buffer, options = {}) {
 }
 
 /**
- * 이미지 OCR (Claude 비전 API)
+ * OCR 프롬프트 생성
+ */
+function getOcrPrompt(contentType) {
+  if (contentType === 'table') {
+    return '이 이미지에서 표(테이블) 데이터를 정확하게 추출해주세요. 행과 열을 구분하여 텍스트로 정리해주세요. 추가 설명 없이 추출된 내용만 반환해주세요.';
+  } else if (contentType === 'quiz') {
+    return '이 이미지에서 객관식 문제를 찾아 문제 번호, 본문, 보기를 정확히 추출해주세요. 추가 설명 없이 추출된 텍스트만 반환해주세요.';
+  }
+  return '이 이미지에 있는 모든 텍스트를 정확하게 추출해주세요. 구조(제목, 목록, 단락 등)를 유지하면서 텍스트만 반환해주세요. 추가 설명 없이 추출된 텍스트만 출력해주세요.';
+}
+
+/**
+ * Gemini로 이미지 OCR (폴백용)
+ */
+async function ocrWithGemini(base64, mimetype, prompt) {
+  const https = require('https');
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY가 설정되지 않았습니다.');
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const body = JSON.stringify({
+    contents: [{
+      parts: [
+        { inline_data: { mime_type: mimetype, data: base64 } },
+        { text: prompt },
+      ],
+    }],
+    generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          resolve(text.trim());
+        } catch {
+          reject(new Error('Gemini 응답 파싱 실패'));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * 이미지 OCR — Claude 우선, 실패 시 Gemini 자동 폴백
+ * 토큰 소진 감지 + API 사용량 추적 포함
  */
 async function extractImage(buffer, options = {}) {
-  const Anthropic = require('@anthropic-ai/sdk').default;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY가 설정되지 않았습니다.');
-
-  const claude = new Anthropic({ apiKey });
+  const { trackedApiCall, isCreditError } = require('./api-tracker');
   const { mimetype = 'image/jpeg', contentType = 'general' } = options;
 
   const base64 = buffer.toString('base64');
   const mediaType = mimetype.startsWith('image/') ? mimetype : 'image/jpeg';
+  const prompt = getOcrPrompt(contentType);
 
-  let prompt;
-  if (contentType === 'table') {
-    prompt = '이 이미지에서 표(테이블) 데이터를 정확하게 추출해주세요. 행과 열을 구분하여 텍스트로 정리해주세요. 추가 설명 없이 추출된 내용만 반환해주세요.';
-  } else if (contentType === 'quiz') {
-    prompt = '이 이미지에서 객관식 문제를 찾아 문제 번호, 본문, 보기를 정확히 추출해주세요. 추가 설명 없이 추출된 텍스트만 반환해주세요.';
-  } else {
-    prompt = '이 이미지에 있는 모든 텍스트를 정확하게 추출해주세요. 구조(제목, 목록, 단락 등)를 유지하면서 텍스트만 반환해주세요. 추가 설명 없이 추출된 텍스트만 출력해주세요.';
+  // 1차 시도: Claude Sonnet
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    const { result, error, creditExhausted, limitExceeded } = await trackedApiCall(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6', endpoint: 'image-ocr' },
+      async () => {
+        const Anthropic = require('@anthropic-ai/sdk').default;
+        const claude = new Anthropic({ apiKey: anthropicKey });
+        const response = await claude.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4096,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+        });
+        const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+        return { text, _tokensIn: response.usage?.input_tokens || 0, _tokensOut: response.usage?.output_tokens || 0 };
+      }
+    );
+
+    if (result && result.text) {
+      return {
+        sections: [{ sectionType: 'ocr', sectionIndex: 0, text: result.text, metadata: { method: 'claude-ocr', contentType } }],
+        totalItems: 1,
+      };
+    }
+
+    // 크레딧 소진 또는 한도 초과 → Gemini 폴백
+    if (creditExhausted || limitExceeded) {
+      console.warn(`[OCR] Anthropic ${creditExhausted ? '크레딧 소진' : '한도 초과'} → Gemini 폴백`);
+    } else if (error) {
+      console.error('[OCR] Anthropic 에러:', error.message, '→ Gemini 폴백');
+    }
   }
 
-  const response = await claude.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 4096,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-        { type: 'text', text: prompt },
-      ],
-    }],
-  });
+  // 2차 시도: Gemini 폴백
+  const { result: geminiResult, error: geminiError } = await trackedApiCall(
+    { provider: 'gemini', model: 'gemini-2.0-flash', endpoint: 'image-ocr' },
+    async () => {
+      const text = await ocrWithGemini(base64, mediaType, prompt);
+      return { text };
+    }
+  );
 
-  const extractedText = response.content
-    .filter(b => b.type === 'text')
-    .map(b => b.text)
-    .join('\n')
-    .trim();
+  if (geminiResult && geminiResult.text) {
+    return {
+      sections: [{ sectionType: 'ocr', sectionIndex: 0, text: geminiResult.text, metadata: { method: 'gemini-ocr', contentType, fallback: true } }],
+      totalItems: 1,
+    };
+  }
 
-  return {
-    sections: [{
-      sectionType: 'ocr',
-      sectionIndex: 0,
-      text: extractedText,
-      metadata: { method: 'claude-ocr', contentType },
-    }],
-    totalItems: 1,
-  };
+  throw geminiError || new Error('이미지 OCR 실패: 사용 가능한 API가 없습니다.');
 }
 
 /**

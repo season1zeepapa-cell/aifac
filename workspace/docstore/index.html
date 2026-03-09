@@ -408,6 +408,9 @@
         { id: 'search', label: '검색', icon: (
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
         ) },
+        { id: 'api', label: 'API', icon: (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+        ) },
       ];
 
       return (
@@ -1838,6 +1841,265 @@
     }
 
     // ========================================
+    // API 관리 대시보드 탭
+    // ========================================
+    function ApiDashboardTab() {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [range, setRange] = useState('today');
+      const [actionLoading, setActionLoading] = useState(null);
+
+      const fetchData = useCallback(async () => {
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE_URL}/api-usage?range=${range}`);
+          if (!res.ok) throw new Error('데이터 로드 실패');
+          setData(await res.json());
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setLoading(false);
+        }
+      }, [range]);
+
+      useEffect(() => { fetchData(); }, [fetchData]);
+
+      // 키 테스트
+      const handleTestKey = useCallback(async (provider) => {
+        setActionLoading(`test-${provider}`);
+        try {
+          const res = await fetch(`${API_BASE_URL}/api-usage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'testKey', provider }),
+          });
+          const result = await res.json();
+          alert(result.message);
+          fetchData();
+        } catch (err) {
+          alert('테스트 실패: ' + err.message);
+        } finally {
+          setActionLoading(null);
+        }
+      }, [fetchData]);
+
+      // 키 활성/비활성 토글
+      const handleToggleKey = useCallback(async (provider, currentActive) => {
+        setActionLoading(`toggle-${provider}`);
+        try {
+          await fetch(`${API_BASE_URL}/api-usage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'toggleKey', provider, isActive: !currentActive }),
+          });
+          fetchData();
+        } catch (err) {
+          alert('변경 실패: ' + err.message);
+        } finally {
+          setActionLoading(null);
+        }
+      }, [fetchData]);
+
+      // 한도 변경
+      const handleUpdateLimit = useCallback(async (provider, currentLimit) => {
+        const newLimit = prompt(`${provider} 일일 호출 한도 (0 = 무제한)`, currentLimit);
+        if (newLimit === null) return;
+        setActionLoading(`limit-${provider}`);
+        try {
+          await fetch(`${API_BASE_URL}/api-usage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'updateLimit', provider, dailyLimit: parseInt(newLimit) || 0 }),
+          });
+          fetchData();
+        } catch (err) {
+          alert('변경 실패: ' + err.message);
+        } finally {
+          setActionLoading(null);
+        }
+      }, [fetchData]);
+
+      const providerLabels = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini' };
+      const providerColors = { openai: 'green', anthropic: 'yellow', gemini: 'primary' };
+
+      if (loading) {
+        return (
+          <div className="flex items-center justify-center py-16">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          </div>
+        );
+      }
+
+      if (!data) {
+        return <EmptyState icon="⚠️" title="데이터 로드 실패" description="API 사용량 테이블이 생성되지 않았을 수 있습니다." />;
+      }
+
+      const totalCost = data.usageByProvider?.reduce((sum, p) => sum + parseFloat(p.total_cost || 0), 0) || 0;
+      const totalCalls = data.usageByProvider?.reduce((sum, p) => sum + parseInt(p.call_count || 0), 0) || 0;
+      const totalErrors = data.usageByProvider?.reduce((sum, p) => sum + parseInt(p.error_count || 0), 0) || 0;
+
+      return (
+        <div className="space-y-5 fade-in">
+          {/* 기간 선택 */}
+          <div className="flex gap-2">
+            {[{ v: 'today', l: '오늘' }, { v: 'week', l: '7일' }, { v: 'month', l: '30일' }].map(r => (
+              <button key={r.v} onClick={() => setRange(r.v)}
+                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  range === r.v ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                }`}
+              >{r.l}</button>
+            ))}
+            <button onClick={fetchData} className="ml-auto px-3 py-1.5 rounded-full text-sm bg-border text-text-secondary hover:text-text">
+              새로고침
+            </button>
+          </div>
+
+          {/* 요약 카드 */}
+          <div className="grid grid-cols-3 gap-3">
+            <Card>
+              <p className="text-xs text-text-secondary">총 호출</p>
+              <p className="text-2xl font-bold text-text mt-1">{totalCalls}</p>
+            </Card>
+            <Card>
+              <p className="text-xs text-text-secondary">예상 비용</p>
+              <p className="text-2xl font-bold text-primary mt-1">${totalCost.toFixed(4)}</p>
+            </Card>
+            <Card>
+              <p className="text-xs text-text-secondary">에러</p>
+              <p className={`text-2xl font-bold mt-1 ${totalErrors > 0 ? 'text-red-400' : 'text-green-400'}`}>{totalErrors}</p>
+            </Card>
+          </div>
+
+          {/* API 키 상태 관리 */}
+          <div className="space-y-2">
+            <h3 className="text-sm font-bold text-text">API 키 관리</h3>
+            {data.keys?.map(key => {
+              const usage = data.usageByProvider?.find(u => u.provider === key.provider);
+              const callCount = parseInt(usage?.call_count || 0);
+              const creditErrors = parseInt(usage?.credit_error_count || 0);
+
+              return (
+                <Card key={key.provider}>
+                  <div className="space-y-3">
+                    {/* 상단: 프로바이더 이름 + 상태 뱃지 */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-text">{providerLabels[key.provider] || key.provider}</span>
+                        {key.configured ? (
+                          <Badge color={key.is_active ? 'green' : 'red'}>
+                            {key.is_active ? '활성' : '비활성'}
+                          </Badge>
+                        ) : (
+                          <Badge color="gray">미설정</Badge>
+                        )}
+                        {creditErrors > 0 && <Badge color="red">크레딧 소진</Badge>}
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleTestKey(key.provider)}
+                          disabled={!key.configured || actionLoading === `test-${key.provider}`}
+                          className="px-2 py-1 text-xs bg-border rounded hover:bg-card-bg-hover text-text-secondary disabled:opacity-30"
+                        >
+                          {actionLoading === `test-${key.provider}` ? '...' : '테스트'}
+                        </button>
+                        <button
+                          onClick={() => handleToggleKey(key.provider, key.is_active)}
+                          disabled={!key.configured}
+                          className="px-2 py-1 text-xs bg-border rounded hover:bg-card-bg-hover text-text-secondary disabled:opacity-30"
+                        >
+                          {key.is_active ? '비활성화' : '활성화'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 사용량 + 한도 */}
+                    <div className="flex items-center justify-between text-xs text-text-secondary">
+                      <div className="flex gap-3">
+                        <span>호출: <span className="text-text">{callCount}</span></span>
+                        <span>비용: <span className="text-primary">${parseFloat(usage?.total_cost || 0).toFixed(4)}</span></span>
+                      </div>
+                      <button
+                        onClick={() => handleUpdateLimit(key.provider, key.daily_limit || 0)}
+                        className="hover:text-text"
+                      >
+                        한도: {key.daily_limit || '무제한'} {key.daily_limit ? `(${callCount}/${key.daily_limit})` : ''}
+                      </button>
+                    </div>
+
+                    {/* 한도 프로그레스 바 */}
+                    {key.daily_limit > 0 && (
+                      <div className="w-full bg-border rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all ${
+                            callCount / key.daily_limit > 0.9 ? 'bg-red-500' :
+                            callCount / key.daily_limit > 0.7 ? 'bg-yellow-500' : 'bg-green-500'
+                          }`}
+                          style={{ width: `${Math.min(100, (callCount / key.daily_limit) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+
+                    {/* 에러 메시지 */}
+                    {key.last_error && (
+                      <p className="text-xs text-red-400 bg-red-500/10 px-2 py-1 rounded">
+                        {key.last_error.length > 120 ? key.last_error.slice(0, 120) + '...' : key.last_error}
+                      </p>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* 모델별 사용량 */}
+          {data.usageByModel?.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-text">모델별 사용량</h3>
+              <Card>
+                <div className="space-y-2">
+                  {data.usageByModel.map((m, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-border last:border-0">
+                      <div className="flex items-center gap-2">
+                        <Badge color={providerColors[m.provider] || 'gray'}>{m.provider}</Badge>
+                        <span className="text-text">{m.model}</span>
+                        <span className="text-text-secondary">({m.endpoint})</span>
+                      </div>
+                      <div className="flex gap-3 text-text-secondary">
+                        <span>{m.call_count}회</span>
+                        <span className="text-primary">${parseFloat(m.total_cost).toFixed(4)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* 최근 에러 */}
+          {data.recentErrors?.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-text">최근 에러</h3>
+              {data.recentErrors.map((e, i) => (
+                <Card key={i} className="border-red-500/20">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-xs">
+                      <Badge color={e.status === 'credit_exhausted' ? 'red' : 'yellow'}>{e.status}</Badge>
+                      <span className="text-text-secondary">{e.provider} / {e.model}</span>
+                      <span className="text-text-secondary ml-auto">{formatDate(e.created_at)}</span>
+                    </div>
+                    <p className="text-xs text-red-400">
+                      {e.error_message?.length > 150 ? e.error_message.slice(0, 150) + '...' : e.error_message}
+                    </p>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
     // App 컴포넌트
     // ========================================
     function App() {
@@ -1861,6 +2123,9 @@
             )}
             {activeTab === 'search' && (
               <SearchTab />
+            )}
+            {activeTab === 'api' && (
+              <ApiDashboardTab />
             )}
           </main>
           <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />

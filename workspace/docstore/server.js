@@ -43,6 +43,11 @@ app.post('/api/summary', (req, res) => summaryHandler(req, res));
 const urlImportHandler = require('./api/url-import');
 app.post('/api/url-import', (req, res) => urlImportHandler(req, res));
 
+// ── /api/api-usage (GET, POST) ──────────────────────
+const apiUsageHandler = require('./api/api-usage');
+app.get('/api/api-usage', (req, res) => apiUsageHandler(req, res));
+app.post('/api/api-usage', (req, res) => apiUsageHandler(req, res));
+
 // ── 서버 시작 / Vercel 서버리스 export ────────────────
 if (require.main === module) {
   app.listen(PORT, () => {
