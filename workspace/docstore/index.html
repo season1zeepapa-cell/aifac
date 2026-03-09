@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     :root {
       --bg: #1a1a2e;
@@ -57,6 +58,15 @@
       to { opacity: 1; transform: translateY(0); }
     }
     .fade-in { animation: fadeIn 0.3s ease-out; }
+    /* 마크다운 렌더링 스타일 */
+    .markdown-body { line-height: 1.7; }
+    .markdown-body p { margin-bottom: 0.5em; }
+    .markdown-body ul, .markdown-body ol { padding-left: 1.5em; margin-bottom: 0.5em; }
+    .markdown-body li { margin-bottom: 0.25em; }
+    .markdown-body strong { color: var(--primary); }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 { margin-top: 1em; margin-bottom: 0.5em; color: var(--text); font-weight: 600; }
+    .markdown-body code { background: rgba(74,158,255,0.1); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+    .markdown-body blockquote { border-left: 3px solid var(--primary); padding-left: 1em; color: var(--text-secondary); margin: 0.5em 0; }
   </style>
   <script>
     tailwind.config = {
@@ -429,7 +439,7 @@
     // 업로드 탭 (파일 업로드 + 법령 검색 모드)
     // ========================================
     function UploadTab({ onUploadComplete }) {
-      // 모드 토글: 'file' 또는 'law'
+      // 모드 토글: 'file' / 'law' / 'url'
       const [uploadMode, setUploadMode] = useState('file');
 
       // ── 파일 모드 state ──
@@ -457,6 +467,14 @@
       const [importing, setImporting] = useState(null);
       const [lawError, setLawError] = useState(null);
       const [lawResult, setLawResult] = useState(null);
+
+      // ── URL 크롤링 모드 state ──
+      const [urlInput, setUrlInput] = useState('');
+      const [urlTitle, setUrlTitle] = useState('');
+      const [urlCategory, setUrlCategory] = useState('기타');
+      const [urlImporting, setUrlImporting] = useState(false);
+      const [urlError, setUrlError] = useState(null);
+      const [urlResult, setUrlResult] = useState(null);
 
       // ── 파일 선택 핸들러 (모든 형식 지원) ──
       const handleFileSelect = useCallback((selectedFile) => {
@@ -638,6 +656,33 @@
         }
       }, [onUploadComplete]);
 
+      // ── URL 크롤링 핸들러 ──
+      const handleUrlImport = useCallback(async () => {
+        if (!urlInput.trim()) return;
+        setUrlImporting(true);
+        setUrlError(null);
+        setUrlResult(null);
+        try {
+          const res = await fetch(`${API_BASE_URL}/url-import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: urlInput.trim(),
+              title: urlTitle.trim() || undefined,
+              category: urlCategory,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `임포트 실패 (${res.status})`);
+          setUrlResult(data);
+          if (onUploadComplete) onUploadComplete();
+        } catch (err) {
+          setUrlError(err.message);
+        } finally {
+          setUrlImporting(false);
+        }
+      }, [urlInput, urlTitle, urlCategory, onUploadComplete]);
+
       // 현재 파일 형식의 설정
       const currentConfig = fileType ? FILE_TYPE_CONFIG[fileType] : null;
 
@@ -645,22 +690,18 @@
         <div className="space-y-5 fade-in">
           {/* 모드 토글 */}
           <div className="flex gap-2">
-            <button
-              onClick={() => setUploadMode('file')}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                uploadMode === 'file' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
-              }`}
-            >
-              파일 업로드
-            </button>
-            <button
-              onClick={() => setUploadMode('law')}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                uploadMode === 'law' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
-              }`}
-            >
-              법령 검색
-            </button>
+            {[
+              { key: 'file', label: '파일 업로드' },
+              { key: 'law', label: '법령 검색' },
+              { key: 'url', label: 'URL 크롤링' },
+            ].map(m => (
+              <button key={m.key}
+                onClick={() => setUploadMode(m.key)}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  uploadMode === m.key ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                }`}
+              >{m.label}</button>
+            ))}
           </div>
 
           {/* ── 파일 업로드 모드 ── */}
@@ -886,6 +927,64 @@
                   <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                 </div>
               )}
+            </>
+          )}
+
+          {/* ── URL 크롤링 모드 ── */}
+          {uploadMode === 'url' && (
+            <>
+              <Card>
+                <div className="space-y-4">
+                  <Input
+                    label="웹 페이지 URL"
+                    value={urlInput}
+                    onChange={e => setUrlInput(e.target.value)}
+                    placeholder="https://example.com/page"
+                  />
+                  <Input
+                    label="제목 (비워두면 자동 추출)"
+                    value={urlTitle}
+                    onChange={e => setUrlTitle(e.target.value)}
+                    placeholder="페이지 제목"
+                  />
+                  <Select
+                    label="카테고리"
+                    value={urlCategory}
+                    onChange={e => setUrlCategory(e.target.value)}
+                    options={CATEGORIES.filter(c => c.value !== '')}
+                  />
+                  <p className="text-xs text-text-secondary">
+                    웹 페이지의 텍스트를 크롤링하여 지식 DB에 저장합니다.
+                  </p>
+                </div>
+              </Card>
+
+              {urlError && (
+                <Card className="border-red-500/30 bg-red-500/10">
+                  <p className="text-sm text-red-400">{urlError}</p>
+                </Card>
+              )}
+
+              {urlResult && (
+                <Card className="border-green-500/30 bg-green-500/10">
+                  <div className="space-y-1">
+                    <p className="text-sm text-green-400 font-medium">크롤링 완료!</p>
+                    <p className="text-xs text-text-secondary">
+                      "{urlResult.title}" - {urlResult.sectionCount}개 섹션, {urlResult.charCount.toLocaleString()}자 추출
+                    </p>
+                  </div>
+                </Card>
+              )}
+
+              <Button
+                variant="primary"
+                size="lg"
+                className="w-full"
+                disabled={!urlInput.trim() || urlImporting}
+                onClick={handleUrlImport}
+              >
+                {urlImporting ? '크롤링 중...' : 'URL 크롤링'}
+              </Button>
             </>
           )}
         </div>
@@ -1650,9 +1749,12 @@
                     <span className="text-primary font-bold text-sm">AI 답변</span>
                     <Badge color="primary">RAG</Badge>
                   </div>
-                  <div className="text-sm text-text leading-relaxed whitespace-pre-wrap">
-                    {ragResult.answer}
-                  </div>
+                  <div
+                    className="text-sm text-text leading-relaxed markdown-body"
+                    dangerouslySetInnerHTML={{
+                      __html: typeof marked !== 'undefined' ? marked.parse(ragResult.answer || '') : ragResult.answer
+                    }}
+                  />
                 </div>
               </Card>
               {ragResult.sources && ragResult.sources.length > 0 && (

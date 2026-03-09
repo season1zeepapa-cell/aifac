@@ -25,11 +25,15 @@ workspace/docstore/
 │   ├── upload.js                # PDF 업로드 + 추출
 │   ├── search.js                # 텍스트/벡터 검색
 │   ├── law.js                   # 법령 검색/상세 프록시
-│   └── law-import.js            # 법령 임포트
+│   ├── law-import.js            # 법령 임포트 (참조 관계 포함)
+│   ├── summary.js               # 조문/섹션 AI 요약 (Gemini)
+│   ├── url-import.js            # 웹 URL 크롤링 → DB
+│   └── rag.js                   # RAG 질의응답
 ├── lib/
 │   ├── pdf-extractor.js         # PDF 추출 (텍스트 + OCR + 문제 파싱)
 │   ├── embeddings.js            # 청크 분할 + OpenAI 임베딩
-│   └── law-fetcher.js           # 법제처 API 클라이언트
+│   ├── law-fetcher.js           # 법제처 API 클라이언트
+│   └── text-extractor.js       # 멀티포맷 텍스트 추출 (TXT/MD/DOCX/XLSX/CSV/JSON/이미지)
 └── scripts/
     ├── create-tables.js         # DB 스키마 생성
     ├── generate-embeddings.js   # 기존 문서 임베딩 생성
@@ -60,7 +64,7 @@ workspace/docstore/
 
 ### 3단계: 파이프라인 확장
 
-- [ ] 웹 URL 크롤링 소스 추가
+- [x] 웹 URL 크롤링 소스 추가
 - [x] 조문/섹션별 AI 요약 생성
 - [x] 조문 간 참조 관계 파싱
 
@@ -130,10 +134,10 @@ workspace/docstore/
 - [x] 전체 요약 일괄 생성 옵션
 
 #### 5단계: 웹 URL 크롤링 + RAG 개선
-- [ ] `api/url-import.js` 신규 (HTML → 텍스트 추출)
-- [ ] 업로드 탭 URL 모드 추가
-- [ ] RAG 답변 마크다운 렌더링 (marked.js CDN)
-- [ ] RAG 대화 컨텍스트 (후속 질문)
+- [x] `api/url-import.js` 신규 (HTML → 텍스트 추출)
+- [x] 업로드 탭 URL 모드 추가
+- [x] RAG 답변 마크다운 렌더링 (marked.js CDN)
+- [ ] RAG 대화 컨텍스트 (후속 질문) — 추후 구현
 
 ### 추가 패키지
 
