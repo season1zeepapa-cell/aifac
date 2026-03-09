@@ -2,8 +2,19 @@
 // GET /api/api-usage — 사용량 통계 + 키 상태
 // POST /api/api-usage — 키 상태 변경 (활성/비활성, 한도 변경)
 const { query } = require('./db');
+const { requireAdmin } = require('./auth');
 
 module.exports = async function handler(req, res) {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // 인증 체크
+  const { error: authError } = requireAdmin(req);
+  if (authError) return res.status(401).json({ error: authError });
+
   try {
     // ── GET: 대시보드 데이터 ──
     if (req.method === 'GET') {

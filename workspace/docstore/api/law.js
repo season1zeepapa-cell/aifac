@@ -2,13 +2,18 @@
 // - action: 'search' → 법령명 검색
 // - action: 'detail' → 조문 상세 조회
 const { searchLaw, getLawDetail } = require('../lib/law-fetcher');
+const { requireAdmin } = require('./auth');
 
 module.exports = async (req, res) => {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // 인증 체크
+  const { error: authError } = requireAdmin(req);
+  if (authError) return res.status(401).json({ error: authError });
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
   const OC = (process.env.LAW_API_OC || '').trim();

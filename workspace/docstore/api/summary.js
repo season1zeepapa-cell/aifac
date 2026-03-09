@@ -5,6 +5,7 @@
 //
 // 요약 결과는 document_sections.metadata.summary에 캐싱
 const { query } = require('./db');
+const { requireAdmin } = require('./auth');
 const https = require('https');
 
 // Gemini API 호출
@@ -57,9 +58,13 @@ ${label ? `[조문] ${label}\n` : ''}${text.substring(0, 2000)}`;
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
+
+  // 인증 체크
+  const { error: authError } = requireAdmin(req);
+  if (authError) return res.status(401).json({ error: authError });
 
   const { sectionId, documentId } = req.body;
   const apiKey = (process.env.GEMINI_API_KEY || '').trim();

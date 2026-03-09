@@ -10,10 +10,15 @@ const PORT = process.env.PORT || 3001;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname)));
 
-// ── /api/documents (GET, POST) ────────────────────────
+// ── POST /api/login ─────────────────────────────────
+const loginHandler = require('./api/login');
+app.post('/api/login', (req, res) => loginHandler(req, res));
+
+// ── /api/documents (GET, POST, DELETE) ──────────────
 const documentsHandler = require('./api/documents');
 app.get('/api/documents', (req, res) => documentsHandler(req, res));
 app.post('/api/documents', (req, res) => documentsHandler(req, res));
+app.delete('/api/documents', (req, res) => documentsHandler(req, res));
 
 // ── POST /api/upload ──────────────────────────────────
 const uploadHandler = require('./api/upload');

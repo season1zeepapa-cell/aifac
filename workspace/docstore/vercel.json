@@ -11,7 +11,8 @@
     "api/rag.js": { "maxDuration": 60 },
     "api/summary.js": { "maxDuration": 300 },
     "api/url-import.js": { "maxDuration": 60 },
-    "api/api-usage.js": { "maxDuration": 30 }
+    "api/api-usage.js": { "maxDuration": 30 },
+    "api/login.js": { "maxDuration": 10 }
   },
   "headers": [
     {

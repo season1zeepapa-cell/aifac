@@ -1,7 +1,18 @@
 // 문서 목록 조회 / 상세 조회 / 삭제 API
 const { query } = require('./db');
+const { requireAdmin } = require('./auth');
 
 module.exports = async function handler(req, res) {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // 인증 체크 — 관리자만 허용
+  const { user, error: authError } = requireAdmin(req);
+  if (authError) return res.status(401).json({ error: authError });
+
   try {
     // GET: 문서 목록 / 상세 조회 / 원본 다운로드
     if (req.method === 'GET') {

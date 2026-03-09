@@ -2,11 +2,22 @@
 // GET /api/search?q=검색어&type=text|vector&limit=10&chapter=제1장&docId=5
 const { query } = require('./db');
 const { generateEmbedding } = require('../lib/embeddings');
+const { requireAdmin } = require('./auth');
 
 module.exports = async function handler(req, res) {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: '허용되지 않는 메서드입니다.' });
   }
+
+  // 인증 체크
+  const { error: authError } = requireAdmin(req);
+  if (authError) return res.status(401).json({ error: authError });
 
   const q = req.query.q;
   const type = req.query.type || 'text';

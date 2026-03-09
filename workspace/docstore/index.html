@@ -98,6 +98,45 @@
     const API_BASE_URL = '/api';
 
     // ========================================
+    // 인증 토큰 관리
+    // ========================================
+    function getAuthToken() {
+      return localStorage.getItem('docstore_token');
+    }
+    function setAuthToken(token) {
+      localStorage.setItem('docstore_token', token);
+    }
+    function clearAuthToken() {
+      localStorage.removeItem('docstore_token');
+      localStorage.removeItem('docstore_user');
+    }
+    function getAuthUser() {
+      try { return JSON.parse(localStorage.getItem('docstore_user')); } catch { return null; }
+    }
+    function setAuthUser(user) {
+      localStorage.setItem('docstore_user', JSON.stringify(user));
+    }
+
+    // 인증 헤더가 포함된 fetch 래퍼
+    function authFetch(url, options = {}) {
+      const token = getAuthToken();
+      if (token) {
+        options.headers = {
+          ...options.headers,
+          'Authorization': `Bearer ${token}`,
+        };
+      }
+      return fetch(url, options).then(res => {
+        // 401 응답이면 자동 로그아웃
+        if (res.status === 401) {
+          clearAuthToken();
+          window.location.reload();
+        }
+        return res;
+      });
+    }
+
+    // ========================================
     // 카테고리 상수
     // ========================================
     const CATEGORIES = [
@@ -387,11 +426,27 @@
     // ========================================
 
     // 헤더
-    function Header() {
+    function Header({ onLogout }) {
+      const user = getAuthUser();
       return (
-        <header className="bg-card-bg border-b border-border px-4 py-3 text-center sticky top-0 z-40">
-          <h1 className="text-xl font-bold text-primary">DocStore</h1>
-          <p className="text-xs text-text-secondary mt-0.5">지식 문서 관리 시스템</p>
+        <header className="bg-card-bg border-b border-border px-4 py-3 sticky top-0 z-40">
+          <div className="max-w-3xl mx-auto flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-bold text-primary">DocStore</h1>
+              <p className="text-xs text-text-secondary mt-0.5">지식 문서 관리 시스템</p>
+            </div>
+            {onLogout && (
+              <div className="flex items-center gap-3">
+                {user && <span className="text-xs text-text-secondary">{user.name}</span>}
+                <button
+                  onClick={onLogout}
+                  className="text-xs text-text-secondary hover:text-red-400 border border-border rounded px-2 py-1 transition-colors"
+                >
+                  로그아웃
+                </button>
+              </div>
+            )}
+          </div>
         </header>
       );
     }
@@ -580,7 +635,7 @@
           if (contentField) formData.append('contentField', contentField);
           if (contentType) formData.append('contentType', contentType);
           setProgress(30);
-          const res = await fetch(`${API_BASE_URL}/upload`, { method: 'POST', body: formData });
+          const res = await authFetch(`${API_BASE_URL}/upload`, { method: 'POST', body: formData });
           setProgress(80);
           if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
@@ -619,7 +674,7 @@
         setLawResults([]);
         setLawResult(null);
         try {
-          const res = await fetch(`${API_BASE_URL}/law`, {
+          const res = await authFetch(`${API_BASE_URL}/law`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'search', query: lawQuery.trim() }),
@@ -643,7 +698,7 @@
         setLawError(null);
         setLawResult(null);
         try {
-          const res = await fetch(`${API_BASE_URL}/law-import`, {
+          const res = await authFetch(`${API_BASE_URL}/law-import`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lawId: law.id, lawName: law.name }),
@@ -666,7 +721,7 @@
         setUrlError(null);
         setUrlResult(null);
         try {
-          const res = await fetch(`${API_BASE_URL}/url-import`, {
+          const res = await authFetch(`${API_BASE_URL}/url-import`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1013,7 +1068,7 @@
         setError(null);
         setExpandedChapters({});
         setAllExpanded(false);
-        fetch(`${API_BASE_URL}/documents?id=${documentId}`)
+        authFetch(`${API_BASE_URL}/documents?id=${documentId}`)
           .then(res => {
             if (!res.ok) throw new Error('문서를 불러올 수 없습니다.');
             return res.json();
@@ -1078,7 +1133,7 @@
       const handleSummarize = useCallback(async (sectionId) => {
         setSummarizing(prev => ({ ...prev, [sectionId]: true }));
         try {
-          const res = await fetch(`${API_BASE_URL}/summary`, {
+          const res = await authFetch(`${API_BASE_URL}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sectionId }),
@@ -1098,7 +1153,7 @@
         if (!documentId) return;
         setBulkSummarizing(true);
         try {
-          const res = await fetch(`${API_BASE_URL}/summary`, {
+          const res = await authFetch(`${API_BASE_URL}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ documentId }),
@@ -1106,7 +1161,7 @@
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || '일괄 요약 실패');
           // 완료 후 문서 데이터 새로고침 (캐싱된 요약 포함)
-          const docRes = await fetch(`${API_BASE_URL}/documents?id=${documentId}`);
+          const docRes = await authFetch(`${API_BASE_URL}/documents?id=${documentId}`);
           if (docRes.ok) {
             const docData = await docRes.json();
             setData(docData);
@@ -1400,7 +1455,7 @@
         setError(null);
         try {
           const query = categoryFilter ? `?category=${encodeURIComponent(categoryFilter)}` : '';
-          const res = await fetch(`${API_BASE_URL}/documents${query}`);
+          const res = await authFetch(`${API_BASE_URL}/documents${query}`);
           if (!res.ok) throw new Error('문서 목록을 불러올 수 없습니다.');
           const data = await res.json();
           // 응답이 배열인지 객체인지 확인
@@ -1422,7 +1477,7 @@
         if (!confirm('이 문서를 삭제하시겠습니까?')) return;
         setDeleting(id);
         try {
-          const res = await fetch(`${API_BASE_URL}/documents`, {
+          const res = await authFetch(`${API_BASE_URL}/documents`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'delete', id }),
@@ -1564,7 +1619,7 @@
 
       // 문서 목록 불러오기 (필터 드롭다운용)
       useEffect(() => {
-        fetch(`${API_BASE_URL}/documents`)
+        authFetch(`${API_BASE_URL}/documents`)
           .then(r => r.json())
           .then(data => setDocList(Array.isArray(data) ? data : data.documents || []))
           .catch(() => {});
@@ -1582,7 +1637,7 @@
           if (searchType === 'rag') {
             const body = { question: searchQuery.trim(), topK: 5 };
             if (filterDocId) body.docId = filterDocId;
-            const res = await fetch(`${API_BASE_URL}/rag`, {
+            const res = await authFetch(`${API_BASE_URL}/rag`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
@@ -1600,7 +1655,7 @@
             });
             if (filterDocId) params.set('docId', filterDocId);
             if (filterChapter) params.set('chapter', filterChapter);
-            const res = await fetch(`${API_BASE_URL}/search?${params}`);
+            const res = await authFetch(`${API_BASE_URL}/search?${params}`);
             if (!res.ok) {
               const errData = await res.json().catch(() => ({}));
               throw new Error(errData.error || `검색 실패 (${res.status})`);
@@ -1852,7 +1907,7 @@
       const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-          const res = await fetch(`${API_BASE_URL}/api-usage?range=${range}`);
+          const res = await authFetch(`${API_BASE_URL}/api-usage?range=${range}`);
           if (!res.ok) throw new Error('데이터 로드 실패');
           setData(await res.json());
         } catch (err) {
@@ -1868,7 +1923,7 @@
       const handleTestKey = useCallback(async (provider) => {
         setActionLoading(`test-${provider}`);
         try {
-          const res = await fetch(`${API_BASE_URL}/api-usage`, {
+          const res = await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'testKey', provider }),
@@ -1887,7 +1942,7 @@
       const handleToggleKey = useCallback(async (provider, currentActive) => {
         setActionLoading(`toggle-${provider}`);
         try {
-          await fetch(`${API_BASE_URL}/api-usage`, {
+          await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'toggleKey', provider, isActive: !currentActive }),
@@ -1906,7 +1961,7 @@
         if (newLimit === null) return;
         setActionLoading(`limit-${provider}`);
         try {
-          await fetch(`${API_BASE_URL}/api-usage`, {
+          await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'updateLimit', provider, dailyLimit: parseInt(newLimit) || 0 }),
@@ -2102,7 +2157,96 @@
     // ========================================
     // App 컴포넌트
     // ========================================
+    // ========================================
+    // 로그인 화면
+    // ========================================
+    function LoginScreen({ onLogin }) {
+      const [id, setId] = useState('');
+      const [password, setPassword] = useState('');
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!id || !password) { setError('아이디와 비밀번호를 입력해주세요.'); return; }
+        setLoading(true);
+        setError('');
+        try {
+          const res = await fetch(`${API_BASE_URL}/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, password }),
+          });
+          const data = await res.json();
+          if (!res.ok) { setError(data.error || '로그인에 실패했습니다.'); return; }
+          setAuthToken(data.token);
+          setAuthUser({ name: data.name, admin: data.admin });
+          onLogin();
+        } catch (err) {
+          setError('서버 연결에 실패했습니다.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center px-4">
+          <div className="w-full max-w-sm">
+            {/* 로고 영역 */}
+            <div className="text-center mb-8">
+              <div className="text-4xl mb-2">&#128218;</div>
+              <h1 className="text-2xl font-bold text-white">DocStore</h1>
+              <p className="text-text-secondary text-sm mt-1">지식 관리 시스템 (관리자 전용)</p>
+            </div>
+
+            {/* 로그인 폼 */}
+            <form onSubmit={handleSubmit} className="bg-card-bg rounded-xl p-6 border border-border">
+              {error && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div className="mb-4">
+                <label className="block text-sm text-text-secondary mb-1">아이디</label>
+                <input
+                  type="text"
+                  value={id}
+                  onChange={e => setId(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-bg border border-border rounded-lg text-white text-sm focus:outline-none focus:border-primary"
+                  placeholder="아이디를 입력하세요"
+                  autoFocus
+                  autoComplete="username"
+                />
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-sm text-text-secondary mb-1">비밀번호</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-bg border border-border rounded-lg text-white text-sm focus:outline-none focus:border-primary"
+                  placeholder="비밀번호를 입력하세요"
+                  autoComplete="current-password"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {loading ? '로그인 중...' : '로그인'}
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
     function App() {
+      const [isLoggedIn, setIsLoggedIn] = useState(!!getAuthToken());
       const [activeTab, setActiveTab] = useState('upload');
       const [refreshKey, setRefreshKey] = useState(0);
 
@@ -2111,9 +2255,19 @@
         setRefreshKey(k => k + 1);
       }, []);
 
+      const handleLogout = useCallback(() => {
+        clearAuthToken();
+        setIsLoggedIn(false);
+      }, []);
+
+      // 로그인 전이면 로그인 화면 표시
+      if (!isLoggedIn) {
+        return <LoginScreen onLogin={() => setIsLoggedIn(true)} />;
+      }
+
       return (
         <div className="min-h-screen pb-16">
-          <Header />
+          <Header onLogout={handleLogout} />
           <main className="max-w-3xl mx-auto px-4 py-5">
             {activeTab === 'upload' && (
               <UploadTab onUploadComplete={handleUploadComplete} />

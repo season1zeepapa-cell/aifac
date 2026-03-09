@@ -9,6 +9,7 @@
 // 4) 근거 조문과 함께 답변 생성
 const { query } = require('./db');
 const { generateEmbedding } = require('../lib/embeddings');
+const { requireAdmin } = require('./auth');
 const https = require('https');
 
 // Gemini API 호출 헬퍼
@@ -50,8 +51,12 @@ module.exports = async (req, res) => {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // 인증 체크
+  const { error: authError } = requireAdmin(req);
+  if (authError) return res.status(401).json({ error: authError });
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
   const { question, topK = 5, docId } = req.body;
