@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DocStore</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --card-bg: #16213e;
+      --text: #e0e0e0;
+      --text-secondary: #a0a0a0;
+      --primary: #4a9eff;
+      --primary-hover: #3a8eef;
+      --border: #2a2a4a;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    /* 드래그 앤 드롭 영역 */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 40px 20px;
+      text-align: center;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    .drop-zone.drag-over {
+      border-color: var(--primary);
+      background: rgba(74, 158, 255, 0.08);
+    }
+    /* 스크롤바 */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+    /* 프로그레스 바 애니메이션 */
+    @keyframes progress-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    .progress-animate { animation: progress-pulse 1.5s ease-in-out infinite; }
+    /* 페이드 인 */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in { animation: fadeIn 0.3s ease-out; }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: '#1a1a2e',
+            'card-bg': '#16213e',
+            'card-bg-hover': '#1a2744',
+            text: '#e0e0e0',
+            'text-secondary': '#a0a0a0',
+            primary: '#4a9eff',
+            'primary-hover': '#3a8eef',
+            border: '#2a2a4a',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ========================================
+    // API 설정
+    // ========================================
+    const API_BASE_URL = '/api';
+
+    // ========================================
+    // 카테고리 상수
+    // ========================================
+    const CATEGORIES = [
+      { value: '', label: '전체' },
+      { value: '법령', label: '법령' },
+      { value: '기출', label: '기출' },
+      { value: '규정', label: '규정' },
+      { value: '기타', label: '기타' },
+    ];
+
+    const SECTION_TYPES = [
+      { value: 'page', label: '페이지별' },
+      { value: 'full', label: '문서 전체' },
+      { value: 'quiz', label: '객관식 문제' },
+      { value: 'custom', label: '사용자 정의 (구분자)' },
+    ];
+
+    // ========================================
+    // 유틸 함수
+    // ========================================
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    function formatFileSize(bytes) {
+      if (!bytes) return '';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // ========================================
+    // 디자인 시스템 컴포넌트
+    // ========================================
+
+    // 버튼
+    function Button({ children, variant = 'primary', size = 'md', disabled, onClick, className = '', type = 'button' }) {
+      const base = 'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-bg';
+      const variants = {
+        primary: 'bg-primary hover:bg-primary-hover text-white focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed',
+        secondary: 'bg-border hover:bg-card-bg-hover text-text focus:ring-border',
+        danger: 'bg-red-600 hover:bg-red-700 text-white focus:ring-red-500',
+        ghost: 'bg-transparent hover:bg-border text-text-secondary hover:text-text focus:ring-border',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-sm',
+        lg: 'px-6 py-3 text-base',
+      };
+      return (
+        <button
+          type={type}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+          disabled={disabled}
+          onClick={onClick}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    // 입력 필드
+    function Input({ label, type = 'text', value, onChange, placeholder, error, disabled, className = '' }) {
+      return (
+        <div className={`flex flex-col gap-1.5 ${className}`}>
+          {label && <label className="text-sm text-text-secondary">{label}</label>}
+          <input
+            type={type}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            disabled={disabled}
+            className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-text placeholder-text-secondary/50 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors disabled:opacity-50"
+          />
+          {error && <span className="text-sm text-red-400">{error}</span>}
+        </div>
+      );
+    }
+
+    // 셀렉트
+    function Select({ label, value, onChange, options, className = '' }) {
+      return (
+        <div className={`flex flex-col gap-1.5 ${className}`}>
+          {label && <label className="text-sm text-text-secondary">{label}</label>}
+          <select
+            value={value}
+            onChange={onChange}
+            className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors appearance-none cursor-pointer"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0a0a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
+          >
+            {options.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    // 카드
+    function Card({ children, onClick, className = '', hoverable = false }) {
+      return (
+        <div
+          className={`bg-card-bg border border-border rounded-xl p-4 ${hoverable ? 'cursor-pointer hover:bg-card-bg-hover hover:border-primary/30 transition-all duration-200' : ''} ${className}`}
+          onClick={onClick}
+        >
+          {children}
+        </div>
+      );
+    }
+
+    // 뱃지
+    function Badge({ children, color = 'primary', className = '' }) {
+      const colors = {
+        primary: 'bg-primary/20 text-primary',
+        green: 'bg-green-500/20 text-green-400',
+        yellow: 'bg-yellow-500/20 text-yellow-400',
+        red: 'bg-red-500/20 text-red-400',
+        gray: 'bg-border text-text-secondary',
+      };
+      return (
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colors[color]} ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    // 모달
+    function Modal({ isOpen, onClose, title, children, size = 'md' }) {
+      if (!isOpen) return null;
+      const sizes = { sm: 'max-w-sm', md: 'max-w-2xl', lg: 'max-w-4xl', full: 'max-w-full mx-4' };
+      return (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 pb-4 overflow-y-auto" onClick={onClose}>
+          {/* 배경 오버레이 */}
+          <div className="fixed inset-0 bg-black/60" />
+          {/* 모달 본체 */}
+          <div
+            className={`relative bg-card-bg border border-border rounded-xl w-full ${sizes[size]} fade-in`}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 헤더 */}
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-lg font-semibold text-text">{title}</h3>
+              <button onClick={onClose} className="p-1 text-text-secondary hover:text-text transition-colors" aria-label="닫기">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            {/* 내용 */}
+            <div className="p-4 max-h-[70vh] overflow-y-auto">
+              {children}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 프로그레스 바
+    function ProgressBar({ value, className = '' }) {
+      return (
+        <div className={`w-full bg-border rounded-full h-2 overflow-hidden ${className}`}>
+          <div
+            className="bg-primary h-full rounded-full transition-all duration-300 progress-animate"
+            style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+          />
+        </div>
+      );
+    }
+
+    // 빈 상태
+    function EmptyState({ icon, title, description }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="text-4xl mb-4 opacity-30">{icon}</div>
+          <h3 className="text-lg font-medium text-text-secondary mb-2">{title}</h3>
+          {description && <p className="text-sm text-text-secondary/70">{description}</p>}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 공통/레이아웃 컴포넌트
+    // ========================================
+
+    // 헤더
+    function Header() {
+      return (
+        <header className="bg-card-bg border-b border-border px-4 py-3 text-center sticky top-0 z-40">
+          <h1 className="text-xl font-bold text-primary">DocStore</h1>
+          <p className="text-xs text-text-secondary mt-0.5">PDF 문서 관리 시스템</p>
+        </header>
+      );
+    }
+
+    // 하단 네비게이션
+    function BottomNav({ activeTab, onTabChange }) {
+      const tabs = [
+        { id: 'upload', label: '업로드', icon: (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+        )},
+        { id: 'documents', label: '문서 목록', icon: (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+        )},
+        { id: 'search', label: '검색', icon: (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+        ) },
+      ];
+
+      return (
+        <nav className="fixed bottom-0 left-0 right-0 bg-card-bg border-t border-border z-40">
+          <div className="max-w-3xl mx-auto flex">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => !tab.disabled && onTabChange(tab.id)}
+                disabled={tab.disabled}
+                className={`flex-1 flex flex-col items-center gap-1 py-2.5 transition-colors ${
+                  tab.disabled
+                    ? 'opacity-30 cursor-not-allowed'
+                    : activeTab === tab.id
+                      ? 'text-primary'
+                      : 'text-text-secondary hover:text-text'
+                }`}
+              >
+                {tab.icon}
+                <span className="text-xs font-medium">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
+      );
+    }
+
+    // ========================================
+    // 업로드 탭
+    // ========================================
+    function UploadTab({ onUploadComplete }) {
+      const [file, setFile] = useState(null);
+      const [title, setTitle] = useState('');
+      const [category, setCategory] = useState('법령');
+      const [sectionType, setSectionType] = useState('page');
+      const [customDelimiter, setCustomDelimiter] = useState('');
+      const [uploading, setUploading] = useState(false);
+      const [progress, setProgress] = useState(0);
+      const [result, setResult] = useState(null);
+      const [error, setError] = useState(null);
+      const [dragOver, setDragOver] = useState(false);
+      const fileInputRef = useRef(null);
+
+      // 파일 선택 핸들러
+      const handleFileSelect = useCallback((selectedFile) => {
+        if (!selectedFile) return;
+        if (selectedFile.type !== 'application/pdf') {
+          setError('PDF 파일만 업로드 가능합니다.');
+          return;
+        }
+        setFile(selectedFile);
+        setError(null);
+        setResult(null);
+        // 파일명에서 .pdf 제거하여 기본 제목으로 설정
+        if (!title) {
+          setTitle(selectedFile.name.replace(/\.pdf$/i, ''));
+        }
+      }, [title]);
+
+      // 드래그 앤 드롭 핸들러
+      const handleDragOver = useCallback((e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }, []);
+      const handleDragLeave = useCallback((e) => {
+        e.preventDefault();
+        setDragOver(false);
+      }, []);
+      const handleDrop = useCallback((e) => {
+        e.preventDefault();
+        setDragOver(false);
+        const droppedFile = e.dataTransfer.files[0];
+        handleFileSelect(droppedFile);
+      }, [handleFileSelect]);
+
+      // 업로드
+      const handleUpload = useCallback(async () => {
+        if (!file) return;
+        setUploading(true);
+        setProgress(10);
+        setError(null);
+        setResult(null);
+
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('title', title || file.name.replace(/\.pdf$/i, ''));
+          formData.append('category', category);
+          formData.append('sectionType', sectionType);
+          if (sectionType === 'custom' && customDelimiter) {
+            formData.append('customDelimiter', customDelimiter);
+          }
+
+          setProgress(30);
+
+          const res = await fetch(`${API_BASE_URL}/upload`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          setProgress(80);
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `업로드 실패 (${res.status})`);
+          }
+
+          const data = await res.json();
+          setProgress(100);
+          setResult(data);
+
+          // 완료 후 폼 초기화
+          setTimeout(() => {
+            setFile(null);
+            setTitle('');
+            setProgress(0);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            if (onUploadComplete) onUploadComplete();
+          }, 2000);
+        } catch (err) {
+          setError(err.message);
+          setProgress(0);
+        } finally {
+          setUploading(false);
+        }
+      }, [file, title, category, sectionType, customDelimiter, onUploadComplete]);
+
+      // 폼 초기화
+      const handleReset = useCallback(() => {
+        setFile(null);
+        setTitle('');
+        setCategory('법령');
+        setSectionType('page');
+        setCustomDelimiter('');
+        setError(null);
+        setResult(null);
+        setProgress(0);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }, []);
+
+      return (
+        <div className="space-y-5 fade-in">
+          {/* 파일 드롭존 */}
+          <div
+            className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf"
+              className="hidden"
+              onChange={e => handleFileSelect(e.target.files[0])}
+            />
+            {file ? (
+              <div className="space-y-2">
+                <svg className="w-10 h-10 mx-auto text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <p className="text-text font-medium">{file.name}</p>
+                <p className="text-sm text-text-secondary">{formatFileSize(file.size)}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <svg className="w-10 h-10 mx-auto text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                <p className="text-text-secondary">PDF 파일을 드래그하거나 클릭하여 선택</p>
+                <p className="text-xs text-text-secondary/60">PDF 파일만 지원됩니다</p>
+              </div>
+            )}
+          </div>
+
+          {/* 업로드 옵션 */}
+          <Card>
+            <div className="space-y-4">
+              <Input
+                label="제목"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="문서 제목을 입력하세요"
+              />
+              <Select
+                label="카테고리"
+                value={category}
+                onChange={e => setCategory(e.target.value)}
+                options={CATEGORIES.filter(c => c.value !== '')}
+              />
+              <Select
+                label="추출 단위"
+                value={sectionType}
+                onChange={e => setSectionType(e.target.value)}
+                options={SECTION_TYPES}
+              />
+              {sectionType === 'custom' && (
+                <Input
+                  label="구분자"
+                  value={customDelimiter}
+                  onChange={e => setCustomDelimiter(e.target.value)}
+                  placeholder="예: --- 또는 ## 등"
+                />
+              )}
+            </div>
+          </Card>
+
+          {/* 프로그레스 바 */}
+          {progress > 0 && (
+            <div className="space-y-2">
+              <ProgressBar value={progress} />
+              <p className="text-xs text-text-secondary text-center">
+                {progress < 100 ? '업로드 중...' : '완료!'}
+              </p>
+            </div>
+          )}
+
+          {/* 에러 메시지 */}
+          {error && (
+            <Card className="border-red-500/30 bg-red-500/10">
+              <p className="text-sm text-red-400">{error}</p>
+            </Card>
+          )}
+
+          {/* 업로드 결과 */}
+          {result && (
+            <Card className="border-green-500/30 bg-green-500/10">
+              <div className="space-y-1">
+                <p className="text-sm text-green-400 font-medium">업로드 완료!</p>
+                {result.document && (
+                  <p className="text-xs text-text-secondary">
+                    "{result.document.title}" - {result.sectionsCount || result.sections?.length || 0}개 섹션 추출됨
+                  </p>
+                )}
+              </div>
+            </Card>
+          )}
+
+          {/* 버튼 영역 */}
+          <div className="flex gap-3">
+            <Button
+              variant="primary"
+              size="lg"
+              className="flex-1"
+              disabled={!file || uploading}
+              onClick={handleUpload}
+            >
+              {uploading ? '업로드 중...' : '업로드'}
+            </Button>
+            <Button variant="ghost" size="lg" onClick={handleReset} disabled={uploading}>
+              초기화
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 문서 상세 모달
+    // ========================================
+    function DocumentDetailModal({ isOpen, onClose, documentId }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        if (!isOpen || !documentId) return;
+        setLoading(true);
+        setError(null);
+        fetch(`${API_BASE_URL}/documents?id=${documentId}`)
+          .then(res => {
+            if (!res.ok) throw new Error('문서를 불러올 수 없습니다.');
+            return res.json();
+          })
+          .then(setData)
+          .catch(err => setError(err.message))
+          .finally(() => setLoading(false));
+      }, [isOpen, documentId]);
+
+      const doc = data?.document;
+      const sections = data?.sections || [];
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={doc?.title || '문서 상세'} size="lg">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : error ? (
+            <p className="text-sm text-red-400 py-8 text-center">{error}</p>
+          ) : doc ? (
+            <div className="space-y-4">
+              {/* 문서 정보 */}
+              <div className="flex flex-wrap gap-3 text-sm text-text-secondary">
+                <Badge color={doc.category === '법령' ? 'primary' : doc.category === '기출' ? 'green' : doc.category === '규정' ? 'yellow' : 'gray'}>
+                  {doc.category}
+                </Badge>
+                <span>{formatDate(doc.created_at)}</span>
+                <span>{sections.length}개 섹션</span>
+              </div>
+
+              {/* 섹션 목록 */}
+              <div className="space-y-3">
+                {sections.length === 0 ? (
+                  <p className="text-sm text-text-secondary text-center py-4">추출된 섹션이 없습니다.</p>
+                ) : (
+                  sections.map((section, idx) => {
+                    const meta = section.metadata || {};
+                    const isQuiz = section.section_type === 'quiz' && meta.body;
+
+                    return (
+                      <div key={section.id || idx} className="bg-bg border border-border rounded-lg p-3">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          {isQuiz ? (
+                            <>
+                              <Badge color="primary">문제 {meta.number}</Badge>
+                              {meta.subject && <Badge color="yellow">{meta.subject}</Badge>}
+                              {meta.answer && <Badge color="green">정답: {meta.answer}</Badge>}
+                            </>
+                          ) : (
+                            <Badge color="gray">
+                              {section.section_title || section.title || `섹션 ${idx + 1}`}
+                            </Badge>
+                          )}
+                        </div>
+
+                        {isQuiz ? (
+                          <div className="space-y-2">
+                            <p className="text-sm text-text font-medium leading-relaxed">{meta.body}</p>
+                            <div className="space-y-1 pl-2">
+                              {(meta.choices || []).map((choice, ci) => (
+                                <p key={ci} className={`text-sm leading-relaxed ${
+                                  meta.answer && choice.includes(`${meta.answer}`) ? 'text-green-400 font-medium' : 'text-text/80'
+                                }`}>
+                                  {choice}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <pre className="text-sm text-text whitespace-pre-wrap break-words leading-relaxed font-[inherit]">
+                            {section.content || section.text || '(내용 없음)'}
+                          </pre>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          ) : null}
+        </Modal>
+      );
+    }
+
+    // ========================================
+    // 문서 목록 탭
+    // ========================================
+    function DocumentsTab() {
+      const [documents, setDocuments] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [categoryFilter, setCategoryFilter] = useState('');
+      const [selectedDocId, setSelectedDocId] = useState(null);
+      const [deleting, setDeleting] = useState(null);
+
+      // 문서 목록 불러오기
+      const fetchDocuments = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const query = categoryFilter ? `?category=${encodeURIComponent(categoryFilter)}` : '';
+          const res = await fetch(`${API_BASE_URL}/documents${query}`);
+          if (!res.ok) throw new Error('문서 목록을 불러올 수 없습니다.');
+          const data = await res.json();
+          // 응답이 배열인지 객체인지 확인
+          setDocuments(Array.isArray(data) ? data : data.documents || []);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [categoryFilter]);
+
+      useEffect(() => {
+        fetchDocuments();
+      }, [fetchDocuments]);
+
+      // 문서 삭제
+      const handleDelete = useCallback(async (id, e) => {
+        e.stopPropagation();
+        if (!confirm('이 문서를 삭제하시겠습니까?')) return;
+        setDeleting(id);
+        try {
+          const res = await fetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id }),
+          });
+          if (!res.ok) throw new Error('삭제에 실패했습니다.');
+          setDocuments(prev => prev.filter(d => d.id !== id));
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          setDeleting(null);
+        }
+      }, []);
+
+      // 카테고리별 뱃지 색상
+      const getCategoryColor = (cat) => {
+        switch (cat) {
+          case '법령': return 'primary';
+          case '기출': return 'green';
+          case '규정': return 'yellow';
+          default: return 'gray';
+        }
+      };
+
+      return (
+        <div className="space-y-4 fade-in">
+          {/* 카테고리 필터 */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {CATEGORIES.map(cat => (
+              <button
+                key={cat.value}
+                onClick={() => setCategoryFilter(cat.value)}
+                className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
+                  categoryFilter === cat.value
+                    ? 'bg-primary text-white'
+                    : 'bg-border text-text-secondary hover:text-text'
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+
+          {/* 로딩 */}
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : error ? (
+            <Card className="border-red-500/30 bg-red-500/10">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-red-400">{error}</p>
+                <Button variant="ghost" size="sm" onClick={fetchDocuments}>재시도</Button>
+              </div>
+            </Card>
+          ) : documents.length === 0 ? (
+            <EmptyState
+              icon="📄"
+              title="문서가 없습니다"
+              description={categoryFilter ? `'${categoryFilter}' 카테고리에 문서가 없습니다.` : '업로드 탭에서 PDF를 업로드하세요.'}
+            />
+          ) : (
+            /* 문서 카드 목록 */
+            <div className="space-y-3">
+              {documents.map(doc => (
+                <Card key={doc.id} hoverable onClick={() => setSelectedDocId(doc.id)}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium text-text truncate">{doc.title}</h3>
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <Badge color={getCategoryColor(doc.category)}>{doc.category}</Badge>
+                        <span className="text-xs text-text-secondary">{formatDate(doc.created_at)}</span>
+                        {doc.section_count != null && (
+                          <span className="text-xs text-text-secondary">{doc.section_count}개 섹션</span>
+                        )}
+                        {doc.page_count != null && (
+                          <span className="text-xs text-text-secondary">{doc.page_count}p</span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => handleDelete(doc.id, e)}
+                      disabled={deleting === doc.id}
+                      className="p-2 text-text-secondary hover:text-red-400 transition-colors shrink-0"
+                      aria-label="삭제"
+                    >
+                      {deleting === doc.id ? (
+                        <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      )}
+                    </button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* 문서 상세 모달 */}
+          <DocumentDetailModal
+            isOpen={selectedDocId !== null}
+            onClose={() => setSelectedDocId(null)}
+            documentId={selectedDocId}
+          />
+        </div>
+      );
+    }
+
+    // ========================================
+    // 검색 탭
+    // ========================================
+    function SearchTab() {
+      const [searchQuery, setSearchQuery] = useState('');
+      const [searchType, setSearchType] = useState('text');
+      const [results, setResults] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+
+      // 검색 실행
+      const handleSearch = useCallback(async () => {
+        if (!searchQuery.trim()) return;
+        setLoading(true);
+        setError(null);
+        setResults(null);
+        try {
+          const params = new URLSearchParams({
+            q: searchQuery.trim(),
+            type: searchType,
+            limit: '20',
+          });
+          const res = await fetch(`${API_BASE_URL}/search?${params}`);
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `검색 실패 (${res.status})`);
+          }
+          const data = await res.json();
+          setResults(data);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [searchQuery, searchType]);
+
+      // Enter 키로 검색
+      const handleKeyDown = useCallback((e) => {
+        if (e.key === 'Enter') handleSearch();
+      }, [handleSearch]);
+
+      // 검색 결과에서 검색어 하이라이트
+      const highlightText = useCallback((text, query) => {
+        if (!query || !text) return text;
+        // 최대 300자만 표시
+        const maxLen = 300;
+        const lowerText = text.toLowerCase();
+        const lowerQuery = query.toLowerCase();
+        const idx = lowerText.indexOf(lowerQuery);
+
+        let excerpt = text;
+        if (text.length > maxLen) {
+          if (idx >= 0) {
+            // 검색어 주변 텍스트만 잘라서 표시
+            const start = Math.max(0, idx - 80);
+            const end = Math.min(text.length, idx + query.length + 220);
+            excerpt = (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '');
+          } else {
+            excerpt = text.slice(0, maxLen) + '...';
+          }
+        }
+
+        if (idx < 0) return excerpt;
+
+        // 하이라이트 적용
+        const parts = excerpt.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+        return parts.map((part, i) =>
+          part.toLowerCase() === lowerQuery
+            ? React.createElement('mark', { key: i, className: 'bg-primary/30 text-primary px-0.5 rounded' }, part)
+            : part
+        );
+      }, []);
+
+      return (
+        <div className="space-y-4 fade-in">
+          {/* 검색 입력 */}
+          <Card>
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="검색어를 입력하세요..."
+                  className="flex-1 px-3 py-2 bg-bg border border-border rounded-lg text-text placeholder-text-secondary/50 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                />
+                <Button onClick={handleSearch} disabled={loading || !searchQuery.trim()}>
+                  {loading ? '검색 중...' : '검색'}
+                </Button>
+              </div>
+              {/* 검색 타입 선택 */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSearchType('text')}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    searchType === 'text' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                  }`}
+                >
+                  텍스트 검색
+                </button>
+                <button
+                  onClick={() => setSearchType('vector')}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    searchType === 'vector' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                  }`}
+                >
+                  의미 검색 (AI)
+                </button>
+              </div>
+              <p className="text-xs text-text-secondary">
+                {searchType === 'text'
+                  ? '입력한 단어가 포함된 문서를 검색합니다.'
+                  : '입력한 내용과 의미가 유사한 문서를 AI로 검색합니다.'}
+              </p>
+            </div>
+          </Card>
+
+          {/* 로딩 */}
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+
+          {/* 에러 */}
+          {error && (
+            <Card className="border-red-500/30 bg-red-500/10">
+              <p className="text-sm text-red-400">{error}</p>
+            </Card>
+          )}
+
+          {/* 검색 결과 */}
+          {results && !loading && (
+            <div className="space-y-3">
+              <p className="text-sm text-text-secondary">
+                "{results.query}" 검색 결과: <span className="text-text font-medium">{results.count}건</span>
+              </p>
+
+              {results.count === 0 ? (
+                <EmptyState
+                  icon="🔍"
+                  title="검색 결과가 없습니다"
+                  description="다른 검색어로 시도해보세요."
+                />
+              ) : results.type === 'text' ? (
+                /* 텍스트 검색 결과 */
+                results.results.map((r, idx) => (
+                  <Card key={idx}>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-text text-sm">{r.documentTitle}</span>
+                        <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>
+                          {r.category}
+                        </Badge>
+                        <Badge color="gray">섹션 {r.sectionIndex + 1}</Badge>
+                      </div>
+                      <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
+                        {highlightText(r.rawText, results.query)}
+                      </p>
+                    </div>
+                  </Card>
+                ))
+              ) : (
+                /* 벡터 검색 결과 */
+                results.results.map((r, idx) => (
+                  <Card key={idx}>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-text text-sm">{r.documentTitle}</span>
+                        <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>
+                          {r.category}
+                        </Badge>
+                        <Badge color="green">유사도 {(r.similarity * 100).toFixed(1)}%</Badge>
+                      </div>
+                      <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
+                        {r.chunkText?.length > 300 ? r.chunkText.slice(0, 300) + '...' : r.chunkText}
+                      </p>
+                    </div>
+                  </Card>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // App 컴포넌트
+    // ========================================
+    function App() {
+      const [activeTab, setActiveTab] = useState('upload');
+      const [refreshKey, setRefreshKey] = useState(0);
+
+      // 업로드 완료 시 문서 목록 새로고침 트리거
+      const handleUploadComplete = useCallback(() => {
+        setRefreshKey(k => k + 1);
+      }, []);
+
+      return (
+        <div className="min-h-screen pb-16">
+          <Header />
+          <main className="max-w-3xl mx-auto px-4 py-5">
+            {activeTab === 'upload' && (
+              <UploadTab onUploadComplete={handleUploadComplete} />
+            )}
+            {activeTab === 'documents' && (
+              <DocumentsTab key={refreshKey} />
+            )}
+            {activeTab === 'search' && (
+              <SearchTab />
+            )}
+          </main>
+          <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
+        </div>
+      );
+    }
+
+    // ========================================
+    // 렌더링
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
