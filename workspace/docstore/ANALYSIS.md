@@ -188,6 +188,86 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 
 ---
 
+## 코드베이스 점검 보고서 (2026-03-10)
+
+### 보안 취약점
+
+| 등급 | 항목 | 상태 | 설명 |
+|------|------|------|------|
+| 🔴 긴급 | 인증 없음 | 미조치 | 모든 API가 공개 상태. 누구나 업로드/삭제/AI 호출 가능 |
+| 🔴 긴급 | CORS 전체 허용 | 미조치 | `rag.js`, `summary.js`, `law-import.js` 등에서 `Access-Control-Allow-Origin: *` |
+| 🟡 주의 | RegExp 인젝션 | 미조치 | `pdf-extractor.js` 사용자 정의 구분자를 `new RegExp()`에 직접 전달 → ReDoS 가능 |
+| 🟡 주의 | 에러 메시지 노출 | 미조치 | `err.message`를 클라이언트에 그대로 반환 → 내부 정보 유출 가능 |
+| 🟢 양호 | SQL Injection | 안전 | 모든 쿼리가 파라미터 바인딩 사용 |
+
+### API 비용 분석
+
+| API | 사용처 | 모델 | 예상 비용 | 위험도 |
+|-----|--------|------|-----------|--------|
+| OpenAI Embeddings | `lib/embeddings.js` | text-embedding-3-small | ~$0.02/1M 토큰 | 🟡 중간 |
+| OpenAI GPT-4o | `lib/pdf-extractor.js` (quiz 파싱) | gpt-4o | ~$5/1M 입력 토큰 | 🔴 높음 |
+| Anthropic Claude | `lib/pdf-extractor.js` (OCR), `lib/text-extractor.js` (이미지) | claude-opus-4-6 / claude-sonnet-4-6 | ~$15/1M 토큰 (Opus) | 🔴 매우 높음 |
+| Google Gemini | `api/rag.js`, `api/summary.js` | gemini-2.0-flash | 무료~저가 | 🟢 낮음 |
+
+#### 비용 폭탄 시나리오
+
+- 이미지 PDF 50페이지 업로드 → 50 × Claude Opus OCR = 약 $3~10 (1회)
+- 악의적 사용자 RAG 반복 호출 → 임베딩 + Gemini 무한 과금
+- 전체 AI 요약으로 100개 섹션 일괄 → 무료 티어 초과
+
+#### 비용 관리 방안
+
+1. **일일 API 호출 한도 설정** — 메모리/DB에 일별 카운터, 한도 초과 시 차단
+   - 임베딩: 일 500회 / OCR(Claude): 일 20회 / RAG(Gemini): 일 100회 / 요약(Gemini): 일 200회
+2. **인증 추가** — 인증된 사용자만 AI 기능 사용 가능
+3. **OCR 모델 다운그레이드** — `pdf-extractor.js`의 `claude-opus-4-6` → `claude-sonnet-4-6` (비용 80% 절감)
+4. **임베딩 배치 최적화** — 섹션별 개별 호출 → 전체 배치 1회 호출
+5. **요약 캐싱** — 이미 `metadata.summary` 캐싱 구현됨 (양호)
+
+### 리팩토링 필요 사항
+
+| 항목 | 현재 상태 | 개선 방안 |
+|------|-----------|-----------|
+| `callGemini()` 중복 | `rag.js`와 `summary.js`에 동일 함수 복사 | `lib/gemini.js`로 분리 |
+| 임베딩 생성 로직 중복 | `upload.js`, `law-import.js`, `url-import.js` 3곳 반복 | `lib/embeddings.js`에 `generateAndSaveEmbeddings(documentId)` 통합 |
+| CORS 설정 중복 | 5개 API 파일에서 수동 설정 | `server.js`에서 미들웨어로 통합 |
+| OCR 모델 과잉 | `pdf-extractor.js`에서 Opus 사용 | Sonnet으로 변경 (OCR 정확도 차이 미미) |
+
+### 기능 개선 제안
+
+#### 단기 (즉시 적용)
+
+- [ ] 하드코딩 인증 추가 (보안 + 비용 방어 1차 방어선)
+- [ ] API 호출 횟수 제한 (일일 한도)
+- [ ] OCR 모델 다운그레이드 (Opus → Sonnet)
+- [ ] `callGemini` 공통 모듈 분리
+- [ ] 에러 메시지 클라이언트 노출 최소화
+
+#### 중기 (활용도 향상)
+
+- [ ] 문서 수정/제목 변경 기능 (현재 삭제 후 재업로드만 가능)
+- [ ] 임베딩 재생성 버튼 (실패한 임베딩 수동 재시도)
+- [ ] 검색 결과 하이라이팅 (검색어 위치 시각적 표시)
+- [ ] API 사용량 대시보드 (일/월별 호출 현황)
+
+#### 장기 (확장)
+
+- [ ] RAG 대화 컨텍스트 (후속 질문 지원)
+- [ ] 문서 간 비교 기능 (법령 개정 전후 비교)
+- [ ] 원본 파일 Supabase Storage 이전 (DB BYTEA → 스토리지 분리)
+
+### 우선 실행 순서
+
+```
+1순위: 인증 추가 (보안 + 비용 방어)
+2순위: API 호출 횟수 제한 (일일 한도)
+3순위: OCR 모델 다운그레이드 (Opus → Sonnet)
+4순위: callGemini / 임베딩 로직 공통화 (리팩토링)
+5순위: 에러 메시지 정리 + CORS 제한
+```
+
+---
+
 ## 환경변수
 
 ```
