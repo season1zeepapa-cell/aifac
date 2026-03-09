@@ -860,12 +860,13 @@
                       <h3 className="font-medium text-text truncate">{doc.title}</h3>
                       <div className="flex flex-wrap items-center gap-2 mt-2">
                         <Badge color={getCategoryColor(doc.category)}>{doc.category}</Badge>
+                        {doc.file_type === 'law' && <Badge color="primary">법령</Badge>}
+                        <Badge color={doc.embedding_status === 'done' ? 'green' : doc.embedding_status === 'failed' ? 'red' : 'yellow'}>
+                          {doc.embedding_status === 'done' ? '벡터 완료' : doc.embedding_status === 'failed' ? '벡터 실패' : '벡터 대기'}
+                        </Badge>
                         <span className="text-xs text-text-secondary">{formatDate(doc.created_at)}</span>
                         {doc.section_count != null && (
                           <span className="text-xs text-text-secondary">{doc.section_count}개 섹션</span>
-                        )}
-                        {doc.page_count != null && (
-                          <span className="text-xs text-text-secondary">{doc.page_count}p</span>
                         )}
                       </div>
                     </div>
@@ -898,7 +899,7 @@
     }
 
     // ========================================
-    // 검색 탭
+    // 검색 탭 (텍스트 / 벡터 / AI 질의)
     // ========================================
     function SearchTab() {
       const [searchQuery, setSearchQuery] = useState('');
@@ -906,6 +907,8 @@
       const [results, setResults] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
+      // RAG 질의 결과
+      const [ragResult, setRagResult] = useState(null);
 
       // 검색 실행
       const handleSearch = useCallback(async () => {
@@ -913,19 +916,37 @@
         setLoading(true);
         setError(null);
         setResults(null);
+        setRagResult(null);
+
         try {
-          const params = new URLSearchParams({
-            q: searchQuery.trim(),
-            type: searchType,
-            limit: '20',
-          });
-          const res = await fetch(`${API_BASE_URL}/search?${params}`);
-          if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.error || `검색 실패 (${res.status})`);
+          if (searchType === 'rag') {
+            // AI 질의 (RAG)
+            const res = await fetch(`${API_BASE_URL}/rag`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ question: searchQuery.trim(), topK: 5 }),
+            });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              throw new Error(errData.error || `질의 실패 (${res.status})`);
+            }
+            const data = await res.json();
+            setRagResult(data);
+          } else {
+            // 텍스트/벡터 검색
+            const params = new URLSearchParams({
+              q: searchQuery.trim(),
+              type: searchType,
+              limit: '20',
+            });
+            const res = await fetch(`${API_BASE_URL}/search?${params}`);
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              throw new Error(errData.error || `검색 실패 (${res.status})`);
+            }
+            const data = await res.json();
+            setResults(data);
           }
-          const data = await res.json();
-          setResults(data);
         } catch (err) {
           setError(err.message);
         } finally {
@@ -1004,13 +1025,23 @@
                     searchType === 'vector' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
                   }`}
                 >
-                  의미 검색 (AI)
+                  의미 검색
+                </button>
+                <button
+                  onClick={() => setSearchType('rag')}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    searchType === 'rag' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                  }`}
+                >
+                  AI 질의
                 </button>
               </div>
               <p className="text-xs text-text-secondary">
                 {searchType === 'text'
                   ? '입력한 단어가 포함된 문서를 검색합니다.'
-                  : '입력한 내용과 의미가 유사한 문서를 AI로 검색합니다.'}
+                  : searchType === 'vector'
+                  ? '입력한 내용과 의미가 유사한 문서를 검색합니다.'
+                  : '질문을 입력하면 관련 법령/문서를 찾아 AI가 답변합니다.'}
               </p>
             </div>
           </Card>
@@ -1052,7 +1083,11 @@
                         <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>
                           {r.category}
                         </Badge>
-                        <Badge color="gray">섹션 {r.sectionIndex + 1}</Badge>
+                        {r.label ? (
+                          <Badge color="gray">{r.label}</Badge>
+                        ) : (
+                          <Badge color="gray">섹션 {r.sectionIndex + 1}</Badge>
+                        )}
                       </div>
                       <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
                         {highlightText(r.rawText, results.query)}
@@ -1071,6 +1106,7 @@
                           {r.category}
                         </Badge>
                         <Badge color="green">유사도 {(r.similarity * 100).toFixed(1)}%</Badge>
+                        {r.label && <Badge color="gray">{r.label}</Badge>}
                       </div>
                       <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
                         {r.chunkText?.length > 300 ? r.chunkText.slice(0, 300) + '...' : r.chunkText}
@@ -1078,6 +1114,44 @@
                     </div>
                   </Card>
                 ))
+              )}
+            </div>
+          )}
+
+          {/* RAG 질의 결과 */}
+          {ragResult && !loading && (
+            <div className="space-y-4">
+              {/* AI 답변 */}
+              <Card className="border-primary/30">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-primary font-bold text-sm">AI 답변</span>
+                    <Badge color="primary">RAG</Badge>
+                  </div>
+                  <div className="text-sm text-text leading-relaxed whitespace-pre-wrap">
+                    {ragResult.answer}
+                  </div>
+                </div>
+              </Card>
+
+              {/* 근거 자료 */}
+              {ragResult.sources && ragResult.sources.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-text-secondary font-medium">근거 자료 ({ragResult.sources.length}건)</p>
+                  {ragResult.sources.map((src, idx) => (
+                    <Card key={idx} className="bg-bg">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge color="yellow">근거 {idx + 1}</Badge>
+                          <span className="text-xs text-text font-medium">{src.documentTitle}</span>
+                          {src.label && <Badge color="gray">{src.label}</Badge>}
+                          <Badge color="green">유사도 {(src.similarity * 100).toFixed(1)}%</Badge>
+                        </div>
+                        <p className="text-xs text-text-secondary leading-relaxed">{src.excerpt}</p>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
               )}
             </div>
           )}

@@ -112,8 +112,10 @@ module.exports = async (req, res) => {
           }
           totalChunks += chunks.length;
         }
+        await dbQuery(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
         console.log(`  임베딩 생성 완료: ${totalChunks}개 청크`);
       } catch (embErr) {
+        await dbQuery(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
         console.error(`  임베딩 생성 실패:`, embErr.message);
       }
     })();

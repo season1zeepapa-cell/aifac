@@ -11,7 +11,7 @@ module.exports = async function handler(req, res) {
       if (id) {
         const doc = await query(
           `SELECT id, title, file_type, category,
-                  upload_date AS created_at, metadata
+                  upload_date AS created_at, metadata, embedding_status
            FROM documents WHERE id = $1`, [id]
         );
         if (doc.rows.length === 0) {
@@ -33,6 +33,7 @@ module.exports = async function handler(req, res) {
       let sql = `
         SELECT d.id, d.title, d.file_type, d.category,
                d.upload_date AS created_at, d.metadata,
+               d.embedding_status,
                COUNT(s.id) AS section_count
         FROM documents d
         LEFT JOIN document_sections s ON s.document_id = d.id

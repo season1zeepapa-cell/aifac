@@ -1,5 +1,5 @@
 // 텍스트 검색 + 벡터 유사도 검색 API
-// GET /api/search?q=검색어&type=text|vector&limit=10
+// GET /api/search?q=검색어&type=text|vector&limit=10&chapter=제1장&docId=5
 const { query } = require('./db');
 const { generateEmbedding } = require('../lib/embeddings');
 
@@ -11,6 +11,9 @@ module.exports = async function handler(req, res) {
   const q = req.query.q;
   const type = req.query.type || 'text';
   const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+  // 필터 옵션
+  const chapter = req.query.chapter || '';  // 장 필터 (예: "제1장")
+  const docId = req.query.docId || '';      // 특정 문서만 검색
 
   if (!q || q.trim().length === 0) {
     return res.status(400).json({ error: '검색어(q)가 필요합니다.' });
@@ -18,12 +21,27 @@ module.exports = async function handler(req, res) {
 
   try {
     if (type === 'vector') {
-      // ── 벡터 유사도 검색 ──────────────────────────
-      // 검색어를 임베딩으로 변환
+      // ── 벡터 유사도 검색 ──
       const embedding = await generateEmbedding(q.trim());
       const vecStr = `[${embedding.join(',')}]`;
 
-      // pgvector cosine 유사도 검색 (<=> 연산자)
+      // 필터 조건 동적 생성
+      let filterClauses = ['dc.embedding IS NOT NULL'];
+      let params = [vecStr];
+      let paramIdx = 2;
+
+      if (docId) {
+        filterClauses.push(`ds.document_id = $${paramIdx}`);
+        params.push(parseInt(docId));
+        paramIdx++;
+      }
+      if (chapter) {
+        filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx}`);
+        params.push(`%${chapter}%`);
+        paramIdx++;
+      }
+      params.push(limit);
+
       const result = await query(
         `SELECT
            dc.id AS chunk_id,
@@ -32,6 +50,7 @@ module.exports = async function handler(req, res) {
            dc.section_id,
            ds.section_type,
            ds.section_index,
+           ds.metadata AS section_metadata,
            ds.document_id,
            d.title AS document_title,
            d.category,
@@ -39,61 +58,93 @@ module.exports = async function handler(req, res) {
          FROM document_chunks dc
          JOIN document_sections ds ON dc.section_id = ds.id
          JOIN documents d ON ds.document_id = d.id
-         WHERE dc.embedding IS NOT NULL
+         WHERE ${filterClauses.join(' AND ')}
          ORDER BY dc.embedding <=> $1::vector
-         LIMIT $2`,
-        [vecStr, limit]
+         LIMIT $${paramIdx}`,
+        params
       );
 
       res.json({
         type: 'vector',
         query: q,
         count: result.rows.length,
-        results: result.rows.map(row => ({
-          chunkId: row.chunk_id,
-          chunkText: row.chunk_text,
-          chunkIndex: row.chunk_index,
-          similarity: parseFloat(row.similarity).toFixed(4),
-          sectionId: row.section_id,
-          sectionType: row.section_type,
-          sectionIndex: row.section_index,
-          documentId: row.document_id,
-          documentTitle: row.document_title,
-          category: row.category,
-        })),
+        results: result.rows.map(row => {
+          const meta = row.section_metadata || {};
+          return {
+            chunkId: row.chunk_id,
+            chunkText: row.chunk_text,
+            chunkIndex: row.chunk_index,
+            similarity: parseFloat(row.similarity).toFixed(4),
+            sectionId: row.section_id,
+            sectionType: row.section_type,
+            sectionIndex: row.section_index,
+            documentId: row.document_id,
+            documentTitle: row.document_title,
+            category: row.category,
+            // 계층 라벨 정보
+            label: meta.label || '',
+            chapter: meta.chapter || '',
+            section: meta.section || '',
+            articleTitle: meta.articleTitle || '',
+          };
+        }),
       });
     } else {
-      // ── 텍스트 ILIKE 검색 ─────────────────────────
+      // ── 텍스트 ILIKE 검색 ──
+      let filterClauses = ['ds.raw_text ILIKE $1'];
+      let params = [`%${q.trim()}%`];
+      let paramIdx = 2;
+
+      if (docId) {
+        filterClauses.push(`ds.document_id = $${paramIdx}`);
+        params.push(parseInt(docId));
+        paramIdx++;
+      }
+      if (chapter) {
+        filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx}`);
+        params.push(`%${chapter}%`);
+        paramIdx++;
+      }
+      params.push(limit);
+
       const result = await query(
         `SELECT
            ds.id AS section_id,
            ds.section_type,
            ds.section_index,
            ds.raw_text,
+           ds.metadata AS section_metadata,
            ds.document_id,
            d.title AS document_title,
            d.category
          FROM document_sections ds
          JOIN documents d ON ds.document_id = d.id
-         WHERE ds.raw_text ILIKE $1
+         WHERE ${filterClauses.join(' AND ')}
          ORDER BY ds.document_id, ds.section_index
-         LIMIT $2`,
-        [`%${q.trim()}%`, limit]
+         LIMIT $${paramIdx}`,
+        params
       );
 
       res.json({
         type: 'text',
         query: q,
         count: result.rows.length,
-        results: result.rows.map(row => ({
-          sectionId: row.section_id,
-          sectionType: row.section_type,
-          sectionIndex: row.section_index,
-          rawText: row.raw_text,
-          documentId: row.document_id,
-          documentTitle: row.document_title,
-          category: row.category,
-        })),
+        results: result.rows.map(row => {
+          const meta = row.section_metadata || {};
+          return {
+            sectionId: row.section_id,
+            sectionType: row.section_type,
+            sectionIndex: row.section_index,
+            rawText: row.raw_text,
+            documentId: row.document_id,
+            documentTitle: row.document_title,
+            category: row.category,
+            label: meta.label || '',
+            chapter: meta.chapter || '',
+            section: meta.section || '',
+            articleTitle: meta.articleTitle || '',
+          };
+        }),
       });
     }
   } catch (err) {

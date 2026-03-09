@@ -7,7 +7,8 @@
     "api/upload.js": { "maxDuration": 300 },
     "api/search.js": { "maxDuration": 30 },
     "api/law.js": { "maxDuration": 30 },
-    "api/law-import.js": { "maxDuration": 300 }
+    "api/law-import.js": { "maxDuration": 300 },
+    "api/rag.js": { "maxDuration": 60 }
   },
   "headers": [
     {

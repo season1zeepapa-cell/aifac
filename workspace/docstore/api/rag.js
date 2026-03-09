@@ -1,0 +1,164 @@
+// RAG (Retrieval-Augmented Generation) 질의응답 API
+// POST /api/rag
+// { question: "개인정보 수집 동의는 어떻게 받아야 하나요?", topK: 5 }
+//
+// 처리 흐름:
+// 1) 질문을 벡터로 변환
+// 2) 유사도 높은 조문/청크 topK개 검색
+// 3) 검색 결과를 컨텍스트로 Gemini에 전달
+// 4) 근거 조문과 함께 답변 생성
+const { query } = require('./db');
+const { generateEmbedding } = require('../lib/embeddings');
+const https = require('https');
+
+// Gemini API 호출 헬퍼
+function callGemini(prompt, apiKey) {
+  return new Promise((resolve, reject) => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const body = JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 2048,
+      },
+    });
+
+    const req = https.request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          resolve(text);
+        } catch {
+          reject(new Error('Gemini 응답 파싱 실패'));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+module.exports = async (req, res) => {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
+
+  const { question, topK = 5, docId } = req.body;
+  if (!question || question.trim().length === 0) {
+    return res.status(400).json({ error: '질문(question)이 필요합니다.' });
+  }
+
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다.' });
+  }
+
+  try {
+    // 1) 질문을 벡터로 변환
+    console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..."`);
+    const embedding = await generateEmbedding(question.trim());
+    const vecStr = `[${embedding.join(',')}]`;
+
+    // 2) 유사 청크 검색
+    let filterClause = 'dc.embedding IS NOT NULL';
+    let params = [vecStr];
+    let paramIdx = 2;
+
+    if (docId) {
+      filterClause += ` AND ds.document_id = $${paramIdx}`;
+      params.push(parseInt(docId));
+      paramIdx++;
+    }
+    params.push(Math.min(parseInt(topK) || 5, 10));
+
+    const searchResult = await query(
+      `SELECT
+         dc.chunk_text,
+         ds.section_type,
+         ds.metadata AS section_metadata,
+         d.title AS document_title,
+         d.category,
+         1 - (dc.embedding <=> $1::vector) AS similarity
+       FROM document_chunks dc
+       JOIN document_sections ds ON dc.section_id = ds.id
+       JOIN documents d ON ds.document_id = d.id
+       WHERE ${filterClause}
+       ORDER BY dc.embedding <=> $1::vector
+       LIMIT $${paramIdx}`,
+      params
+    );
+
+    const sources = searchResult.rows.map(row => {
+      const meta = row.section_metadata || {};
+      return {
+        text: row.chunk_text,
+        documentTitle: row.document_title,
+        category: row.category,
+        label: meta.label || '',
+        chapter: meta.chapter || '',
+        similarity: parseFloat(row.similarity).toFixed(4),
+      };
+    });
+
+    console.log(`[RAG] ${sources.length}개 근거 자료 검색 완료`);
+
+    if (sources.length === 0) {
+      return res.json({
+        question: question.trim(),
+        answer: '관련된 문서를 찾을 수 없습니다. 먼저 관련 법령이나 문서를 임포트해주세요.',
+        sources: [],
+      });
+    }
+
+    // 3) Gemini에 컨텍스트와 함께 질문
+    const contextText = sources.map((s, i) => {
+      const header = s.label || `${s.documentTitle} - ${s.category}`;
+      return `[근거 ${i + 1}] ${header}\n${s.text}`;
+    }).join('\n\n---\n\n');
+
+    const prompt = `당신은 법령 및 규정 전문 AI 어시스턴트입니다. 아래 근거 자료를 참고하여 사용자의 질문에 정확하게 답변해주세요.
+
+규칙:
+- 근거 자료에 있는 내용만을 바탕으로 답변하세요
+- 답변 시 어떤 근거(조문)를 참고했는지 [근거 N] 형태로 인용하세요
+- 근거 자료에 없는 내용은 "해당 내용은 제공된 자료에서 확인할 수 없습니다"라고 답변하세요
+- 답변은 한국어로 작성하세요
+- 핵심을 먼저 말하고, 상세 설명을 이어서 하세요
+
+--- 근거 자료 ---
+${contextText}
+
+--- 질문 ---
+${question.trim()}`;
+
+    const answer = await callGemini(prompt, apiKey);
+    console.log(`[RAG] 답변 생성 완료 (${answer.length}자)`);
+
+    // 4) 응답
+    res.json({
+      question: question.trim(),
+      answer,
+      sources: sources.map(s => ({
+        documentTitle: s.documentTitle,
+        label: s.label,
+        chapter: s.chapter,
+        similarity: s.similarity,
+        excerpt: s.text.substring(0, 200) + (s.text.length > 200 ? '...' : ''),
+      })),
+    });
+  } catch (err) {
+    console.error('[RAG] 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
