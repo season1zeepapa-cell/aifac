@@ -1,26 +1,24 @@
-// PDF 업로드 + 텍스트 추출 + DB 저장 API
+// 멀티포맷 파일 업로드 + 텍스트 추출 + DB 저장 API
+//
+// 지원 형식: PDF, TXT, MD, DOCX, XLSX, CSV, JSON, 이미지(JPG/PNG)
 //
 // 처리 흐름:
-// 1. PDF 파일 수신 (multipart/form-data 또는 base64 JSON)
-// 2. pdf-extractor로 텍스트 추출 (텍스트 PDF + 이미지 OCR)
-// 3. 선택한 추출 단위로 섹션 분할
+// 1. 파일 수신 (multipart/form-data)
+// 2. 파일 형식 감지 → 형식별 추출기 호출
+// 3. 선택한 옵션에 따라 섹션 분할
 // 4. documents + document_sections 테이블에 저장
+// 5. 비동기 임베딩 생성
 const multer = require('multer');
 const { extractFromPdf } = require('../lib/pdf-extractor');
+const { detectFileType, extractFromFile } = require('../lib/text-extractor');
 const { chunkText, generateEmbeddings } = require('../lib/embeddings');
 const { query } = require('./db');
 
 // multer: 메모리 스토리지 (Vercel 서버리스 호환)
+// 모든 파일 형식 허용
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 최대 50MB
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
-      cb(null, true);
-    } else {
-      cb(new Error('PDF 파일만 업로드 가능합니다.'));
-    }
-  },
 });
 
 module.exports = async function handler(req, res) {
@@ -37,58 +35,97 @@ module.exports = async function handler(req, res) {
       });
     });
 
-    // 요청에서 파라미터 추출
-    let pdfBuffer;
+    // 파일 버퍼 + 메타 추출
+    let fileBuffer;
+    let filename;
+    let mimetype;
     let title;
     let category;
     let sectionType;
     let customDelimiter;
+    let extraOptions = {};
 
     if (req.file) {
-      // multipart/form-data로 업로드된 경우
-      pdfBuffer = req.file.buffer;
-      title = req.body.title || req.file.originalname;
+      fileBuffer = req.file.buffer;
+      filename = req.file.originalname;
+      mimetype = req.file.mimetype;
+      title = req.body.title || filename.replace(/\.[^.]+$/, '');
       category = req.body.category || '기타';
       sectionType = req.body.sectionType || 'page';
       customDelimiter = req.body.customDelimiter;
+
+      // 형식별 추가 옵션 (프론트에서 전달)
+      if (req.body.contentColumn) extraOptions.contentColumn = req.body.contentColumn;
+      if (req.body.contentField) extraOptions.contentField = req.body.contentField;
+      if (req.body.contentType) extraOptions.contentType = req.body.contentType;
+      if (req.body.sheetIndex) extraOptions.sheetIndex = parseInt(req.body.sheetIndex) || 0;
     } else if (req.body && req.body.fileBase64) {
       // JSON base64로 업로드된 경우 (CLI 스크립트용)
-      pdfBuffer = Buffer.from(req.body.fileBase64, 'base64');
+      fileBuffer = Buffer.from(req.body.fileBase64, 'base64');
+      filename = req.body.filename || 'file.pdf';
+      mimetype = req.body.mimetype || 'application/pdf';
       title = req.body.title || '제목 없음';
       category = req.body.category || '기타';
       sectionType = req.body.sectionType || 'page';
       customDelimiter = req.body.customDelimiter;
     } else {
-      return res.status(400).json({ error: 'PDF 파일이 필요합니다.' });
+      return res.status(400).json({ error: '파일이 필요합니다.' });
     }
 
-    // PDF 텍스트 추출
-    console.log(`PDF 추출 시작: ${title} (${sectionType} 단위)`);
-    const extracted = await extractFromPdf(pdfBuffer, {
-      sectionType,
-      customDelimiter,
-    });
+    // 파일 형식 감지
+    const fileType = detectFileType(filename, mimetype);
+    console.log(`[Upload] 파일: ${filename} → 형식: ${fileType} (${sectionType} 단위)`);
 
-    // DB에 저장
-    // 1) documents 테이블에 문서 메타데이터 저장
+    if (fileType === 'unknown') {
+      return res.status(400).json({ error: `지원하지 않는 파일 형식입니다: ${filename}` });
+    }
+
+    // ── 형식별 텍스트 추출 ──
+    let extracted;
+
+    if (fileType === 'pdf') {
+      // PDF: 기존 pdf-extractor 사용
+      extracted = await extractFromPdf(fileBuffer, { sectionType, customDelimiter });
+    } else {
+      // 그 외: text-extractor 사용
+      const options = {
+        sectionType,
+        customDelimiter,
+        mimetype,
+        ...extraOptions,
+      };
+      extracted = await extractFromFile(fileBuffer, fileType, options);
+    }
+
+    const sections = extracted.sections || [];
+    if (sections.length === 0) {
+      return res.status(400).json({ error: '추출된 내용이 없습니다.' });
+    }
+
+    // ── DB 저장 ──
+    // 1) documents 테이블
     const docResult = await query(
       `INSERT INTO documents (title, file_type, category, metadata)
-       VALUES ($1, 'pdf', $2, $3)
+       VALUES ($1, $2, $3, $4)
        RETURNING id`,
       [
         title,
+        fileType,
         category,
         JSON.stringify({
-          totalPages: extracted.totalPages,
-          sectionType: extracted.sectionType,
-          sectionCount: extracted.sections.length,
+          originalFilename: filename,
+          totalPages: extracted.totalPages || null,
+          sectionType: extracted.sectionType || sectionType,
+          sectionCount: sections.length,
+          columns: extracted.columns || null,
+          fields: extracted.fields || null,
         }),
       ]
     );
     const documentId = docResult.rows[0].id;
 
-    // 2) document_sections 테이블에 섹션별 텍스트 저장 (metadata 포함)
-    for (const section of extracted.sections) {
+    // 2) document_sections 테이블
+    for (const section of sections) {
       await query(
         `INSERT INTO document_sections (document_id, section_type, section_index, raw_text, metadata)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -102,13 +139,12 @@ module.exports = async function handler(req, res) {
       );
     }
 
-    console.log(`PDF 저장 완료: 문서 ID ${documentId}, ${extracted.sections.length}개 섹션`);
+    console.log(`[Upload] 저장 완료: 문서 ID ${documentId}, ${sections.length}개 섹션`);
 
-    // 3) 비동기로 임베딩 생성 (실패해도 업로드 자체는 성공)
+    // 3) 비동기 임베딩 생성
     const embeddingPromise = (async () => {
       try {
         let totalChunks = 0;
-        // 저장된 섹션 조회 (id 필요)
         const savedSections = await query(
           'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
           [documentId]
@@ -131,18 +167,15 @@ module.exports = async function handler(req, res) {
           }
           totalChunks += chunks.length;
         }
-        // 임베딩 상태 업데이트
         await query(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
-        console.log(`임베딩 생성 완료: 문서 ID ${documentId}, ${totalChunks}개 청크`);
+        console.log(`[Upload] 임베딩 완료: 문서 ID ${documentId}, ${totalChunks}개 청크`);
       } catch (embErr) {
         await query(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
-        console.error(`임베딩 생성 실패 (문서 ID ${documentId}):`, embErr.message);
+        console.error(`[Upload] 임베딩 실패 (문서 ID ${documentId}):`, embErr.message);
       }
     })();
 
-    // 임베딩 생성을 기다리지 않고 응답 반환 (비동기)
-    // Vercel 서버리스에서는 응답 후 비동기 작업이 중단될 수 있으므로,
-    // 로컬 개발 시에만 비동기로 동작하고 서버리스에서는 await
+    // Vercel에서는 응답 전 임베딩 완료 대기
     if (process.env.VERCEL) {
       await embeddingPromise;
     }
@@ -152,12 +185,16 @@ module.exports = async function handler(req, res) {
       documentId,
       title,
       category,
-      totalPages: extracted.totalPages,
-      sectionCount: extracted.sections.length,
-      sectionType: extracted.sectionType,
+      fileType,
+      totalPages: extracted.totalPages || null,
+      sectionCount: sections.length,
+      sectionType: extracted.sectionType || sectionType,
+      // 프론트에서 열/필드 선택 UI 용
+      columns: extracted.columns || null,
+      fields: extracted.fields || null,
     });
   } catch (err) {
-    console.error('Upload API 에러:', err);
+    console.error('[Upload] API 에러:', err);
     res.status(500).json({ error: err.message });
   }
 };

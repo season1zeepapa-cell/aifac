@@ -106,6 +106,110 @@
     ];
 
     // ========================================
+    // 파일 형식별 설정
+    // ========================================
+    const FILE_TYPE_CONFIG = {
+      pdf: {
+        label: 'PDF',
+        icon: '📄',
+        color: 'red',
+        accept: '.pdf',
+        sectionOptions: [
+          { value: 'page', label: '페이지별' },
+          { value: 'full', label: '문서 전체' },
+          { value: 'quiz', label: '객관식 문제' },
+          { value: 'custom', label: '구분자 기준' },
+        ],
+      },
+      text: {
+        label: '텍스트',
+        icon: '📝',
+        color: 'gray',
+        accept: '.txt',
+        sectionOptions: [
+          { value: 'full', label: '문서 전체' },
+          { value: 'line', label: '단락별 (빈 줄 기준)' },
+          { value: 'custom', label: '구분자 기준' },
+        ],
+      },
+      markdown: {
+        label: '마크다운',
+        icon: '📋',
+        color: 'primary',
+        accept: '.md,.markdown',
+        sectionOptions: [
+          { value: 'heading', label: '헤딩(#) 기준' },
+          { value: 'full', label: '문서 전체' },
+        ],
+      },
+      docx: {
+        label: 'Word',
+        icon: '📘',
+        color: 'primary',
+        accept: '.docx',
+        sectionOptions: [
+          { value: 'paragraph', label: '단락별' },
+          { value: 'full', label: '문서 전체' },
+        ],
+      },
+      xlsx: {
+        label: 'Excel',
+        icon: '📊',
+        color: 'green',
+        accept: '.xlsx,.xls',
+        sectionOptions: [
+          { value: 'row', label: '행별' },
+        ],
+        hasColumnSelect: true,
+      },
+      csv: {
+        label: 'CSV',
+        icon: '📊',
+        color: 'green',
+        accept: '.csv',
+        sectionOptions: [
+          { value: 'row', label: '행별' },
+        ],
+        hasColumnSelect: true,
+      },
+      json: {
+        label: 'JSON',
+        icon: '🔧',
+        color: 'yellow',
+        accept: '.json',
+        sectionOptions: [
+          { value: 'item', label: '항목별' },
+        ],
+        hasFieldSelect: true,
+      },
+      image: {
+        label: '이미지',
+        icon: '🖼️',
+        color: 'yellow',
+        accept: '.jpg,.jpeg,.png,.gif,.webp',
+        sectionOptions: [
+          { value: 'ocr', label: 'OCR 추출' },
+        ],
+        hasContentType: true,
+      },
+    };
+
+    // 확장자 → 파일 형식 매핑
+    function detectClientFileType(filename) {
+      const ext = (filename || '').toLowerCase().match(/\.[^.]+$/)?.[0] || '';
+      const map = {
+        '.pdf': 'pdf', '.txt': 'text', '.md': 'markdown', '.markdown': 'markdown',
+        '.docx': 'docx', '.xlsx': 'xlsx', '.xls': 'xlsx', '.csv': 'csv',
+        '.json': 'json', '.jpg': 'image', '.jpeg': 'image', '.png': 'image',
+        '.gif': 'image', '.webp': 'image',
+      };
+      return map[ext] || 'unknown';
+    }
+
+    // 모든 지원 확장자
+    const ALL_ACCEPTED = '.pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.json,.jpg,.jpeg,.png,.gif,.webp';
+
+    // ========================================
     // 유틸 함수
     // ========================================
     function formatDate(dateStr) {
@@ -277,7 +381,7 @@
       return (
         <header className="bg-card-bg border-b border-border px-4 py-3 text-center sticky top-0 z-40">
           <h1 className="text-xl font-bold text-primary">DocStore</h1>
-          <p className="text-xs text-text-secondary mt-0.5">PDF 문서 관리 시스템</p>
+          <p className="text-xs text-text-secondary mt-0.5">지식 문서 관리 시스템</p>
         </header>
       );
     }
@@ -322,18 +426,23 @@
     }
 
     // ========================================
-    // 업로드 탭 (PDF 업로드 + 법령 검색 모드)
+    // 업로드 탭 (파일 업로드 + 법령 검색 모드)
     // ========================================
     function UploadTab({ onUploadComplete }) {
-      // 모드 토글: 'pdf' 또는 'law'
-      const [uploadMode, setUploadMode] = useState('pdf');
+      // 모드 토글: 'file' 또는 'law'
+      const [uploadMode, setUploadMode] = useState('file');
 
-      // ── PDF 모드 state ──
+      // ── 파일 모드 state ──
       const [file, setFile] = useState(null);
+      const [fileType, setFileType] = useState(null); // 감지된 파일 형식
       const [title, setTitle] = useState('');
-      const [category, setCategory] = useState('법령');
-      const [sectionType, setSectionType] = useState('page');
+      const [category, setCategory] = useState('기타');
+      const [sectionType, setSectionType] = useState('full');
       const [customDelimiter, setCustomDelimiter] = useState('');
+      const [contentColumn, setContentColumn] = useState('');
+      const [contentField, setContentField] = useState('');
+      const [contentType, setContentType] = useState('general'); // 이미지 OCR 타입
+      const [previewInfo, setPreviewInfo] = useState(null); // CSV/XLSX 열 목록, JSON 필드 미리보기
       const [uploading, setUploading] = useState(false);
       const [progress, setProgress] = useState(0);
       const [result, setResult] = useState(null);
@@ -349,20 +458,78 @@
       const [lawError, setLawError] = useState(null);
       const [lawResult, setLawResult] = useState(null);
 
-      // ── PDF 모드 핸들러 ──
+      // ── 파일 선택 핸들러 (모든 형식 지원) ──
       const handleFileSelect = useCallback((selectedFile) => {
         if (!selectedFile) return;
-        if (selectedFile.type !== 'application/pdf') {
-          setError('PDF 파일만 업로드 가능합니다.');
+        const detected = detectClientFileType(selectedFile.name);
+        if (detected === 'unknown') {
+          setError('지원하지 않는 파일 형식입니다. (PDF, TXT, MD, DOCX, XLSX, CSV, JSON, 이미지)');
           return;
         }
         setFile(selectedFile);
+        setFileType(detected);
         setError(null);
         setResult(null);
-        if (!title) {
-          setTitle(selectedFile.name.replace(/\.pdf$/i, ''));
+        setPreviewInfo(null);
+
+        // 파일명에서 제목 자동 추출
+        const baseName = selectedFile.name.replace(/\.[^.]+$/, '');
+        setTitle(baseName);
+
+        // 형식별 기본 옵션 설정
+        const config = FILE_TYPE_CONFIG[detected];
+        if (config?.sectionOptions?.length > 0) {
+          setSectionType(config.sectionOptions[0].value);
         }
-      }, [title]);
+
+        // CSV/XLSX: 클라이언트에서 열 목록 미리 읽기
+        if (detected === 'csv' || detected === 'xlsx') {
+          readSpreadsheetPreview(selectedFile, detected);
+        }
+        // JSON: 필드 목록 미리 읽기
+        if (detected === 'json') {
+          readJsonPreview(selectedFile);
+        }
+      }, []);
+
+      // CSV/XLSX 열 목록 미리보기
+      const readSpreadsheetPreview = useCallback((f, type) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            if (type === 'csv') {
+              // CSV: 첫 줄에서 열 이름 추출
+              const text = e.target.result;
+              const firstLine = text.split('\n')[0];
+              const cols = firstLine.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+              setPreviewInfo({ type: 'columns', columns: cols, rowCount: text.split('\n').filter(l => l.trim()).length - 1 });
+            } else {
+              // XLSX: 첫 시트 열 이름 추출 (간단 파싱)
+              // 클라이언트에서는 열 이름만 표시, 실제 파싱은 서버에서
+              setPreviewInfo({ type: 'columns', columns: [], note: '서버에서 열 정보를 읽습니다.' });
+            }
+          } catch { /* 미리보기 실패해도 무시 */ }
+        };
+        if (type === 'csv') reader.readAsText(f);
+        else reader.readAsArrayBuffer(f);
+      }, []);
+
+      // JSON 필드 미리보기
+      const readJsonPreview = useCallback((f) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target.result);
+            if (Array.isArray(data) && data.length > 0) {
+              const fields = Object.keys(data[0]);
+              setPreviewInfo({ type: 'fields', fields, itemCount: data.length });
+            } else if (typeof data === 'object') {
+              setPreviewInfo({ type: 'fields', fields: Object.keys(data), itemCount: Object.keys(data).length });
+            }
+          } catch { /* 미리보기 실패해도 무시 */ }
+        };
+        reader.readAsText(f);
+      }, []);
 
       const handleDragOver = useCallback((e) => { e.preventDefault(); setDragOver(true); }, []);
       const handleDragLeave = useCallback((e) => { e.preventDefault(); setDragOver(false); }, []);
@@ -372,6 +539,7 @@
         handleFileSelect(e.dataTransfer.files[0]);
       }, [handleFileSelect]);
 
+      // ── 업로드 실행 ──
       const handleUpload = useCallback(async () => {
         if (!file) return;
         setUploading(true);
@@ -381,12 +549,15 @@
         try {
           const formData = new FormData();
           formData.append('file', file);
-          formData.append('title', title || file.name.replace(/\.pdf$/i, ''));
+          formData.append('title', title || file.name.replace(/\.[^.]+$/, ''));
           formData.append('category', category);
           formData.append('sectionType', sectionType);
           if (sectionType === 'custom' && customDelimiter) {
             formData.append('customDelimiter', customDelimiter);
           }
+          if (contentColumn) formData.append('contentColumn', contentColumn);
+          if (contentField) formData.append('contentField', contentField);
+          if (contentType) formData.append('contentType', contentType);
           setProgress(30);
           const res = await fetch(`${API_BASE_URL}/upload`, { method: 'POST', body: formData });
           setProgress(80);
@@ -398,7 +569,8 @@
           setProgress(100);
           setResult(data);
           setTimeout(() => {
-            setFile(null); setTitle(''); setProgress(0);
+            setFile(null); setFileType(null); setTitle(''); setProgress(0);
+            setPreviewInfo(null); setContentColumn(''); setContentField('');
             if (fileInputRef.current) fileInputRef.current.value = '';
             if (onUploadComplete) onUploadComplete();
           }, 2000);
@@ -408,11 +580,13 @@
         } finally {
           setUploading(false);
         }
-      }, [file, title, category, sectionType, customDelimiter, onUploadComplete]);
+      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, onUploadComplete]);
 
       const handleReset = useCallback(() => {
-        setFile(null); setTitle(''); setCategory('법령'); setSectionType('page');
-        setCustomDelimiter(''); setError(null); setResult(null); setProgress(0);
+        setFile(null); setFileType(null); setTitle(''); setCategory('기타');
+        setSectionType('full'); setCustomDelimiter(''); setContentColumn('');
+        setContentField(''); setContentType('general'); setPreviewInfo(null);
+        setError(null); setResult(null); setProgress(0);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }, []);
 
@@ -464,17 +638,20 @@
         }
       }, [onUploadComplete]);
 
+      // 현재 파일 형식의 설정
+      const currentConfig = fileType ? FILE_TYPE_CONFIG[fileType] : null;
+
       return (
         <div className="space-y-5 fade-in">
           {/* 모드 토글 */}
           <div className="flex gap-2">
             <button
-              onClick={() => setUploadMode('pdf')}
+              onClick={() => setUploadMode('file')}
               className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                uploadMode === 'pdf' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                uploadMode === 'file' ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
               }`}
             >
-              PDF 업로드
+              파일 업로드
             </button>
             <button
               onClick={() => setUploadMode('law')}
@@ -486,10 +663,10 @@
             </button>
           </div>
 
-          {/* ── PDF 업로드 모드 ── */}
-          {uploadMode === 'pdf' && (
+          {/* ── 파일 업로드 모드 ── */}
+          {uploadMode === 'file' && (
             <>
-              {/* 파일 드롭존 */}
+              {/* 파일 드롭존 (모든 형식 허용) */}
               <div
                 className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
                 onDragOver={handleDragOver}
@@ -497,33 +674,102 @@
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
               >
-                <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={e => handleFileSelect(e.target.files[0])} />
-                {file ? (
+                <input ref={fileInputRef} type="file" accept={ALL_ACCEPTED} className="hidden" onChange={e => handleFileSelect(e.target.files[0])} />
+                {file && currentConfig ? (
                   <div className="space-y-2">
-                    <svg className="w-10 h-10 mx-auto text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <div className="text-4xl">{currentConfig.icon}</div>
                     <p className="text-text font-medium">{file.name}</p>
-                    <p className="text-sm text-text-secondary">{formatFileSize(file.size)}</p>
+                    <div className="flex items-center justify-center gap-2">
+                      <Badge color={currentConfig.color}>{currentConfig.label}</Badge>
+                      <span className="text-sm text-text-secondary">{formatFileSize(file.size)}</span>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <svg className="w-10 h-10 mx-auto text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                    <p className="text-text-secondary">PDF 파일을 드래그하거나 클릭하여 선택</p>
-                    <p className="text-xs text-text-secondary/60">PDF 파일만 지원됩니다</p>
+                    <p className="text-text-secondary">파일을 드래그하거나 클릭하여 선택</p>
+                    <p className="text-xs text-text-secondary/60">PDF, TXT, MD, DOCX, XLSX, CSV, JSON, 이미지</p>
                   </div>
                 )}
               </div>
 
-              {/* 업로드 옵션 */}
-              <Card>
-                <div className="space-y-4">
-                  <Input label="제목" value={title} onChange={e => setTitle(e.target.value)} placeholder="문서 제목을 입력하세요" />
-                  <Select label="카테고리" value={category} onChange={e => setCategory(e.target.value)} options={CATEGORIES.filter(c => c.value !== '')} />
-                  <Select label="추출 단위" value={sectionType} onChange={e => setSectionType(e.target.value)} options={SECTION_TYPES} />
-                  {sectionType === 'custom' && (
-                    <Input label="구분자" value={customDelimiter} onChange={e => setCustomDelimiter(e.target.value)} placeholder="예: --- 또는 ## 등" />
-                  )}
-                </div>
-              </Card>
+              {/* 파일 감지 후 옵션 표시 */}
+              {file && currentConfig && (
+                <Card>
+                  <div className="space-y-4">
+                    {/* 제목 */}
+                    <Input label="제목" value={title} onChange={e => setTitle(e.target.value)} placeholder="문서 제목을 입력하세요" />
+
+                    {/* 카테고리 */}
+                    <Select label="카테고리" value={category} onChange={e => setCategory(e.target.value)} options={CATEGORIES.filter(c => c.value !== '')} />
+
+                    {/* 형식별 추출 단위 (옵션이 2개 이상일 때만 표시) */}
+                    {currentConfig.sectionOptions.length > 1 && (
+                      <Select
+                        label="추출 단위"
+                        value={sectionType}
+                        onChange={e => setSectionType(e.target.value)}
+                        options={currentConfig.sectionOptions}
+                      />
+                    )}
+
+                    {/* 구분자 입력 (custom일 때) */}
+                    {sectionType === 'custom' && (
+                      <Input label="구분자" value={customDelimiter} onChange={e => setCustomDelimiter(e.target.value)} placeholder="예: --- 또는 ## 등" />
+                    )}
+
+                    {/* CSV/XLSX: 열 선택 */}
+                    {currentConfig.hasColumnSelect && previewInfo?.columns?.length > 0 && (
+                      <div className="space-y-2">
+                        <Select
+                          label={`본문 열 선택 (${previewInfo.rowCount || '?'}행)`}
+                          value={contentColumn}
+                          onChange={e => setContentColumn(e.target.value)}
+                          options={[
+                            { value: '', label: '전체 열 합치기' },
+                            ...previewInfo.columns.map(c => ({ value: c, label: c })),
+                          ]}
+                        />
+                        <p className="text-xs text-text-secondary">
+                          본문으로 사용할 열을 선택하세요. 선택하지 않으면 모든 열을 합칩니다.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* JSON: 필드 선택 */}
+                    {currentConfig.hasFieldSelect && previewInfo?.fields?.length > 0 && (
+                      <div className="space-y-2">
+                        <Select
+                          label={`본문 필드 선택 (${previewInfo.itemCount || '?'}개 항목)`}
+                          value={contentField}
+                          onChange={e => setContentField(e.target.value)}
+                          options={[
+                            { value: '', label: '전체 데이터' },
+                            ...previewInfo.fields.map(f => ({ value: f, label: f })),
+                          ]}
+                        />
+                        <p className="text-xs text-text-secondary">
+                          본문으로 사용할 필드를 선택하세요.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 이미지: 콘텐츠 유형 선택 */}
+                    {currentConfig.hasContentType && (
+                      <Select
+                        label="이미지 내용 유형"
+                        value={contentType}
+                        onChange={e => setContentType(e.target.value)}
+                        options={[
+                          { value: 'general', label: '일반 텍스트' },
+                          { value: 'table', label: '표/테이블' },
+                          { value: 'quiz', label: '시험 문제' },
+                        ]}
+                      />
+                    )}
+                  </div>
+                </Card>
+              )}
 
               {progress > 0 && (
                 <div className="space-y-2">
@@ -542,11 +788,10 @@
                 <Card className="border-green-500/30 bg-green-500/10">
                   <div className="space-y-1">
                     <p className="text-sm text-green-400 font-medium">업로드 완료!</p>
-                    {result.document && (
-                      <p className="text-xs text-text-secondary">
-                        "{result.document.title}" - {result.sectionsCount || result.sections?.length || 0}개 섹션 추출됨
-                      </p>
-                    )}
+                    <p className="text-xs text-text-secondary">
+                      "{result.title}" - {result.sectionCount || 0}개 섹션 추출됨
+                      {result.fileType && ` (${FILE_TYPE_CONFIG[result.fileType]?.label || result.fileType})`}
+                    </p>
                   </div>
                 </Card>
               )}
@@ -860,6 +1105,11 @@
                       <h3 className="font-medium text-text truncate">{doc.title}</h3>
                       <div className="flex flex-wrap items-center gap-2 mt-2">
                         <Badge color={getCategoryColor(doc.category)}>{doc.category}</Badge>
+                        {FILE_TYPE_CONFIG[doc.file_type] && (
+                          <Badge color={FILE_TYPE_CONFIG[doc.file_type].color}>
+                            {FILE_TYPE_CONFIG[doc.file_type].icon} {FILE_TYPE_CONFIG[doc.file_type].label}
+                          </Badge>
+                        )}
                         {doc.file_type === 'law' && <Badge color="primary">법령</Badge>}
                         <Badge color={doc.embedding_status === 'done' ? 'green' : doc.embedding_status === 'failed' ? 'red' : 'yellow'}>
                           {doc.embedding_status === 'done' ? '벡터 완료' : doc.embedding_status === 'failed' ? '벡터 실패' : '벡터 대기'}
