@@ -70,6 +70,12 @@ app.post('/api/api-usage', (req, res) => apiUsageHandler(req, res));
 const lawGraphHandler = require('./api/law-graph');
 app.get('/api/law-graph', (req, res) => lawGraphHandler(req, res));
 
+// ── /api/chat-sessions (GET, POST, DELETE) — 대화 히스토리 ──
+const chatSessionsHandler = require('./api/chat-sessions');
+app.get('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
+app.post('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
+app.delete('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
+
 // ── /api/cross-references (GET, POST) — 교차 참조 매트릭스 ──
 const crossRefHandler = require('./api/cross-references');
 app.get('/api/cross-references', (req, res) => crossRefHandler(req, res));

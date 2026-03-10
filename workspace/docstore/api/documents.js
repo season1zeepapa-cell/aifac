@@ -165,6 +165,7 @@ module.exports = async function handler(req, res) {
         SELECT d.id, d.title, d.file_type, d.category, d.summary,
                d.upload_date AS created_at, d.metadata,
                d.embedding_status, d.original_filename, d.file_size, d.storage_path,
+               COALESCE(d.is_favorited, false) AS is_favorited,
                ${isTrash ? 'd.deleted_at,' : ''}
                COUNT(DISTINCT s.id) AS section_count
         FROM documents d
@@ -187,7 +188,7 @@ module.exports = async function handler(req, res) {
       }
 
       sql += ' WHERE ' + whereClauses.join(' AND ');
-      sql += ` GROUP BY d.id ORDER BY ${isTrash ? 'd.deleted_at DESC' : 'd.upload_date DESC'}`;
+      sql += ` GROUP BY d.id ORDER BY ${isTrash ? 'd.deleted_at DESC' : 'COALESCE(d.is_favorited, false) DESC, d.upload_date DESC'}`;
 
       const docs = await query(sql, params);
 
@@ -285,6 +286,16 @@ module.exports = async function handler(req, res) {
           [tagId]
         );
         return res.json({ success: true });
+      }
+
+      // 즐겨찾기 토글 — { action: 'toggleFavorite', id: 문서ID }
+      if (action === 'toggleFavorite' && id) {
+        const result = await query(
+          'UPDATE documents SET is_favorited = NOT COALESCE(is_favorited, false) WHERE id = $1 RETURNING is_favorited',
+          [id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
+        return res.json({ success: true, is_favorited: result.rows[0].is_favorited });
       }
 
       // AI 분석 실행 — { action: 'analyze', id: 문서ID }

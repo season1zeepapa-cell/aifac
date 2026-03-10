@@ -21,6 +21,22 @@ module.exports = async function handler(req, res) {
 
   if (checkRateLimit(req, res, 'search')) return;
 
+  // 자동완성 서제스트 모드
+  if (req.query.suggest !== undefined) {
+    const prefix = (req.query.suggest || '').trim();
+    if (prefix.length < 1) return res.json({ suggestions: [] });
+    const escaped = escapeIlike(prefix);
+    const result = await query(
+      `SELECT DISTINCT title AS text, 'document' AS type
+       FROM documents
+       WHERE deleted_at IS NULL AND title ILIKE $1
+       ORDER BY title
+       LIMIT 10`,
+      [`%${escaped}%`]
+    );
+    return res.json({ suggestions: result.rows });
+  }
+
   const q = req.query.q;
   const type = req.query.type || 'text';
   const limit = Math.min(parseInt(req.query.limit) || 10, 50);
