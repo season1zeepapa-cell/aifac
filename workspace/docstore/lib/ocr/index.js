@@ -8,6 +8,7 @@ const ALL_ENGINES = {
   'gemini-vision': require('./gemini-vision'),
   'claude-vision': require('./claude-vision'),
   'aws-textract': require('./aws-textract'),
+  'ocr-space': require('./ocr-space'),
 };
 
 // DB 설정이 없을 때 사용하는 기본 우선순위
@@ -17,6 +18,7 @@ const DEFAULT_PRIORITY = [
   'google-vision',    // 정확도 최고
   'claude-vision',    // 문맥 분석 우수
   'aws-textract',     // 표/양식 특화
+  'ocr-space',        // 무료 일500건, 한국어 지원
 ];
 
 // ── 설정 캐시 (서버리스 환경에서 인스턴스 내 재사용) ──

@@ -269,6 +269,7 @@ async function ensureOcrTable() {
       ['google-vision', 'Google Cloud Vision', 'google-vision', true, 3],
       ['claude-vision', 'Claude Vision', 'anthropic', true, 4],
       ['aws-textract', 'AWS Textract', 'aws', true, 5],
+      ['ocr-space', 'OCR.space (무료)', 'ocr-space', true, 6],
     ];
     for (const [id, name, provider, enabled, order] of defaults) {
       await query(
