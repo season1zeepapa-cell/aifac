@@ -31,9 +31,11 @@ function applyDeidentify(text, words) {
 
   for (const { keyword, replacement } of words) {
     if (!keyword) continue;
-    // 특수문자 이스케이프
-    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escaped, 'gi');
+    // 각 글자를 이스케이프 후, 글자 사이에 \s* 삽입
+    // → "홍길동" → /홍\s*길\s*동/gi (띄어쓰기 우회 방지)
+    const chars = [...keyword].map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const pattern = chars.join('\\s*');
+    const regex = new RegExp(pattern, 'gi');
     const matches = result.match(regex);
     if (matches) {
       replacedCount += matches.length;
