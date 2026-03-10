@@ -157,7 +157,7 @@ function buildEnrichedText({
  * @param {string[]} docContext.tags - 태그 배열
  * @param {string[]} docContext.keywords - 키워드 배열
  */
-async function generateEnrichedEmbeddings(db, documentId, docContext = {}) {
+async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onProgress = null) {
   const { title = '', summary = '', category = '', tags = [], keywords = [] } = docContext;
 
   // 1) 문서의 모든 섹션 조회
@@ -167,10 +167,10 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}) {
   );
 
   let totalChunks = 0;
+  const validSections = savedSections.rows.filter(s => s.raw_text && s.raw_text.trim().length > 0);
 
-  for (const section of savedSections.rows) {
-    if (!section.raw_text || section.raw_text.trim().length === 0) continue;
-
+  for (let si = 0; si < validSections.length; si++) {
+    const section = validSections[si];
     const sectionMeta = section.metadata || {};
     const sectionSummary = section.summary || '';
 
@@ -203,6 +203,11 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}) {
       );
     }
     totalChunks += chunks.length;
+
+    // 진행률 콜백 호출 (SSE 등에서 사용)
+    if (onProgress) {
+      onProgress(si + 1, validSections.length, totalChunks);
+    }
   }
 
   // 6) 문서 요약 벡터 생성
