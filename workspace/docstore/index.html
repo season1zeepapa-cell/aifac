@@ -1093,6 +1093,8 @@
       const [tagLoading, setTagLoading] = useState(false);
       // AI 분석
       const [analyzing, setAnalyzing] = useState(false);
+      // 원본 이미지 미리보기 Blob URL
+      const [previewUrl, setPreviewUrl] = useState(null);
 
       useEffect(() => {
         if (!isOpen || !documentId) return;
@@ -1100,6 +1102,7 @@
         setError(null);
         setExpandedChapters({});
         setAllExpanded(false);
+        setPreviewUrl(null);
         authFetch(`${API_BASE_URL}/documents?id=${documentId}`)
           .then(res => {
             if (!res.ok) throw new Error('문서를 불러올 수 없습니다.');
@@ -1109,6 +1112,28 @@
           .catch(err => setError(err.message))
           .finally(() => setLoading(false));
       }, [isOpen, documentId]);
+
+      // 이미지 미리보기 로드 (인증 헤더 포함)
+      useEffect(() => {
+        const doc = data?.document;
+        if (!doc?.original_mimetype?.startsWith('image/')) return;
+        let cancelled = false;
+        authFetch(`${API_BASE_URL}/documents?id=${doc.id}&download=preview`, {
+          headers: { 'Accept': 'application/json' },
+        })
+          .then(res => {
+            if (!res.ok) throw new Error('이미지 로드 실패');
+            const ct = res.headers.get('content-type') || '';
+            if (ct.includes('application/json')) {
+              // Supabase Signed URL 반환 → 직접 표시
+              return res.json().then(j => { if (!cancelled && j.url) setPreviewUrl(j.url); });
+            }
+            // BYTEA 폴백 → Blob으로 변환
+            return res.blob().then(blob => { if (!cancelled) setPreviewUrl(URL.createObjectURL(blob)); });
+          })
+          .catch(() => {});
+        return () => { cancelled = true; };
+      }, [data]);
 
       const doc = data?.document;
       const sections = data?.sections || [];
@@ -1505,24 +1530,52 @@
                         <span className="text-text-secondary">({formatFileSize(doc.file_size)})</span>
                       )}
                     </div>
-                    <a
-                      href={`${API_BASE_URL}/documents?id=${doc.id}&download=true`}
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await authFetch(`${API_BASE_URL}/documents?id=${doc.id}&download=true`, {
+                            headers: { 'Accept': 'application/json' },
+                          });
+                          if (!res.ok) throw new Error('다운로드 실패');
+                          const ct = res.headers.get('content-type') || '';
+                          if (ct.includes('application/json')) {
+                            // Signed URL → 새 탭에서 다운로드
+                            const j = await res.json();
+                            if (j.url) window.open(j.url, '_blank');
+                          } else {
+                            // BYTEA → Blob 다운로드
+                            const blob = await res.blob();
+                            const a = document.createElement('a');
+                            a.href = URL.createObjectURL(blob);
+                            a.download = doc.original_filename || 'download';
+                            a.click();
+                            URL.revokeObjectURL(a.href);
+                          }
+                        } catch (err) { console.error(err); }
+                      }}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
                       다운로드
-                    </a>
+                    </button>
                   </div>
                   {/* 이미지 미리보기 */}
                   {doc.original_mimetype && doc.original_mimetype.startsWith('image/') && (
                     <div className="border border-border rounded-lg overflow-hidden bg-bg">
-                      <img
-                        src={`${API_BASE_URL}/documents?id=${doc.id}&download=preview`}
-                        alt={doc.original_filename}
-                        className="max-w-full max-h-96 mx-auto object-contain"
-                      />
+                      {previewUrl ? (
+                        <img
+                          src={previewUrl}
+                          alt={doc.original_filename}
+                          className="max-w-full max-h-96 mx-auto object-contain"
+                        />
+                      ) : (
+                        <div className="flex items-center justify-center py-8 text-text-secondary text-sm">
+                          <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2" />
+                          이미지 로딩 중...
+                        </div>
+                      )}
                     </div>
                   )}
                   {/* PDF 안내 */}

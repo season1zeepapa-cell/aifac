@@ -28,10 +28,19 @@ module.exports = async function handler(req, res) {
         }
         const row = doc.rows[0];
 
-        // 방법 1: Supabase Storage (Signed URL 리다이렉트)
+        // 방법 1: Supabase Storage (Signed URL)
         if (row.storage_path && isStorageAvailable()) {
-          const signedUrl = await getSignedUrl(row.storage_path, 3600);
-          return res.redirect(signedUrl);
+          try {
+            const signedUrl = await getSignedUrl(row.storage_path, 3600);
+            // fetch 요청은 JSON으로, 브라우저 직접 접근은 리다이렉트
+            if (req.headers.accept?.includes('application/json')) {
+              return res.json({ url: signedUrl });
+            }
+            return res.redirect(signedUrl);
+          } catch (storageErr) {
+            console.warn(`[Documents] Storage URL 실패 (${row.storage_path}):`, storageErr.message);
+            // Storage 실패 시 BYTEA 폴백 시도
+          }
         }
 
         // 방법 2: 기존 BYTEA 폴백 (마이그레이션 전 데이터)
