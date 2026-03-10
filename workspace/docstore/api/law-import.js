@@ -2,7 +2,7 @@
 // 법제처 API에서 조문을 가져와 DB에 저장하고 임베딩 생성
 // + 조문 간 참조 관계 파싱
 const { getLawDetail } = require('../lib/law-fetcher');
-const { chunkText, generateEmbeddings } = require('../lib/embeddings');
+const { createEmbeddingsForDocument } = require('../lib/embeddings');
 const { query: dbQuery } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -157,39 +157,7 @@ module.exports = async (req, res) => {
     console.log(`  ${articles.length}개 조문 저장 완료 (참조 관계 포함)`);
 
     // 6) 임베딩 생성
-    let embeddingResult = { status: 'pending' };
-    try {
-      let totalChunks = 0;
-      const savedSections = await dbQuery(
-        'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
-        [documentId]
-      );
-
-      for (const section of savedSections.rows) {
-        if (!section.raw_text || section.raw_text.trim().length === 0) continue;
-
-        const chunks = chunkText(section.raw_text);
-        if (chunks.length === 0) continue;
-
-        const embeddings = await generateEmbeddings(chunks);
-        for (let i = 0; i < chunks.length; i++) {
-          const vecStr = `[${embeddings[i].join(',')}]`;
-          await dbQuery(
-            `INSERT INTO document_chunks (section_id, chunk_text, embedding, chunk_index)
-             VALUES ($1, $2, $3::vector, $4)`,
-            [section.id, chunks[i], vecStr, i]
-          );
-        }
-        totalChunks += chunks.length;
-      }
-      await dbQuery(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
-      console.log(`  임베딩 생성 완료: ${totalChunks}개 청크`);
-      embeddingResult = { status: 'done', totalChunks };
-    } catch (embErr) {
-      await dbQuery(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
-      console.error(`  임베딩 생성 실패:`, embErr.message);
-      embeddingResult = { status: 'failed', error: embErr.message };
-    }
+    const embeddingResult = await createEmbeddingsForDocument({ query: dbQuery }, documentId, 'Law Import');
 
     res.json({
       success: true,

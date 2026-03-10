@@ -3,7 +3,7 @@
 // { url: "https://example.com/page", title: "제목" (선택), category: "기타" (선택) }
 const https = require('https');
 const http = require('http');
-const { chunkText, generateEmbeddings } = require('../lib/embeddings');
+const { createEmbeddingsForDocument } = require('../lib/embeddings');
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -187,37 +187,7 @@ module.exports = async (req, res) => {
     console.log(`[URL Import] 저장 완료: 문서 ID ${documentId}, ${paragraphs.length}개 섹션`);
 
     // 6) 임베딩 생성
-    const embeddingPromise = (async () => {
-      try {
-        let totalChunks = 0;
-        const savedSections = await query(
-          'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
-          [documentId]
-        );
-        for (const section of savedSections.rows) {
-          if (!section.raw_text || section.raw_text.trim().length === 0) continue;
-          const chunks = chunkText(section.raw_text);
-          if (chunks.length === 0) continue;
-          const embeddings = await generateEmbeddings(chunks);
-          for (let i = 0; i < chunks.length; i++) {
-            const vecStr = `[${embeddings[i].join(',')}]`;
-            await query(
-              `INSERT INTO document_chunks (section_id, chunk_text, embedding, chunk_index)
-               VALUES ($1, $2, $3::vector, $4)`,
-              [section.id, chunks[i], vecStr, i]
-            );
-          }
-          totalChunks += chunks.length;
-        }
-        await query(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
-        console.log(`[URL Import] 임베딩 완료: ${totalChunks}개 청크`);
-      } catch (embErr) {
-        await query(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
-        console.error(`[URL Import] 임베딩 실패:`, embErr.message);
-      }
-    })();
-
-    if (process.env.VERCEL) await embeddingPromise;
+    const embeddingResult = await createEmbeddingsForDocument({ query }, documentId, 'URL Import');
 
     res.json({
       success: true,
@@ -226,6 +196,7 @@ module.exports = async (req, res) => {
       category,
       charCount: extractedText.length,
       sectionCount: paragraphs.length,
+      embedding: embeddingResult,
     });
   } catch (err) {
     sendError(res, err, '[URL Import]');

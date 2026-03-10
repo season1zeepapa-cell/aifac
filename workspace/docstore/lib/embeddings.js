@@ -233,10 +233,57 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
   return totalChunks;
 }
 
+/**
+ * 문서의 섹션들에 대해 기본 임베딩을 생성하고 DB에 저장
+ * (upload.js / url-import.js / law-import.js 공통)
+ *
+ * 성공 시 embedding_status = 'done', 실패 시 'failed'로 업데이트
+ * @param {object} db - { query } DB 헬퍼
+ * @param {number} documentId - 문서 ID
+ * @param {string} [label] - 로그 라벨 (예: 'Upload', 'URL Import')
+ * @returns {Promise<{ status: string, totalChunks?: number, error?: string }>}
+ */
+async function createEmbeddingsForDocument(db, documentId, label = 'Embed') {
+  try {
+    let totalChunks = 0;
+    const savedSections = await db.query(
+      'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
+      [documentId]
+    );
+
+    for (const section of savedSections.rows) {
+      if (!section.raw_text || section.raw_text.trim().length === 0) continue;
+
+      const chunks = chunkText(section.raw_text);
+      if (chunks.length === 0) continue;
+
+      const embeddings = await generateEmbeddings(chunks);
+      for (let i = 0; i < chunks.length; i++) {
+        const vecStr = `[${embeddings[i].join(',')}]`;
+        await db.query(
+          `INSERT INTO document_chunks (section_id, chunk_text, embedding, chunk_index)
+           VALUES ($1, $2, $3::vector, $4)`,
+          [section.id, chunks[i], vecStr, i]
+        );
+      }
+      totalChunks += chunks.length;
+    }
+
+    await db.query(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
+    console.log(`[${label}] 임베딩 완료: 문서 ID ${documentId}, ${totalChunks}개 청크`);
+    return { status: 'done', totalChunks };
+  } catch (embErr) {
+    await db.query(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
+    console.error(`[${label}] 임베딩 실패 (문서 ID ${documentId}):`, embErr.message);
+    return { status: 'failed', error: embErr.message };
+  }
+}
+
 module.exports = {
   chunkText,
   generateEmbeddings,
   generateEmbedding,
   buildEnrichedText,
   generateEnrichedEmbeddings,
+  createEmbeddingsForDocument,
 };

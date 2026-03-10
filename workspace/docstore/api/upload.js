@@ -12,7 +12,7 @@ const path = require('path');
 const multer = require('multer');
 const { extractFromPdf } = require('../lib/pdf-extractor');
 const { detectFileType, extractFromFile } = require('../lib/text-extractor');
-const { chunkText, generateEmbeddings } = require('../lib/embeddings');
+const { createEmbeddingsForDocument } = require('../lib/embeddings');
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -180,39 +180,7 @@ module.exports = async function handler(req, res) {
     console.log(`[Upload] 저장 완료: 문서 ID ${documentId}, ${sections.length}개 섹션`);
 
     // 3) 임베딩 생성
-    let embeddingResult = { status: 'pending' };
-    try {
-      let totalChunks = 0;
-      const savedSections = await query(
-        'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
-        [documentId]
-      );
-
-      for (const section of savedSections.rows) {
-        if (!section.raw_text || section.raw_text.trim().length === 0) continue;
-
-        const chunks = chunkText(section.raw_text);
-        if (chunks.length === 0) continue;
-
-        const embeddings = await generateEmbeddings(chunks);
-        for (let i = 0; i < chunks.length; i++) {
-          const vecStr = `[${embeddings[i].join(',')}]`;
-          await query(
-            `INSERT INTO document_chunks (section_id, chunk_text, embedding, chunk_index)
-             VALUES ($1, $2, $3::vector, $4)`,
-            [section.id, chunks[i], vecStr, i]
-          );
-        }
-        totalChunks += chunks.length;
-      }
-      await query(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
-      console.log(`[Upload] 임베딩 완료: 문서 ID ${documentId}, ${totalChunks}개 청크`);
-      embeddingResult = { status: 'done', totalChunks };
-    } catch (embErr) {
-      await query(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
-      console.error(`[Upload] 임베딩 실패 (문서 ID ${documentId}):`, embErr.message);
-      embeddingResult = { status: 'failed', error: embErr.message };
-    }
+    const embeddingResult = await createEmbeddingsForDocument({ query }, documentId, 'Upload');
 
     res.json({
       success: true,
