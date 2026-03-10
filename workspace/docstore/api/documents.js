@@ -322,7 +322,7 @@ module.exports = async function handler(req, res) {
 
     res.status(405).json({ error: '허용되지 않는 메서드입니다.' });
   } catch (err) {
-    console.error('Documents API 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[Documents]');
   }
 };

@@ -202,7 +202,7 @@ module.exports = async (req, res) => {
       info,
     });
   } catch (err) {
-    console.error('법령 임포트 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[Law Import]');
   }
 };

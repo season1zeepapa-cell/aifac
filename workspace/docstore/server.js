@@ -3,6 +3,15 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 
+// ── 필수 환경변수 검증 ────────────────────────────────
+const REQUIRED_ENVS = ['DATABASE_URL', 'AUTH_TOKEN_SECRET'];
+const missing = REQUIRED_ENVS.filter(key => !process.env[key]?.trim());
+if (missing.length > 0) {
+  console.error(`[서버 시작 실패] 필수 환경변수 누락: ${missing.join(', ')}`);
+  console.error('  .env 파일 또는 Vercel 환경변수 설정을 확인해주세요.');
+  if (require.main === module) process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 

@@ -13,6 +13,10 @@ function getPool() {
       idleTimeoutMillis: 30000,           // 유휴 연결 30초 후 해제
       connectionTimeoutMillis: 10000,     // 연결 타임아웃 10초
     });
+    // 유휴 클라이언트 에러 처리 — 미처리 시 프로세스 크래시 가능
+    pool.on('error', (err) => {
+      console.error('[DB] 유휴 커넥션 에러:', err.message);
+    });
   }
   return pool;
 }

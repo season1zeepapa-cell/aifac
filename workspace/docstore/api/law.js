@@ -33,7 +33,7 @@ module.exports = async (req, res) => {
 
     return res.status(400).json({ error: 'action은 search 또는 detail이어야 합니다.' });
   } catch (err) {
-    console.error('법령 API 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[Law]');
   }
 };

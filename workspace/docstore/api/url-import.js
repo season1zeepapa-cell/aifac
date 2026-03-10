@@ -9,6 +9,7 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { uploadFile, isStorageAvailable } = require('../lib/storage');
+const { validateUrl, sanitizeFilename } = require('../lib/input-sanitizer');
 
 /**
  * URL에서 HTML을 가져온 뒤 본문 텍스트를 추출
@@ -43,13 +44,21 @@ function fetchUrl(url) {
  * HTML에서 본문 텍스트 추출 (태그 제거, script/style 제거)
  */
 function extractTextFromHtml(html) {
-  // script, style, nav, header, footer 태그 제거
+  // 위험 콘텐츠 제거 (script, style, noscript, iframe, object, embed, form)
   let text = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed[\s\S]*?>/gi, '')
+    .replace(/<form[\s\S]*?<\/form>/gi, '')
     .replace(/<nav[\s\S]*?<\/nav>/gi, '')
     .replace(/<header[\s\S]*?<\/header>/gi, '')
     .replace(/<footer[\s\S]*?<\/footer>/gi, '');
+
+  // 이벤트 핸들러 속성 제거 (on* 속성)
+  text = text.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '');
 
   // HTML 태그 제거
   text = text.replace(/<[^>]+>/g, ' ');
@@ -62,6 +71,9 @@ function extractTextFromHtml(html) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ');
+
+  // null byte 및 제어문자 제거
+  text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 
   // 연속 공백/줄바꿈 정리
   text = text.replace(/\s+/g, ' ').trim();
@@ -105,6 +117,12 @@ module.exports = async (req, res) => {
 
   if (!url || !url.startsWith('http')) {
     return res.status(400).json({ error: '유효한 URL이 필요합니다. (http:// 또는 https://)' });
+  }
+
+  // SSRF 방어: 내부 IP, 메타데이터 엔드포인트 등 차단
+  const urlCheck = await validateUrl(url);
+  if (!urlCheck.safe) {
+    return res.status(400).json({ error: urlCheck.error });
   }
 
   try {
@@ -209,7 +227,7 @@ module.exports = async (req, res) => {
       sectionCount: paragraphs.length,
     });
   } catch (err) {
-    console.error('[URL Import] 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[URL Import]');
   }
 };

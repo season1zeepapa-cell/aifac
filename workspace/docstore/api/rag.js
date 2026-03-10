@@ -163,7 +163,7 @@ ${question.trim()}`;
       })),
     });
   } catch (err) {
-    console.error('[RAG] 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[RAG]');
   }
 };

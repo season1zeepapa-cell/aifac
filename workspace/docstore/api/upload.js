@@ -8,6 +8,7 @@
 // 3. 선택한 옵션에 따라 섹션 분할
 // 4. documents + document_sections 테이블에 저장
 // 5. 비동기 임베딩 생성
+const path = require('path');
 const multer = require('multer');
 const { extractFromPdf } = require('../lib/pdf-extractor');
 const { detectFileType, extractFromFile } = require('../lib/text-extractor');
@@ -17,12 +18,29 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { uploadFile, isStorageAvailable } = require('../lib/storage');
+const { sanitizeFilename } = require('../lib/input-sanitizer');
 
-// multer: 메모리 스토리지 (Vercel 서버리스 호환)
-// 모든 파일 형식 허용
+// 허용 MIME 타입 화이트리스트
+const ALLOWED_MIMES = new Set([
+  'application/pdf',
+  'text/plain', 'text/markdown',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv', 'application/json',
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+]);
+
+// multer: 메모리 스토리지 + MIME 화이트리스트
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 최대 50MB
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIMES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`허용되지 않는 파일 형식입니다: ${file.mimetype}`));
+    }
+  },
 });
 
 module.exports = async function handler(req, res) {
@@ -60,7 +78,7 @@ module.exports = async function handler(req, res) {
 
     if (req.file) {
       fileBuffer = req.file.buffer;
-      filename = req.file.originalname;
+      filename = sanitizeFilename(req.file.originalname);
       mimetype = req.file.mimetype;
       title = req.body.title || filename.replace(/\.[^.]+$/, '');
       category = req.body.category || '기타';
@@ -75,7 +93,7 @@ module.exports = async function handler(req, res) {
     } else if (req.body && req.body.fileBase64) {
       // JSON base64로 업로드된 경우 (CLI 스크립트용)
       fileBuffer = Buffer.from(req.body.fileBase64, 'base64');
-      filename = req.body.filename || 'file.pdf';
+      filename = sanitizeFilename(req.body.filename || 'file.pdf');
       mimetype = req.body.mimetype || 'application/pdf';
       title = req.body.title || '제목 없음';
       category = req.body.category || '기타';
@@ -215,7 +233,7 @@ module.exports = async function handler(req, res) {
       fields: extracted.fields || null,
     });
   } catch (err) {
-    console.error('[Upload] API 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[Upload]');
   }
 };

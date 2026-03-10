@@ -149,7 +149,7 @@ module.exports = async (req, res) => {
 
     return res.status(400).json({ error: 'sectionId 또는 documentId가 필요합니다.' });
   } catch (err) {
-    console.error('[Summary] 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[Summary]');
   }
 };

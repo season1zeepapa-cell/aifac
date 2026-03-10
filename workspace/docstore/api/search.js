@@ -5,6 +5,7 @@ const { generateEmbedding } = require('../lib/embeddings');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
+const { escapeIlike } = require('../lib/input-sanitizer');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, OPTIONS' })) return;
@@ -48,8 +49,8 @@ module.exports = async function handler(req, res) {
         paramIdx++;
       }
       if (chapter) {
-        filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx}`);
-        params.push(`%${chapter}%`);
+        filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx} ESCAPE '\\'`);
+        params.push(`%${escapeIlike(chapter)}%`);
         paramIdx++;
       }
       if (tag) {
@@ -116,9 +117,9 @@ module.exports = async function handler(req, res) {
         }),
       });
     } else {
-      // ── 텍스트 ILIKE 검색 ──
-      let filterClauses = ['ds.raw_text ILIKE $1'];
-      let params = [`%${q.trim()}%`];
+      // ── 텍스트 ILIKE 검색 (와일드카드 이스케이프) ──
+      let filterClauses = [`ds.raw_text ILIKE $1 ESCAPE '\\'`];
+      let params = [`%${escapeIlike(q.trim())}%`];
       let paramIdx = 2;
 
       if (docId) {
@@ -127,8 +128,8 @@ module.exports = async function handler(req, res) {
         paramIdx++;
       }
       if (chapter) {
-        filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx}`);
-        params.push(`%${chapter}%`);
+        filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx} ESCAPE '\\'`);
+        params.push(`%${escapeIlike(chapter)}%`);
         paramIdx++;
       }
       if (tag) {
@@ -187,7 +188,7 @@ module.exports = async function handler(req, res) {
       });
     }
   } catch (err) {
-    console.error('Search API 에러:', err);
-    res.status(500).json({ error: err.message });
+    const { sendError } = require('../lib/error-handler');
+    sendError(res, err, '[Search]');
   }
 };
