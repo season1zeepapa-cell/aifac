@@ -2777,8 +2777,7 @@
 
       // 홈 버튼: 문서 목록 탭으로 이동 + 새로고침
       const handleHomeClick = useCallback(() => {
-        setActiveTab('documents');
-        setRefreshKey(k => k + 1);
+        setActiveTab('upload');
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }, []);
 
