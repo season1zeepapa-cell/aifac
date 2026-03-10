@@ -19,7 +19,7 @@ function callGemini(prompt, options = {}) {
   const { maxTokens = 1024, temperature = 0.2 } = options;
 
   return new Promise((resolve, reject) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const body = JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature, maxOutputTokens: maxTokens },
