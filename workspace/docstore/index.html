@@ -2362,6 +2362,51 @@
         } finally { setActionLoading(null); }
       }, []);
 
+      // 일괄 테스트 (API 키)
+      const handleTestAllKeys = useCallback(async () => {
+        const configured = data?.keys?.filter(k => k.configured) || [];
+        if (configured.length === 0) return;
+        setActionLoading('test-all');
+        let ok = 0, fail = 0;
+        for (const key of configured) {
+          setActionResult({ id: 'test-all', success: true, message: `테스트 중... (${ok + fail + 1}/${configured.length}) ${key.provider}` });
+          try {
+            const res = await authFetch(`${API_BASE_URL}/api-usage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'testKey', provider: key.provider }),
+            });
+            const r = await res.json();
+            r.success ? ok++ : fail++;
+          } catch { fail++; }
+        }
+        setActionResult({ id: 'test-all', success: fail === 0, message: `완료: 성공 ${ok}개, 실패 ${fail}개` });
+        fetchData();
+        setTimeout(() => setActionResult(prev => prev?.id === 'test-all' ? null : prev), 5000);
+        setActionLoading(null);
+      }, [data, fetchData]);
+
+      // 일괄 테스트 (OCR)
+      const handleTestAllOcr = useCallback(async () => {
+        const available = engines.filter(e => e.is_available && e.is_enabled);
+        if (available.length === 0) return;
+        setActionLoading('ocr-test-all');
+        let ok = 0, fail = 0;
+        for (const engine of available) {
+          setActionResult({ id: 'ocr-test-all', success: true, message: `테스트 중... (${ok + fail + 1}/${available.length}) ${engine.name}` });
+          try {
+            const res = await authFetch(`${API_BASE_URL}/api-usage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'ocrTestEngine', engineId: engine.engine_id }),
+            });
+            const r = await res.json();
+            r.success ? ok++ : fail++;
+          } catch { fail++; }
+        }
+        setActionResult({ id: 'ocr-test-all', success: fail === 0, message: `완료: 성공 ${ok}개, 실패 ${fail}개` });
+        setTimeout(() => setActionResult(prev => prev?.id === 'ocr-test-all' ? null : prev), 5000);
+        setActionLoading(null);
+      }, [engines]);
+
       const providerLabels = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini', upstage: 'Upstage' };
       const providerColors = { openai: 'green', anthropic: 'yellow', gemini: 'primary', upstage: 'blue' };
 
@@ -2473,6 +2518,55 @@
                 </div>
               </Card>
 
+              {/* 일별 추이 (최근 7일) */}
+              {data.dailyTrend?.length > 0 && (() => {
+                // 날짜별로 그룹핑
+                const byDate = {};
+                data.dailyTrend.forEach(d => {
+                  const date = d.date?.slice(0, 10) || d.date;
+                  if (!byDate[date]) byDate[date] = { calls: 0, cost: 0, providers: {} };
+                  byDate[date].calls += parseInt(d.call_count);
+                  byDate[date].cost += parseFloat(d.total_cost || 0);
+                  byDate[date].providers[d.provider] = (byDate[date].providers[d.provider] || 0) + parseInt(d.call_count);
+                });
+                const dates = Object.keys(byDate).sort();
+                const maxCalls = Math.max(...dates.map(d => byDate[d].calls), 1);
+                const pColors = { openai: '#22c55e', anthropic: '#eab308', gemini: '#3b82f6', upstage: '#60a5fa' };
+                return (
+                  <Card>
+                    <h4 className="text-xs font-bold text-text mb-3">일별 추이 (최근 7일)</h4>
+                    <div className="space-y-2">
+                      {dates.map(date => {
+                        const d = byDate[date];
+                        const pct = (d.calls / maxCalls) * 100;
+                        const pList = Object.entries(d.providers);
+                        return (
+                          <div key={date} className="flex items-center gap-2 text-xs">
+                            <span className="w-10 text-text-secondary text-[10px] shrink-0">{date.slice(5)}</span>
+                            <div className="flex-1 h-4 bg-border/50 rounded overflow-hidden flex">
+                              {pList.map(([prov, cnt]) => (
+                                <div key={prov} style={{ width: `${(cnt / maxCalls) * 100}%`, backgroundColor: pColors[prov] || '#9ca3af' }}
+                                  className="h-full transition-all" title={`${providerLabels[prov] || prov}: ${cnt}회`} />
+                              ))}
+                            </div>
+                            <span className="w-8 text-right text-text shrink-0">{d.calls}</span>
+                            <span className="w-14 text-right text-primary text-[10px] shrink-0">${d.cost.toFixed(3)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-3 mt-2 pt-2 border-t border-border/50">
+                      {Object.entries(pColors).filter(([p]) => data.dailyTrend.some(d => d.provider === p)).map(([p, c]) => (
+                        <div key={p} className="flex items-center gap-1 text-[10px] text-text-secondary">
+                          <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: c }} />
+                          {providerLabels[p] || p}
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                );
+              })()}
+
               {/* 최근 에러 (있을 때만) */}
               {data.recentErrors?.length > 0 && (
                 <div>
@@ -2497,7 +2591,18 @@
           {/* ════════ API 키 관리 탭 ════════ */}
           {subTab === 'keys' && (
             <div className="space-y-3">
-              <p className="text-xs text-text-secondary">각 프로바이더의 API 키 상태를 확인하고, 테스트/한도를 관리합니다.</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-text-secondary">각 프로바이더의 API 키 상태를 확인하고, 테스트/한도를 관리합니다.</p>
+                <button onClick={handleTestAllKeys}
+                  disabled={!!actionLoading || !data?.keys?.some(k => k.configured)}
+                  className="px-3 py-1.5 text-xs bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-40 transition-colors shrink-0"
+                >{actionLoading === 'test-all' ? '테스트 중...' : '전체 테스트'}</button>
+              </div>
+              {actionResult?.id === 'test-all' && (
+                <div className={`text-xs px-3 py-2 rounded-lg fade-in ${actionResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                  {actionResult.success ? '\u2713' : '\u2717'} {actionResult.message}
+                </div>
+              )}
               {data.keys?.map(key => {
                 const usage = data.usageByProvider?.find(u => u.provider === key.provider);
                 const callCount = parseInt(usage?.call_count || 0);
@@ -2561,6 +2666,22 @@
                         </div>
                       )}
 
+                      {!key.configured && (() => {
+                        const envGuide = {
+                          openai: { env: 'OPENAI_API_KEY', desc: '임베딩 + GPT-4o 퀴즈 파싱' },
+                          anthropic: { env: 'ANTHROPIC_API_KEY', desc: 'Claude OCR (폴백)' },
+                          gemini: { env: 'GEMINI_API_KEY', desc: 'RAG 질의응답 + AI 요약 + OCR' },
+                          upstage: { env: 'UPSTAGE_API_KEY', desc: 'Upstage OCR (무료)' },
+                        };
+                        const g = envGuide[key.provider];
+                        return g ? (
+                          <div className="text-[11px] bg-blue-50 text-blue-700 px-2.5 py-2 rounded-md">
+                            <p className="font-medium mb-0.5">환경변수 설정 필요</p>
+                            <p>Vercel 대시보드 또는 <code className="bg-blue-100 px-1 rounded">.env</code>에 <code className="bg-blue-100 px-1 rounded">{g.env}</code> 추가</p>
+                            <p className="text-blue-500 mt-0.5">용도: {g.desc}</p>
+                          </div>
+                        ) : null;
+                      })()}
                       {key.last_error && (
                         <p className="text-xs text-red-500 bg-red-50 px-2.5 py-1.5 rounded-md">{key.last_error.length > 120 ? key.last_error.slice(0, 120) + '...' : key.last_error}</p>
                       )}
@@ -2693,7 +2814,18 @@
           {/* ════════ OCR 설정 탭 ════════ */}
           {subTab === 'ocr' && (
             <div className="space-y-4">
-              <p className="text-xs text-text-secondary">이미지 업로드 시 위에서 아래 순서로 OCR 엔진을 시도합니다. 실패하면 자동으로 다음 엔진으로 넘어갑니다.</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-text-secondary">이미지 업로드 시 위에서 아래 순서로 OCR 엔진을 시도합니다.</p>
+                <button onClick={handleTestAllOcr}
+                  disabled={!!actionLoading || !engines.some(e => e.is_available && e.is_enabled)}
+                  className="px-3 py-1.5 text-xs bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-40 transition-colors shrink-0"
+                >{actionLoading === 'ocr-test-all' ? '테스트 중...' : '전체 테스트'}</button>
+              </div>
+              {actionResult?.id === 'ocr-test-all' && (
+                <div className={`text-xs px-3 py-2 rounded-lg fade-in ${actionResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                  {actionResult.success ? '\u2713' : '\u2717'} {actionResult.message}
+                </div>
+              )}
               {(() => {
                 const active = engines.filter(e => e.is_available && e.is_enabled);
                 return active.length > 0 ? (
