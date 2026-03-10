@@ -2244,6 +2244,8 @@
       const [range, setRange] = useState('today');
       const [subTab, setSubTab] = useState('dashboard');
       const [actionLoading, setActionLoading] = useState(null);
+      // 인라인 결과 메시지 { id: string, success: bool, message: string }
+      const [actionResult, setActionResult] = useState(null);
       // OCR 상태
       const [engines, setEngines] = useState([]);
       const [ocrLoading, setOcrLoading] = useState(true);
@@ -2280,14 +2282,16 @@
       // ── API 키 액션 ──
       const handleTestKey = useCallback(async (provider) => {
         setActionLoading(`test-${provider}`);
+        setActionResult(null);
         try {
           const res = await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'testKey', provider }),
           });
           const result = await res.json();
-          alert(result.message);
+          setActionResult({ id: `key-${provider}`, success: result.success, message: result.message });
           fetchData();
+          setTimeout(() => setActionResult(prev => prev?.id === `key-${provider}` ? null : prev), 5000);
         } finally { setActionLoading(null); }
       }, [fetchData]);
 
@@ -2343,13 +2347,15 @@
 
       const handleOcrTest = useCallback(async (engineId) => {
         setActionLoading(`ocr-test-${engineId}`);
+        setActionResult(null);
         try {
           const res = await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'ocrTestEngine', engineId }),
           });
           const result = await res.json();
-          alert(result.message);
+          setActionResult({ id: `ocr-${engineId}`, success: result.success, message: result.message });
+          setTimeout(() => setActionResult(prev => prev?.id === `ocr-${engineId}` ? null : prev), 5000);
         } finally { setActionLoading(null); }
       }, []);
 
@@ -2528,6 +2534,9 @@
                           className="hover:text-primary transition-colors"
                         >한도: {key.daily_limit ? `${callCount}/${key.daily_limit}` : '무제한'}</button>
                       </div>
+                      {key.last_checked && (
+                        <p className="text-[10px] text-text-secondary">마지막 확인: {new Date(key.last_checked).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                      )}
 
                       {key.daily_limit > 0 && (
                         <div className="w-full bg-border rounded-full h-2">
@@ -2539,7 +2548,14 @@
                       )}
 
                       {key.last_error && (
-                        <p className="text-xs text-red-500 bg-red-500/10 px-2.5 py-1.5 rounded-md">{key.last_error.length > 120 ? key.last_error.slice(0, 120) + '...' : key.last_error}</p>
+                        <p className="text-xs text-red-500 bg-red-50 px-2.5 py-1.5 rounded-md">{key.last_error.length > 120 ? key.last_error.slice(0, 120) + '...' : key.last_error}</p>
+                      )}
+                      {actionResult?.id === `key-${key.provider}` && (
+                        <p className={`text-xs px-2.5 py-1.5 rounded-md fade-in ${
+                          actionResult.success ? 'text-green-600 bg-green-50' : 'text-red-500 bg-red-50'
+                        }`}>
+                          {actionResult.success ? '\u2713' : '\u2717'} {actionResult.message}
+                        </p>
                       )}
                     </div>
                   </Card>
@@ -2613,6 +2629,20 @@
           {subTab === 'ocr' && (
             <div className="space-y-4">
               <p className="text-xs text-text-secondary">이미지 업로드 시 위에서 아래 순서로 OCR 엔진을 시도합니다. 실패하면 자동으로 다음 엔진으로 넘어갑니다.</p>
+              {(() => {
+                const active = engines.filter(e => e.is_available && e.is_enabled);
+                return active.length > 0 ? (
+                  <Card className="border-green-200 bg-green-50/50">
+                    <p className="text-xs text-green-700 font-medium">
+                      현재 사용 중: {active.map((e, i) => <span key={e.engine_id}>{i > 0 && ' → '}<span className="font-bold">{e.name}</span>{e.free && ' (무료)'}</span>)}
+                    </p>
+                  </Card>
+                ) : (
+                  <Card className="border-amber-200 bg-amber-50/50">
+                    <p className="text-xs text-amber-700 font-medium">활성화된 OCR 엔진이 없습니다. 이미지 업로드 시 텍스트 추출이 불가합니다.</p>
+                  </Card>
+                );
+              })()}
 
               {ocrLoading ? (
                 <div className="text-center py-8 text-text-secondary text-sm">로딩...</div>
@@ -2640,6 +2670,11 @@
                           {!engine.is_available && (
                             <p className="text-[10px] text-amber-600 mt-0.5">
                               <code className="bg-amber-50 px-1 py-0.5 rounded">{engine.envKey}</code> 환경변수 설정이 필요합니다
+                            </p>
+                          )}
+                          {actionResult?.id === `ocr-${engine.engine_id}` && (
+                            <p className={`text-[10px] mt-0.5 fade-in ${actionResult.success ? 'text-green-600' : 'text-red-500'}`}>
+                              {actionResult.success ? '\u2713' : '\u2717'} {actionResult.message}
                             </p>
                           )}
                         </div>
