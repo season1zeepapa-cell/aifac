@@ -7,7 +7,7 @@ const COST_TABLE = {
   'openai:gpt-4o': { in: 5.0, out: 15.0 },
   'anthropic:claude-opus-4-6': { in: 15.0, out: 75.0 },
   'anthropic:claude-sonnet-4-6': { in: 3.0, out: 15.0 },
-  'gemini:gemini-2.0-flash': { in: 0, out: 0 }, // 무료 티어
+  'gemini:gemini-2.5-flash': { in: 0, out: 0 }, // 무료 티어
 };
 
 // 토큰 소진 에러 패턴
