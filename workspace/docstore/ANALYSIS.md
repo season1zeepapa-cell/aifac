@@ -22,31 +22,56 @@ workspace/docstore/
 ├── index.html                   # SPA 프론트엔드 (React + Tailwind)
 ├── vercel.json                  # Vercel 배포 설정
 ├── api/
-│   ├── db.js                    # PostgreSQL 커넥션 풀
-│   ├── documents.js             # 문서 CRUD
-│   ├── upload.js                # PDF 업로드 + 추출
+│   ├── login.js                 # 하드코딩 계정 + HMAC JWT 로그인
+│   ├── documents.js             # 문서 CRUD + 태그 + 휴지통 (트랜잭션 배치 삭제)
+│   ├── upload.js                # 멀티포맷 업로드 + 비식별화
 │   ├── search.js                # 텍스트/벡터 검색
 │   ├── law.js                   # 법령 검색/상세 프록시
-│   ├── law-import.js            # 법령 임포트 (참조 관계 포함)
+│   ├── law-import.js            # 법령 임포트 (참조 관계 + 교차 참조 자동 구축)
+│   ├── law-graph.js             # 법령 참조 관계 그래프 데이터 API
+│   ├── cross-references.js      # 교차 참조 매트릭스 API (구축/조회)
 │   ├── summary.js               # 조문/섹션 AI 요약 (Gemini)
-│   ├── url-import.js            # 웹 URL 크롤링 → DB
-│   └── rag.js                   # RAG 질의응답
+│   ├── url-import.js            # 웹 URL 크롤링 → DB (EUC-KR 자동 감지)
+│   ├── rag.js                   # RAG 질의응답 (멀티홉 + 근거 체인)
+│   ├── ocr.js                   # OCR 엔진 (Upstage/네이버/Gemini 등)
+│   ├── deidentify.js            # 비식별화 키워드 CRUD
+│   └── api-usage.js             # API 사용량 + OCR 설정
 ├── lib/
 │   ├── pdf-extractor.js         # PDF 추출 (텍스트 + OCR + 문제 파싱)
 │   ├── embeddings.js            # 청크 분할 + OpenAI 임베딩
 │   ├── law-fetcher.js           # 법제처 API 클라이언트
-│   └── text-extractor.js       # 멀티포맷 텍스트 추출 (TXT/MD/DOCX/XLSX/CSV/JSON/이미지)
+│   ├── text-extractor.js        # 멀티포맷 텍스트 추출 (TXT/MD/DOCX/XLSX/CSV/JSON/이미지)
+│   ├── rag-agent.js             # 멀티홉 RAG 검색 엔진 (교차 참조 테이블 활용)
+│   ├── cross-reference.js       # 교차 참조 감지 엔진 (명시적 + 시맨틱)
+│   ├── deidentify.js            # 키워드 매칭/치환 (띄어쓰기 우회 방지)
+│   ├── gemini.js                # LLM 호출 (Gemini/OpenAI/Claude 멀티프로바이더)
+│   ├── auth.js                  # 인증 미들웨어
+│   ├── cors.js                  # CORS 처리
+│   ├── rate-limit.js            # Rate limiter
+│   ├── storage.js               # Supabase Storage 파일 관리
+│   ├── input-sanitizer.js       # URL/입력 검증 (SSRF 방어)
+│   ├── error-handler.js         # 공통 에러 핸들러
+│   └── ocr/                     # OCR 엔진 모듈 (Upstage, Naver, Gemini, Google 등)
 └── scripts/
-    ├── create-tables.js         # DB 스키마 생성
-    ├── generate-embeddings.js   # 기존 문서 임베딩 생성
-    └── import-pdf.js            # CLI PDF 임포트
+    ├── create-tables.js                # DB 스키마 생성
+    ├── add-labeling-tables.js          # 라벨링 테이블 마이그레이션
+    ├── add-soft-delete.js              # 소프트 삭제 마이그레이션
+    ├── add-storage-path.js             # Storage 경로 마이그레이션
+    ├── add-cross-references-table.js   # 교차 참조 매트릭스 테이블 마이그레이션
+    ├── generate-embeddings.js          # 기존 문서 임베딩 생성
+    └── import-pdf.js                   # CLI PDF 임포트
 ```
 
 ## DB 테이블
 
-- **documents** — id, title, file_type('pdf'|'law'), category, upload_date, metadata(JSONB)
-- **document_sections** — id, document_id(FK), section_type, section_index, raw_text, metadata(JSONB)
-- **document_chunks** — id, section_id(FK), chunk_text, embedding(vector 1536), chunk_index
+- **documents** — id, title, file_type, category, upload_date, metadata(JSONB), summary, keywords[], deleted_at, storage_path, original_filename, original_mimetype, file_size
+- **document_sections** — id, document_id(FK), section_type, section_index, raw_text, metadata(JSONB), summary
+- **document_chunks** — id, section_id(FK), chunk_text, enriched_text, embedding(vector 1536), chunk_index
+- **cross_references** — id, source_section_id(FK), target_section_id(FK), source_document_id(FK), target_document_id(FK), relation_type, confidence, context, created_at
+- **tags** — id, name(UNIQUE), color, usage_count
+- **document_tags** — document_id(FK), tag_id(FK)
+- **deidentify_keywords** — id, keyword(UNIQUE), created_at
+- **api_usage** — id, endpoint, provider, tokens_used, cost, created_at
 
 ---
 
@@ -1663,9 +1688,10 @@ CREATE TABLE IF NOT EXISTS cross_references (
 | | `api/rag.js` (수정) | ~40줄 변경 | 중 |
 | 2. 근거 체인 | `api/rag.js` 프롬프트 | ~50줄 변경 | 중 |
 | | `lib/evidence-parser.js` (신규) | ~80줄 | 중 |
-| 3. 교차 참조 매트릭스 | `lib/cross-reference.js` (신규) | ~100줄 | 고 |
-| | `api/law-import.js` (수정) | ~30줄 추가 | 중 |
-| | DB 마이그레이션 스크립트 | ~20줄 | 저 |
+| 3. 교차 참조 매트릭스 ✅ | `lib/cross-reference.js` (신규) | ~200줄 | 고 |
+| | `api/cross-references.js` (신규) | ~90줄 | 중 |
+| | `api/law-import.js` (수정) | ~20줄 추가 | 중 |
+| | DB 마이그레이션 스크립트 | ~40줄 | 저 |
 | 4. 프론트엔드 UI | `index.html` ChatTab 수정 | ~200줄 | 중 |
 
 **총 ~670줄 추가/변경**, 기존 RAG 호환 유지
@@ -1673,11 +1699,10 @@ CREATE TABLE IF NOT EXISTS cross_references (
 ### 추천 구현 순서
 
 ```
-1단계 (멀티홉) → 2단계 (근거 체인) → 4단계 (UI) → 3단계 (교차 참조)
+1단계 (멀티홉) ✅ → 2단계 (근거 체인) ✅ → 4단계 (UI) ✅ → 3단계 (교차 참조) ✅
 ```
 
-3단계는 독립적이라 나중에 추가해도 1~2단계가 잘 동작한다.
-1+2+4를 먼저 하면 즉시 체감 가능한 개선이 되고, 3단계는 데이터가 쌓인 후 효과가 극대화된다.
+**4단계 모두 구현 완료** (2026-03-10)
 
 ---
 
@@ -1729,3 +1754,158 @@ CREATE TABLE IF NOT EXISTS cross_references (
 - `api/deidentify.js` — CRUD API + 자동 테이블 생성
 - `api/upload.js` — 비식별화 단계 통합
 - `index.html` — `DeidentifyPanel` + 업로드 토글 UI
+
+---
+
+## 교차 참조 매트릭스 (구현 완료)
+
+> 구현일: 2026-03-10
+
+복수 문서 간 참조 관계를 자동 감지하고 DB에 저장하는 시스템.
+
+### 구현된 기능
+
+| 기능 | 설명 |
+|------|------|
+| 명시적 참조 감지 | 정규식 `[가-힣]법 제N조` 패턴으로 타 법령 참조 추출 |
+| 관계 유형 분류 | 준용, 적용, 예외, 의거, 위반 등 자동 분류 (주변 텍스트 분석) |
+| 시맨틱 참조 감지 | 임베딩 유사도 ≥ 0.85인 타 문서 섹션 자동 탐지 |
+| 법령 임포트 연동 | 법령 임포트 시 명시적 + 시맨틱 교차 참조 자동 구축 |
+| 수동 트리거 | API로 특정 문서의 교차 참조 수동 구축 가능 |
+| 전체 매트릭스 조회 | 문서 간 교차 참조 요약 (관계유형별 건수, 평균 신뢰도) |
+| RAG 검색 연동 | 멀티홉 검색 시 교차 참조 테이블에서 관련 섹션 자동 병합 |
+| UI 탭 | 문서 상세 모달에 "교차 참조" 탭 — 참조 목록 + 통계 + 구축 버튼 |
+
+### 교차 참조 유형
+
+| 유형 | 감지 방법 | 신뢰도 | 예시 |
+|------|-----------|--------|------|
+| 명시적 (explicit) | 정규식 | 1.0 | "정보통신망법 제24조의2에 따라" |
+| 준용 | 정규식 + 관계어 | 1.0 | "제15조제1항을 준용한다" |
+| 적용 | 정규식 + 관계어 | 1.0 | "정보통신망법을 적용한다" |
+| 예외 | 정규식 + 관계어 | 1.0 | "다만, 개인정보보호법의 예외로" |
+| 시맨틱 (semantic) | 임베딩 유사도 | 0.85~1.0 | 동일 개념이 다른 법령에 등장 |
+
+### DB 테이블
+
+```sql
+cross_references (
+  source_section_id → document_sections(id),
+  target_section_id → document_sections(id),
+  source_document_id → documents(id),
+  target_document_id → documents(id),
+  relation_type TEXT,   -- 'explicit'|'semantic'|'준용'|'적용'|'예외'|'의거'|'위반'
+  confidence FLOAT,     -- 명시적=1.0, 시맨틱=유사도값
+  context TEXT,         -- 참조 주변 텍스트
+  UNIQUE(source_section_id, target_section_id, relation_type)
+)
+```
+
+### 관련 파일
+
+- `lib/cross-reference.js` — 교차 참조 감지 엔진 (명시적 정규식 + 시맨틱 임베딩)
+- `api/cross-references.js` — REST API (GET 조회 + POST 구축 트리거)
+- `api/law-import.js` — 법령 임포트 시 자동 구축 연동
+- `lib/rag-agent.js` — `fetchCrossRefChunks()` 함수로 RAG 검색에 활용
+- `scripts/add-cross-references-table.js` — DB 마이그레이션 스크립트
+- `index.html` — `CrossRefView` 컴포넌트 (교차 참조 탭 UI)
+
+### 처리 흐름
+
+```
+법령 A 임포트
+  ↓
+① A 내부 참조 (기존: metadata.references / referencedBy)
+  ↓
+② A → 타 법령 명시적 참조 탐색
+   "정보통신망법 제24조" → DB에서 해당 법령·조문 찾기
+   주변 텍스트에서 관계 유형 감지 (준용/적용/예외 등)
+  ↓
+③ cross_references 테이블에 저장 (UPSERT)
+  ↓
+④ 시맨틱 유사도 기반 암묵적 참조 탐색
+   A의 각 섹션 임베딩 ↔ 기존 타 문서 섹션 임베딩 비교
+   유사도 ≥ 0.85 → cross_references에 추가
+  ↓
+⑤ RAG 검색 시 cross_references 테이블 자동 활용
+   1차 검색 결과의 문서 → 교차 참조된 타 문서 섹션 병합
+```
+
+---
+
+## 검색 결과 하이라이팅 (구현 완료)
+
+> 구현일: 2026-03-10
+
+검색어 위치에 `<mark>` 태그로 하이라이팅하여 검색 결과 가독성 향상.
+
+### 구현된 기능
+
+| 기능 | 설명 |
+|------|------|
+| 텍스트 검색 하이라이팅 | 본문, 문서 제목, 라벨에 검색어 `<mark>` 표시 |
+| 벡터 검색 하이라이팅 | 본문, 문서 제목, 라벨에 검색어 `<mark>` 표시 |
+| 자동 발췌 | 검색어 주변 300자 자동 발췌 (검색어 중심) |
+| 테마 대응 | `bg-primary/30 text-primary` 스타일로 라이트/다크 테마 호환 |
+
+### 관련 파일
+
+- `index.html` — `highlightText()` 유틸 함수 + 검색 결과 렌더링
+
+---
+
+## 휴지통 배치 삭제 트랜잭션 (구현 완료)
+
+> 구현일: 2026-03-10
+
+### 변경 전 (문제)
+
+```
+emptyTrash → for 루프 × N개
+  └─ deleteDocumentPermanently(id) × N = 5N개 쿼리, 트랜잭션 없음
+  → 중간 실패 시 일부만 삭제되어 불일치 상태
+```
+
+### 변경 후 (해결)
+
+```
+emptyTrash → deleteDocumentsBatch([id1, id2, ...])
+  └─ BEGIN → SELECT + 4개 배치 DELETE (ANY($1)) → COMMIT
+  → 전부 성공 또는 전부 롤백 (원자성 보장)
+```
+
+| 항목 | 설명 |
+|------|------|
+| 트랜잭션 | `BEGIN/COMMIT/ROLLBACK`으로 원자성 보장 |
+| 배치 DELETE | `WHERE id = ANY($1)`로 N개를 1쿼리로 처리 |
+| Storage 분리 | 외부 서비스는 트랜잭션 밖에서 처리 (개별 실패 무시) |
+| 단일 삭제도 보호 | `deleteDocumentPermanently`에도 트랜잭션 추가 |
+
+### 관련 파일
+
+- `api/documents.js` — `deleteDocumentPermanently()` + `deleteDocumentsBatch()` 함수
+
+---
+
+## URL 크롤링 한글 인코딩 수정 (구현 완료)
+
+> 구현일: 2026-03-10
+
+### 문제
+
+EUC-KR 인코딩 사이트(보안뉴스 등)를 크롤링하면 한글이 깨지는 현상.
+
+### 원인
+
+`Buffer.toString('utf8')`로 디코딩 시 EUC-KR 바이트를 UTF-8로 잘못 해석.
+
+### 해결
+
+1. HTTP Content-Type 헤더에서 `charset` 추출
+2. HTML `<meta charset>` / `<meta http-equiv>` 태그에서 charset 추출
+3. `iconv-lite`로 비-UTF-8 인코딩을 UTF-8로 변환
+
+### 관련 파일
+
+- `api/url-import.js` — `detectCharset()` 함수 + `iconv-lite` 연동
+- 프로젝트 전체 13개 파일 `data += chunk` → `Buffer.concat(chunks)` 패턴 통일
