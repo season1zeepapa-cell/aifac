@@ -16,7 +16,7 @@ module.exports = {
   },
 
   async execute(base64, mediaType, prompt) {
-    const apiKey = process.env.OCR_SPACE_API_KEY;
+    const apiKey = (process.env.OCR_SPACE_API_KEY || '').trim();
 
     // 프롬프트에서 언어 힌트 추출
     const isKorean = /한국|korean|추출|문제|보기/i.test(prompt);
