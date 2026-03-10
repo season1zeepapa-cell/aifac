@@ -2,7 +2,12 @@
 // workspace/error의 users 테이블을 공유하며, 관리자(is_admin)만 허용
 const crypto = require('crypto');
 
-const TOKEN_SECRET = (process.env.AUTH_TOKEN_SECRET || 'error-study-default-secret-2026').trim();
+// AUTH_TOKEN_SECRET 필수 — 미설정 시 서버 시작 거부
+const TOKEN_SECRET = (process.env.AUTH_TOKEN_SECRET || '').trim();
+if (!TOKEN_SECRET) {
+  console.error('[Auth] AUTH_TOKEN_SECRET 환경변수가 설정되지 않았습니다.');
+  // Vercel 서버리스에서는 즉시 중단하지 않고 런타임에 에러 반환
+}
 
 // JWT 구현 (jsonwebtoken 패키지 없이 직접 구현 — 의존성 최소화)
 // HMAC-SHA256 기반
@@ -38,7 +43,7 @@ function signToken(payload, secret, expiresIn = '7d') {
 }
 
 function verifyToken(token) {
-  if (!token) return null;
+  if (!token || !TOKEN_SECRET) return null;
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
@@ -59,11 +64,11 @@ function verifyToken(token) {
   }
 }
 
-// req에서 토큰 추출
+// req에서 토큰 추출 (Authorization 헤더만 허용 — URL 파라미터 노출 방지)
 function extractToken(req) {
   const authHeader = req.headers?.authorization || '';
   if (authHeader.startsWith('Bearer ')) return authHeader.slice(7);
-  return req.query?.token || null;
+  return null;
 }
 
 // 비밀번호 검증

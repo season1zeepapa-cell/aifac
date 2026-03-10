@@ -55,7 +55,7 @@ workspace/docstore/
 ### 1단계: 즉시 적용 (인프라/보안)
 
 - [x] pgvector HNSW 인덱스 추가 (검색 성능)
-- [ ] 하드코딩 인증 추가 (workspace/error 패턴)
+- [x] 관리자 인증 추가 (JWT + requireAdmin, workspace/error users 공유)
 - [x] 임베딩 생성 상태 표시 (UI)
 
 ### 2단계: 활용도 확장 (검색/필터)
@@ -91,7 +91,7 @@ workspace/docstore/
 | 마크다운 | .md | 그대로 읽기 | 구분 방식(헤딩 기준/전체) |
 | Word | .docx | mammoth 라이브러리 | 구분 방식(단락/헤딩/전체) |
 | Excel/CSV | .xlsx, .csv | xlsx/csv-parse | 어떤 열이 본문인지, 행 범위 |
-| 이미지 | .jpg, .png | Claude 비전 OCR | 내용 유형(일반/표/문제) |
+| 이미지 | .jpg, .png | OCR 플러그인 (Gemini/CLOVA/Vision/Claude/Textract/OCR.space) | 내용 유형(일반/표/문제) |
 | JSON | .json | 필드 파싱 | 어떤 필드를 추출할지 |
 
 ### 업로드 UX 흐름
@@ -172,7 +172,7 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 - UI에서 참조(파란색)/역참조(노란색) 링크 클릭 → 해당 조문 스크롤
 
 ### 4단계: 조문별 AI 요약 ✅
-- `api/summary.js` 신규 (Gemini 2.0 Flash, 1-2줄 요약)
+- `api/summary.js` 신규 (Gemini 2.5 Flash, 1-2줄 요약)
 - 단일 섹션 요약 + 문서 전체 일괄 요약
 - `metadata.summary`에 캐싱 (중복 호출 방지)
 - 각 섹션에 "AI 요약" 버튼 + "전체 AI 요약" 버튼
@@ -183,7 +183,6 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 - RAG 답변에 marked.js CDN 마크다운 렌더링
 
 ### 미구현 (추후)
-- 하드코딩 인증 (사용자 요청으로 제외)
 - RAG 대화 컨텍스트 (후속 질문 지원)
 
 ---
@@ -194,7 +193,7 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 
 | 등급 | 항목 | 상태 | 설명 |
 |------|------|------|------|
-| 🔴 긴급 | 인증 없음 | 미조치 | 모든 API가 공개 상태. 누구나 업로드/삭제/AI 호출 가능 |
+| 🔴 긴급 | 인증 없음 | ✅ 해결 | 관리자 JWT 인증 추가 (`api/auth.js`, 모든 API에 `requireAdmin()` 적용) |
 | 🔴 긴급 | CORS 전체 허용 | 미조치 | `rag.js`, `summary.js`, `law-import.js` 등에서 `Access-Control-Allow-Origin: *` |
 | 🟡 주의 | RegExp 인젝션 | 미조치 | `pdf-extractor.js` 사용자 정의 구분자를 `new RegExp()`에 직접 전달 → ReDoS 가능 |
 | 🟡 주의 | 에러 메시지 노출 | 미조치 | `err.message`를 클라이언트에 그대로 반환 → 내부 정보 유출 가능 |
@@ -207,7 +206,7 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 | OpenAI Embeddings | `lib/embeddings.js` | text-embedding-3-small | ~$0.02/1M 토큰 | 🟡 중간 |
 | OpenAI GPT-4o | `lib/pdf-extractor.js` (quiz 파싱) | gpt-4o | ~$5/1M 입력 토큰 | 🔴 높음 |
 | Anthropic Claude | `lib/pdf-extractor.js` (OCR), `lib/text-extractor.js` (이미지) | claude-opus-4-6 / claude-sonnet-4-6 | ~$15/1M 토큰 (Opus) | 🔴 매우 높음 |
-| Google Gemini | `api/rag.js`, `api/summary.js` | gemini-2.0-flash | 무료~저가 | 🟢 낮음 |
+| Google Gemini | `api/rag.js`, `api/summary.js` | gemini-2.5-flash | 무료~저가 | 🟢 낮음 |
 
 #### 비용 폭탄 시나리오
 
@@ -237,9 +236,9 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 
 #### 단기 (즉시 적용)
 
-- [ ] 하드코딩 인증 추가 (보안 + 비용 방어 1차 방어선)
+- [x] 관리자 인증 추가 (JWT + requireAdmin 미들웨어)
 - [ ] API 호출 횟수 제한 (일일 한도)
-- [ ] OCR 모델 다운그레이드 (Opus → Sonnet)
+- [x] OCR 플러그인 아키텍처 구현 (6개 엔진, 우선순위 폴백)
 - [ ] `callGemini` 공통 모듈 분리
 - [ ] 에러 메시지 클라이언트 노출 최소화
 
@@ -248,7 +247,7 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 - [ ] 문서 수정/제목 변경 기능 (현재 삭제 후 재업로드만 가능)
 - [ ] 임베딩 재생성 버튼 (실패한 임베딩 수동 재시도)
 - [ ] 검색 결과 하이라이팅 (검색어 위치 시각적 표시)
-- [ ] API 사용량 대시보드 (일/월별 호출 현황)
+- [x] API 사용량 대시보드 (일/월별 호출 현황, OCR 설정 통합)
 
 #### 장기 (확장)
 
@@ -259,21 +258,318 @@ marked     → RAG 답변 마크다운 렌더링 (CDN)
 ### 우선 실행 순서
 
 ```
-1순위: 인증 추가 (보안 + 비용 방어)
-2순위: API 호출 횟수 제한 (일일 한도)
-3순위: OCR 모델 다운그레이드 (Opus → Sonnet)
-4순위: callGemini / 임베딩 로직 공통화 (리팩토링)
-5순위: 에러 메시지 정리 + CORS 제한
+1순위: ✅ 인증 추가 (관리자 JWT 완료)
+2순위: ✅ OCR 플러그인 아키텍처 (6개 엔진 완료)
+3순위: CORS 도메인 제한 + 보안 헤더 추가
+4순위: Rate Limiting (API 호출 횟수 제한)
+5순위: callGemini / 임베딩 로직 공통화 (리팩토링)
+6순위: 에러 메시지 정리 + 입력 검증 강화
 ```
+
+---
+
+## 구현 완료 요약 v3 — 인증 + OCR 플러그인 (2026-03-10)
+
+### 관리자 인증 시스템 ✅
+- `api/auth.js` — HMAC-SHA256 JWT 직접 구현 (의존성 없음)
+- `api/login.js` — 관리자 전용 로그인 (workspace/error의 `public.users` 테이블 공유)
+- 모든 API에 `requireAdmin()` 인증 미들웨어 적용
+- 프론트엔드 `authFetch()` 래퍼로 Authorization 헤더 자동 주입 + 401 자동 로그아웃
+- `LoginScreen` 컴포넌트 추가 (비로그인 시 로그인 화면 표시)
+
+### OCR 플러그인 아키텍처 ✅
+- `lib/ocr/index.js` — OCR 엔진 매니저 (레지스트리, DB 설정, 캐시, 우선순위 폴백)
+- 6개 OCR 엔진 플러그인:
+  - `gemini-vision` — Gemini 2.5 Flash (무료, 기본 1순위)
+  - `naver-clova` — 네이버 CLOVA OCR (한국어 최강)
+  - `google-vision` — Google Cloud Vision (정확도 최고)
+  - `claude-vision` — Claude Sonnet (문맥 분석)
+  - `aws-textract` — AWS Textract (표/양식 특화)
+  - `ocr-space` — OCR.space (무료 일500건, 한국어 지원)
+- `ocr_engine_config` DB 테이블로 우선순위/활성 상태 관리
+- 설정 UI에서 수동 변경, 테스트, 우선순위 조정 가능
+- 1분 TTL 캐시로 서버리스 환경 최적화
+
+### API 사용량 대시보드 확장 ✅
+- OCR 설정을 `api/api-usage.js`에 통합 (Vercel 12 함수 제한 대응)
+- GET `?type=ocr` — OCR 엔진 목록 조회
+- POST `ocrUpdatePriority` / `ocrToggleEngine` / `ocrTestEngine` 액션
+
+---
+
+## 파일 구조 (최신)
+
+```
+workspace/docstore/
+├── server.js                    # Express 메인 서버
+├── index.html                   # SPA 프론트엔드 (React + Tailwind CDN)
+├── vercel.json                  # Vercel 배포 설정
+├── package.json                 # 의존성
+├── api/
+│   ├── db.js                    # PostgreSQL 커넥션 풀
+│   ├── auth.js                  # HMAC-SHA256 JWT 인증
+│   ├── login.js                 # 관리자 로그인
+│   ├── documents.js             # 문서 CRUD + 원본 다운로드/미리보기
+│   ├── upload.js                # 멀티포맷 업로드 + OCR + 임베딩
+│   ├── search.js                # 텍스트/벡터 검색
+│   ├── law.js                   # 법령 검색 프록시
+│   ├── law-import.js            # 법령 임포트 (참조 관계)
+│   ├── summary.js               # AI 요약 (Gemini)
+│   ├── url-import.js            # 웹 URL 크롤링
+│   ├── rag.js                   # RAG 질의응답
+│   └── api-usage.js             # API 사용량 + OCR 설정
+├── lib/
+│   ├── pdf-extractor.js         # PDF 추출 (텍스트 + OCR + 문제 파싱)
+│   ├── text-extractor.js        # 멀티포맷 텍스트 추출
+│   ├── embeddings.js            # 청크 분할 + OpenAI 임베딩
+│   ├── law-fetcher.js           # 법제처 API 클라이언트
+│   ├── api-tracker.js           # API 호출 추적
+│   └── ocr/
+│       ├── index.js             # OCR 엔진 매니저
+│       ├── gemini-vision.js     # Gemini 2.5 Flash OCR
+│       ├── claude-vision.js     # Claude Sonnet OCR
+│       ├── naver-clova.js       # 네이버 CLOVA OCR
+│       ├── google-vision.js     # Google Cloud Vision
+│       ├── aws-textract.js      # AWS Textract
+│       └── ocr-space.js         # OCR.space (무료)
+└── scripts/
+    ├── create-tables.js         # DB 스키마 생성
+    ├── add-original-file.js     # 원본 파일 컬럼 마이그레이션
+    ├── generate-embeddings.js   # 기존 문서 임베딩 생성
+    └── import-pdf.js            # CLI PDF 임포트
+```
+
+## DB 테이블 (최신)
+
+| 테이블 | 용도 | 주요 컬럼 |
+|--------|------|-----------|
+| `documents` | 문서 메타 + 원본 파일 | id, title, file_type, category, original_file(BYTEA), original_filename, original_mimetype, file_size |
+| `document_sections` | 추출 텍스트 | document_id(FK), section_type, raw_text, metadata(JSONB: summary, references 등) |
+| `document_chunks` | 벡터 임베딩 | section_id(FK), chunk_text, embedding(vector 1536) |
+| `api_usage` | API 호출 기록 | provider, model, endpoint, status, tokens_in/out, cost_estimate |
+| `api_key_status` | API 키 상태 | provider, is_active, daily_limit, last_checked, last_error |
+| `ocr_engine_config` | OCR 엔진 설정 | engine_id, is_enabled, priority_order |
+| `public.users` | 사용자 (error 공유) | username, password_hash, name, is_admin |
+
+---
+
+## 종합 보안 점검 보고서 (2026-03-10)
+
+### 보안 취약점 상세
+
+#### 🔴 CRITICAL — 즉시 조치 필요
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| 1 | 토큰 시크릿 기본값 | `api/auth.js:5` | `AUTH_TOKEN_SECRET` 미설정 시 예측 가능한 기본값 사용 | 환경변수 필수 + 32자 이상 강제 |
+| 2 | CORS 전체 허용 | 모든 API | `Access-Control-Allow-Origin: *` → CSRF 공격 가능 | 허용 도메인 화이트리스트 적용 |
+| 3 | Rate Limiting 없음 | 모든 API | 무제한 API 호출 → 비용 폭탄 + DoS | express-rate-limit 또는 인메모리 카운터 |
+
+#### 🟡 HIGH — 조기 개선 권장
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| 4 | URL 파라미터 토큰 | `api/auth.js:66` | `req.query.token`으로 토큰 추출 → 로그/캐시에 노출 | Authorization 헤더만 허용 |
+| 5 | SSRF 위험 | `api/url-import.js` | URL 검증 부족 → 내부 네트워크 접근 가능 | 내부 IP 차단, URL 스키마 검증 |
+| 6 | 파일 업로드 무검증 | `api/upload.js` | MIME 타입/확장자 화이트리스트 없음 | multer fileFilter 추가 |
+| 7 | 에러 메시지 노출 | 모든 API | `err.message` 그대로 클라이언트 반환 → 내부 정보 유출 | 프로덕션에서 일반 메시지 반환 |
+| 8 | HTML 미정화 | `api/url-import.js` | 크롤링 HTML에서 script 태그만 제거, 이벤트 핸들러 등 미처리 | sanitize-html 적용 |
+| 9 | SSL 인증서 미검증 | `api/db.js:11` | `rejectUnauthorized: false` → MITM 공격 가능 | Supabase CA 인증서 사용 |
+
+#### 🟢 MEDIUM — 점진적 개선
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| 10 | 보안 헤더 미설정 | `vercel.json` | X-Frame-Options, CSP, HSTS 등 없음 | vercel.json headers 추가 |
+| 11 | RegExp 인젝션 | `lib/pdf-extractor.js` | 사용자 구분자를 `new RegExp()`에 직접 전달 → ReDoS | 특수문자 이스케이프 |
+| 12 | ILIKE 와일드카드 | `api/search.js` | 검색어에 `%` 포함 시 패턴 매칭 공격 | `%` 문자 이스케이프 |
+| 13 | 파일명 미정화 | `api/upload.js` | 사용자 제공 파일명 그대로 저장 → 경로 순회 | `path.basename()` + 특수문자 제거 |
+| 14 | 감사 로그 없음 | 전체 | 누가 언제 무엇을 했는지 추적 불가 | audit_log 테이블 + 로깅 |
+
+#### ✅ 양호한 부분
+
+| 항목 | 설명 |
+|------|------|
+| SQL Injection | 모든 쿼리가 파라미터 바인딩 사용 |
+| 비밀번호 검증 | `crypto.timingSafeEqual`로 타이밍 공격 방지 |
+| JWT 구현 | HMAC-SHA256 서명 + 만료 시간 검증 |
+| 관리자 인증 | 모든 API에 `requireAdmin()` 적용 |
+| OCR 폴백 | 6개 엔진 순차 시도, 자동 폴백 |
+
+---
+
+### 성능 문제점
+
+| 우선도 | 항목 | 위치 | 영향 | 개선안 |
+|--------|------|------|------|--------|
+| 🔴 | 원본 파일 BYTEA 저장 | `api/upload.js` | DB 팽창, 메모리 과다, Vercel 10GB 한계 | Supabase Storage 이전 |
+| 🔴 | AI 요약 순차 처리 | `api/summary.js` | 60+ 섹션 → 300초 타임아웃 | 병렬 처리 (Promise.allSettled) |
+| 🟡 | N+1 쿼리 패턴 | `api/law-import.js` | 100+ 조문 → 100+ INSERT | 배치 INSERT 전환 |
+| 🟡 | 임베딩 섹션별 호출 | `api/upload.js` | 섹션마다 OpenAI API 호출 | 전체 배치 1회 호출 |
+| 🟡 | 요약 텍스트 2000자 절단 | `api/summary.js:53` | 긴 섹션 뒷부분 요약 누락 | 청크별 요약 후 합성 |
+| 🟢 | 이미지 미리보기 캐시 | `api/documents.js` | 매 요청마다 BYTEA 조회 | CDN 캐시 또는 signed URL |
+
+---
+
+### 코드 품질 리팩토링 계획
+
+#### Phase 1 — 보안 강화 (우선)
+
+```
+1. vercel.json 보안 헤더 추가
+   X-Content-Type-Options, X-Frame-Options, HSTS, Referrer-Policy
+
+2. CORS 도메인 제한
+   process.env.ALLOWED_ORIGINS 기반 화이트리스트
+
+3. 토큰 시크릿 기본값 제거
+   AUTH_TOKEN_SECRET 미설정 시 서버 시작 거부
+
+4. URL 파라미터 토큰 제거
+   Authorization 헤더만 허용
+
+5. 에러 메시지 정리
+   프로덕션: 일반 메시지 반환 + 내부 로깅
+```
+
+#### Phase 2 — 입력 검증 강화
+
+```
+1. 파일 업로드 검증
+   MIME 타입 화이트리스트 + 확장자 검증 + 클라이언트 크기 체크
+
+2. URL 임포트 SSRF 방어
+   내부 IP 차단 + URL 스키마 검증 + 호스트명 화이트리스트
+
+3. HTML 크롤링 정화
+   sanitize-html 패키지 적용
+
+4. 파일명 정화
+   path.basename() + 특수문자 제거 + 길이 제한
+
+5. 검색어 이스케이프
+   ILIKE 와일드카드 문자 이스케이프
+```
+
+#### Phase 3 — 성능 최적화
+
+```
+1. 원본 파일 스토리지 분리
+   BYTEA → Supabase Storage + signed URL
+
+2. 임베딩 배치 처리
+   섹션별 → 전체 배치 1회 호출
+
+3. 법령 임포트 배치 INSERT
+   개별 INSERT → multi-row INSERT
+
+4. AI 요약 병렬 처리
+   순차 → Promise.allSettled (동시 5개)
+
+5. callGemini 공통 모듈화
+   rag.js, summary.js 중복 → lib/gemini.js 분리
+```
+
+#### Phase 4 — 운영 안정성
+
+```
+1. Rate Limiting 추가
+   인메모리 카운터 (서버리스: Vercel KV 또는 DB)
+
+2. 구조화된 로깅
+   console.log → 요청 ID + 타임스탬프 + 레벨
+
+3. 감사 로그
+   audit_log 테이블 (action, user_id, resource_type, timestamp)
+
+4. 환경변수 검증
+   서버 시작 시 필수 변수 체크 + 누락 시 명확한 에러
+
+5. DB 커넥션 에러 핸들링
+   pool.on('error') 이벤트 처리
+```
+
+---
+
+### 향후 확장 및 기능 최적화 방향
+
+#### 단기 (1~2주)
+
+| 항목 | 설명 | 예상 효과 |
+|------|------|-----------|
+| 문서 메타 수정 | 제목/카테고리 변경 API + UI | 삭제 후 재업로드 불필요 |
+| 임베딩 재생성 | 실패 임베딩 수동 재시도 버튼 | 검색 누락 방지 |
+| OCR 실패 시 원본 보존 | OCR 전체 실패해도 원본 파일 저장 | 업로드 실패율 감소 |
+| 요약 캐시 무효화 | 섹션 수정 시 요약 재생성 | 데이터 정합성 |
+| 클라이언트 파일 크기 검증 | 업로드 전 50MB 체크 | UX 개선 |
+
+#### 중기 (1~2개월)
+
+| 항목 | 설명 | 예상 효과 |
+|------|------|-----------|
+| Supabase Storage 이전 | 원본 파일 DB → 오브젝트 스토리지 | DB 크기 90% 감소, 성능 향상 |
+| RAG 대화 컨텍스트 | 후속 질문 지원 (채팅 히스토리) | AI 질의 품질 향상 |
+| 검색 결과 하이라이팅 | 검색어 위치 시각적 표시 | 검색 UX 개선 |
+| SSE 스트리밍 요약 | AI 요약 실시간 표시 | 대기 시간 체감 감소 |
+| 문서 태그 시스템 | 카테고리 외 자유 태그 | 분류 유연성 |
+
+#### 장기 (3개월+)
+
+| 항목 | 설명 | 예상 효과 |
+|------|------|-----------|
+| 법령 개정 비교 | 동일 법령 버전 간 diff | 법령 추적 기능 |
+| 다중 사용자 권한 | 역할별 접근 제어 (뷰어/에디터/관리자) | 팀 협업 지원 |
+| 문서 버전 관리 | 수정 이력 추적 + 롤백 | 데이터 안전성 |
+| 소프트 삭제 | deleted_at 컬럼 + 휴지통 | 실수 복구 가능 |
+| 실시간 알림 | 문서 처리 완료 알림 (Supabase Realtime) | 대용량 처리 UX |
+| 멀티 LLM 지원 | RAG/요약에 OpenAI, Claude 선택 가능 | 비용/품질 최적화 |
+
+---
+
+### API 비용 분석 (최신)
+
+| API | 사용처 | 모델 | 예상 비용 | 비고 |
+|-----|--------|------|-----------|------|
+| OpenAI Embeddings | `lib/embeddings.js` | text-embedding-3-small | ~$0.02/1M 토큰 | 🟢 저렴 |
+| OpenAI GPT-4o | `lib/pdf-extractor.js` (quiz 파싱) | gpt-4o | ~$5/1M 입력 토큰 | 🔴 높음 |
+| Google Gemini | RAG, 요약, OCR | gemini-2.5-flash | 무료~저가 | 🟢 낮음 |
+| Anthropic Claude | OCR (폴백) | claude-sonnet-4-6 | ~$3/1M 토큰 | 🟡 중간 |
+| OCR.space | OCR (무료 폴백) | - | 무료 (일500건) | 🟢 무료 |
+| Naver CLOVA | OCR (한국어 특화) | - | 종량제 | 🟡 중간 |
+
+#### 비용 최적화 전략
+
+1. **Gemini 우선** — 무료/저가 모델 최우선 사용 (현재 적용됨)
+2. **OCR 폴백 체인** — 무료 엔진 → 유료 엔진 순서 (현재 적용됨)
+3. **요약 캐싱** — 동일 섹션 중복 요약 방지 (현재 적용됨)
+4. **임베딩 배치화** — 개별 → 배치로 API 호출 횟수 최소화 (미적용)
+5. **Rate Limiting** — 일일 한도 설정으로 비용 상한 제어 (미적용)
 
 ---
 
 ## 환경변수
 
 ```
+# 필수
 DATABASE_URL=postgresql://...
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-LAW_API_OC=법제처API인증키
-GEMINI_API_KEY=AI... (RAG용)
+GEMINI_API_KEY=AI...
+
+# AI API (선택적 — 해당 기능 사용 시 필요)
+OPENAI_API_KEY=sk-...              # 임베딩, PDF 퀴즈 파싱
+ANTHROPIC_API_KEY=sk-ant-...       # Claude OCR (폴백)
+
+# 외부 서비스
+LAW_API_OC=법제처API인증키          # 법령 임포트
+
+# 인증
+AUTH_TOKEN_SECRET=32자이상시크릿     # JWT 서명 키 (필수 설정 권장)
+
+# OCR 엔진 (선택적)
+OCR_SPACE_API_KEY=K...             # OCR.space 무료
+CLOVA_OCR_SECRET=...               # 네이버 CLOVA
+CLOVA_OCR_URL=...                  # 네이버 CLOVA 엔드포인트
+GOOGLE_VISION_API_KEY=...          # Google Cloud Vision
+AWS_ACCESS_KEY_ID=...              # AWS Textract
+AWS_SECRET_ACCESS_KEY=...          # AWS Textract
+AWS_TEXTRACT_REGION=ap-northeast-2 # AWS Textract 리전
 ```

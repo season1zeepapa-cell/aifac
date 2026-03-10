@@ -14,6 +14,8 @@ const { detectFileType, extractFromFile } = require('../lib/text-extractor');
 const { chunkText, generateEmbeddings } = require('../lib/embeddings');
 const { query } = require('./db');
 const { requireAdmin } = require('./auth');
+const { setCors } = require('./cors');
+const { checkRateLimit } = require('./rate-limit');
 
 // multer: 메모리 스토리지 (Vercel 서버리스 호환)
 // 모든 파일 형식 허용
@@ -23,11 +25,7 @@ const upload = multer({
 });
 
 module.exports = async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: '허용되지 않는 메서드입니다.' });
@@ -36,6 +34,9 @@ module.exports = async function handler(req, res) {
   // 인증 체크
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
+
+  // Rate Limit 체크
+  if (checkRateLimit(req, res, 'upload')) return;
 
   try {
     // multipart/form-data 처리 (multer)

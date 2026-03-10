@@ -3,13 +3,11 @@
 const { query } = require('./db');
 const { generateEmbedding } = require('../lib/embeddings');
 const { requireAdmin } = require('./auth');
+const { setCors } = require('./cors');
+const { checkRateLimit } = require('./rate-limit');
 
 module.exports = async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (setCors(req, res, { methods: 'GET, OPTIONS' })) return;
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: '허용되지 않는 메서드입니다.' });
@@ -18,6 +16,8 @@ module.exports = async function handler(req, res) {
   // 인증 체크
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
+
+  if (checkRateLimit(req, res, 'search')) return;
 
   const q = req.query.q;
   const type = req.query.type || 'text';

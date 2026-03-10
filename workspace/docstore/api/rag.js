@@ -10,6 +10,8 @@
 const { query } = require('./db');
 const { generateEmbedding } = require('../lib/embeddings');
 const { requireAdmin } = require('./auth');
+const { setCors } = require('./cors');
+const { checkRateLimit } = require('./rate-limit');
 const https = require('https');
 
 // Gemini API 호출 헬퍼
@@ -48,16 +50,14 @@ function callGemini(prompt, apiKey) {
 }
 
 module.exports = async (req, res) => {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
 
   // 인증 체크
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
+
+  if (checkRateLimit(req, res, 'rag')) return;
 
   const { question, topK = 5, docId } = req.body;
   if (!question || question.trim().length === 0) {

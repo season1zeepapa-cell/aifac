@@ -6,6 +6,8 @@ const http = require('http');
 const { chunkText, generateEmbeddings } = require('../lib/embeddings');
 const { query } = require('./db');
 const { requireAdmin } = require('./auth');
+const { setCors } = require('./cors');
+const { checkRateLimit } = require('./rate-limit');
 
 /**
  * URL에서 HTML을 가져온 뒤 본문 텍스트를 추출
@@ -89,15 +91,14 @@ function splitIntoParagraphs(text) {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
   // 인증 체크
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
+
+  if (checkRateLimit(req, res, 'urlImport')) return;
 
   const { url, title: inputTitle, category = '기타' } = req.body;
 
