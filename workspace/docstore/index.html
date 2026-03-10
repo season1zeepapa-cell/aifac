@@ -1528,6 +1528,13 @@
       const [tagLoading, setTagLoading] = useState(false);
       // AI 분석
       const [analyzing, setAnalyzing] = useState(false);
+      // UX1: 인라인 메타 편집
+      const [editingMeta, setEditingMeta] = useState(false);
+      const [editTitle, setEditTitle] = useState('');
+      const [editCategory, setEditCategory] = useState('');
+      const [savingMeta, setSavingMeta] = useState(false);
+      // UX2: 임베딩 재생성
+      const [rebuildingEmb, setRebuildingEmb] = useState(false);
       // 법령 문서: 조문 목록 / 참조 그래프 탭
       const [detailTab, setDetailTab] = useState('sections');
       // 원본 이미지 미리보기 Blob URL
@@ -1766,6 +1773,54 @@
         }
       }, [documentId]);
 
+      // UX1: 메타 수정 저장
+      const handleSaveMeta = useCallback(async () => {
+        if (!documentId) return;
+        setSavingMeta(true);
+        try {
+          const body = { action: 'updateMeta', id: documentId };
+          if (editTitle.trim()) body.title = editTitle.trim();
+          if (editCategory.trim()) body.category = editCategory.trim();
+          const res = await authFetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || '수정 실패'); }
+          // 데이터 리로드
+          const docRes = await authFetch(`${API_BASE_URL}/documents?id=${documentId}`);
+          if (docRes.ok) setData(await docRes.json());
+          setEditingMeta(false);
+        } catch (err) {
+          alert(`메타 수정 실패: ${err.message}`);
+        } finally {
+          setSavingMeta(false);
+        }
+      }, [documentId, editTitle, editCategory]);
+
+      // UX2: 임베딩 재생성
+      const handleRebuildEmbeddings = useCallback(async () => {
+        if (!documentId) return;
+        setRebuildingEmb(true);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'rebuildEmbeddings', id: documentId }),
+          });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || '임베딩 재생성 실패'); }
+          const result = await res.json();
+          // 데이터 리로드
+          const docRes = await authFetch(`${API_BASE_URL}/documents?id=${documentId}`);
+          if (docRes.ok) setData(await docRes.json());
+          alert(`임베딩 재생성 완료: ${result.totalChunks}개 청크`);
+        } catch (err) {
+          alert(`임베딩 재생성 실패: ${err.message}`);
+        } finally {
+          setRebuildingEmb(false);
+        }
+      }, [documentId]);
+
       // 조문 ID로 스크롤 이동
       const scrollToArticle = useCallback((refId) => {
         // refId: "제10조", "제3조의2" 등
@@ -1901,12 +1956,43 @@
               {/* 문서 정보 + 버튼 영역 */}
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex flex-wrap gap-2 items-center text-sm text-text-secondary">
-                  <Badge color={doc.category === '법령' ? 'primary' : doc.category === '기출' ? 'green' : doc.category === '규정' ? 'yellow' : 'gray'}>
-                    {doc.category}
-                  </Badge>
-                  <span>{formatDate(doc.created_at)}</span>
-                  <span>{sections.length}개 섹션</span>
-                  {doc.file_size > 0 && <span>{formatFileSize(doc.file_size)}</span>}
+                  {editingMeta ? (
+                    <React.Fragment>
+                      <input
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        className="px-2 py-1 bg-bg border border-primary rounded text-sm text-text font-medium w-48 focus:outline-none"
+                        placeholder="제목"
+                      />
+                      <select
+                        value={editCategory}
+                        onChange={e => setEditCategory(e.target.value)}
+                        className="px-2 py-1 bg-bg border border-primary rounded text-sm text-text focus:outline-none"
+                      >
+                        {CATEGORIES.filter(c => c.value).map(c => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                      </select>
+                      <Button variant="primary" size="sm" onClick={handleSaveMeta} disabled={savingMeta}>
+                        {savingMeta ? '저장...' : '저장'}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditingMeta(false)}>취소</Button>
+                    </React.Fragment>
+                  ) : (
+                    <React.Fragment>
+                      <Badge color={doc.category === '법령' ? 'primary' : doc.category === '기출' ? 'green' : doc.category === '규정' ? 'yellow' : 'gray'}>
+                        {doc.category}
+                      </Badge>
+                      <span>{formatDate(doc.created_at)}</span>
+                      <span>{sections.length}개 섹션</span>
+                      {doc.file_size > 0 && <span>{formatFileSize(doc.file_size)}</span>}
+                      <button
+                        onClick={() => { setEditTitle(doc.title); setEditCategory(doc.category || ''); setEditingMeta(true); }}
+                        className="text-xs text-primary hover:text-primary-hover underline ml-1"
+                        title="제목/카테고리 수정"
+                      >수정</button>
+                    </React.Fragment>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* LLM 프로바이더 선택 */}
@@ -1941,6 +2027,13 @@
                   <Button variant="secondary" size="sm" onClick={handleAnalyze} disabled={analyzing}>
                     {analyzing ? 'AI 분석 중...' : 'AI 분석'}
                   </Button>
+                  {/* UX2: 임베딩 상태 + 재생성 버튼 */}
+                  {(doc.embedding_status === 'failed' || doc.embedding_status === 'pending') && (
+                    <Button variant="ghost" size="sm" onClick={handleRebuildEmbeddings} disabled={rebuildingEmb}
+                      className="text-red-500 hover:text-red-600">
+                      {rebuildingEmb ? '재생성 중...' : '임베딩 재시도'}
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -2660,6 +2753,28 @@
         } catch (e) { console.warn('즐겨찾기 실패:', e.message); }
       }, []);
 
+      // UX2: 임베딩 재생성 (목록에서 바로 실행)
+      const [rebuildingEmbId, setRebuildingEmbId] = useState(null);
+      const handleRebuildEmb = useCallback(async (docId, e) => {
+        e.stopPropagation();
+        setRebuildingEmbId(docId);
+        try {
+          const resp = await authFetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'rebuildEmbeddings', id: docId }),
+          });
+          if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || '실패'); }
+          setDocuments(prev => prev.map(d =>
+            d.id === docId ? { ...d, embedding_status: 'done' } : d
+          ));
+        } catch (err) {
+          alert(`임베딩 재생성 실패: ${err.message}`);
+        } finally {
+          setRebuildingEmbId(null);
+        }
+      }, []);
+
       // 문서 목록 불러오기
       const fetchDocuments = useCallback(async () => {
         setLoading(true);
@@ -2919,6 +3034,15 @@
                                 doc.embedding_status === 'done' ? 'bg-green-400' : doc.embedding_status === 'failed' ? 'bg-red-400' : 'bg-yellow-400'
                               }`} />
                               {doc.embedding_status === 'done' ? '벡터화됨' : doc.embedding_status === 'failed' ? '벡터 실패' : '대기'}
+                              {doc.embedding_status === 'failed' && (
+                                <button
+                                  onClick={(e) => handleRebuildEmb(doc.id, e)}
+                                  disabled={rebuildingEmbId === doc.id}
+                                  className="text-red-500 hover:text-red-600 underline text-[10px] ml-0.5"
+                                >
+                                  {rebuildingEmbId === doc.id ? '재생성중...' : '재시도'}
+                                </button>
+                              )}
                             </span>
                             <span>{formatDate(doc.created_at)}</span>
                           </React.Fragment>

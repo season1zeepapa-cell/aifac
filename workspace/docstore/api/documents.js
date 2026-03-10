@@ -289,6 +289,51 @@ module.exports = async function handler(req, res) {
         return res.json({ success: true });
       }
 
+      // 메타 수정 — { action: 'updateMeta', id: 문서ID, title?, category? }
+      if (action === 'updateMeta' && id) {
+        const { title, category } = req.body;
+        if (!title && !category) {
+          return res.status(400).json({ error: '수정할 항목(title 또는 category)이 필요합니다.' });
+        }
+        const sets = [];
+        const params = [];
+        let idx = 1;
+        if (title !== undefined) {
+          sets.push(`title = $${idx}`);
+          params.push(title.trim());
+          idx++;
+        }
+        if (category !== undefined) {
+          sets.push(`category = $${idx}`);
+          params.push(category.trim());
+          idx++;
+        }
+        params.push(id);
+        const result = await query(
+          `UPDATE documents SET ${sets.join(', ')} WHERE id = $${idx} AND deleted_at IS NULL RETURNING id, title, category`,
+          params
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
+        return res.json({ success: true, document: result.rows[0] });
+      }
+
+      // 임베딩 재생성 — { action: 'rebuildEmbeddings', id: 문서ID }
+      if (action === 'rebuildEmbeddings' && id) {
+        const { createEmbeddingsForDocument } = require('../lib/embeddings');
+        // 상태를 pending으로 변경
+        await query('UPDATE documents SET embedding_status = $1 WHERE id = $2', ['pending', id]);
+        try {
+          const totalChunks = await createEmbeddingsForDocument({ query }, id);
+          await query('UPDATE documents SET embedding_status = $1 WHERE id = $2', ['done', id]);
+          console.log(`[Embeddings] 문서 ${id} 임베딩 재생성 완료: ${totalChunks}개 청크`);
+          return res.json({ success: true, documentId: id, totalChunks, embedding_status: 'done' });
+        } catch (embErr) {
+          await query('UPDATE documents SET embedding_status = $1 WHERE id = $2', ['failed', id]);
+          console.error(`[Embeddings] 문서 ${id} 재생성 실패:`, embErr.message);
+          return res.status(500).json({ error: `임베딩 재생성 실패: ${embErr.message}` });
+        }
+      }
+
       // 즐겨찾기 토글 — { action: 'toggleFavorite', id: 문서ID }
       if (action === 'toggleFavorite' && id) {
         const result = await query(
