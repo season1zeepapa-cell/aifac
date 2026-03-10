@@ -2246,6 +2246,10 @@
       const [actionLoading, setActionLoading] = useState(null);
       // 인라인 결과 메시지 { id: string, success: bool, message: string }
       const [actionResult, setActionResult] = useState(null);
+      // 한도 인라인 편집 { provider: string, value: string }
+      const [editingLimit, setEditingLimit] = useState(null);
+      // 에러 필터
+      const [errorFilter, setErrorFilter] = useState('all');
       // OCR 상태
       const [engines, setEngines] = useState([]);
       const [ocrLoading, setOcrLoading] = useState(true);
@@ -2306,15 +2310,14 @@
         } finally { setActionLoading(null); }
       }, [fetchData]);
 
-      const handleUpdateLimit = useCallback(async (provider, currentLimit) => {
-        const newLimit = prompt(`${provider} 일일 호출 한도 (0 = 무제한)`, currentLimit);
-        if (newLimit === null) return;
+      const handleUpdateLimit = useCallback(async (provider, value) => {
         setActionLoading(`limit-${provider}`);
         try {
           await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'updateLimit', provider, dailyLimit: parseInt(newLimit) || 0 }),
+            body: JSON.stringify({ action: 'updateLimit', provider, dailyLimit: parseInt(value) || 0 }),
           });
+          setEditingLimit(null);
           fetchData();
         } finally { setActionLoading(null); }
       }, [fetchData]);
@@ -2530,9 +2533,20 @@
                           <span>호출: <span className="text-text font-medium">{callCount}</span></span>
                           <span>비용: <span className="text-primary font-medium">${parseFloat(usage?.total_cost || 0).toFixed(4)}</span></span>
                         </div>
-                        <button onClick={() => handleUpdateLimit(key.provider, key.daily_limit || 0)}
-                          className="hover:text-primary transition-colors"
-                        >한도: {key.daily_limit ? `${callCount}/${key.daily_limit}` : '무제한'}</button>
+                        {editingLimit?.provider === key.provider ? (
+                          <form className="flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); handleUpdateLimit(key.provider, editingLimit.value); }}>
+                            <input type="number" min="0" value={editingLimit.value}
+                              onChange={e => setEditingLimit({ ...editingLimit, value: e.target.value })}
+                              className="w-16 px-1.5 py-0.5 text-xs border border-primary rounded text-text text-center bg-white"
+                              autoFocus onBlur={() => setTimeout(() => setEditingLimit(null), 200)} />
+                            <button type="submit" className="text-[10px] px-1.5 py-0.5 bg-primary text-white rounded hover:bg-primary/90">저장</button>
+                            <span className="text-[10px] text-text-secondary">(0=무제한)</span>
+                          </form>
+                        ) : (
+                          <button onClick={() => setEditingLimit({ provider: key.provider, value: String(key.daily_limit || 0) })}
+                            className="hover:text-primary transition-colors"
+                          >한도: {key.daily_limit ? `${callCount}/${key.daily_limit}` : '무제한'}</button>
+                        )}
                       </div>
                       {key.last_checked && (
                         <p className="text-[10px] text-text-secondary">마지막 확인: {new Date(key.last_checked).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
@@ -2567,8 +2581,8 @@
           {/* ════════ 사용량 상세 탭 ════════ */}
           {subTab === 'usage' && (
             <div className="space-y-4">
-              {/* 기간 선택 */}
-              <div className="flex gap-2">
+              {/* 기간 선택 + CSV 내보내기 */}
+              <div className="flex gap-2 items-center">
                 {[{ v: 'today', l: '오늘' }, { v: 'week', l: '7일' }, { v: 'month', l: '30일' }].map(r => (
                   <button key={r.v} onClick={() => setRange(r.v)}
                     className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
@@ -2576,15 +2590,29 @@
                     }`}
                   >{r.l}</button>
                 ))}
+                {data.usageByModel?.length > 0 && (
+                  <button onClick={() => {
+                    const rows = [['프로바이더','모델','엔드포인트','호출수','토큰(입력)','토큰(출력)','비용($)']];
+                    data.usageByModel.forEach(m => rows.push([m.provider, m.model, m.endpoint, m.call_count, m.total_tokens_in, m.total_tokens_out, parseFloat(m.total_cost).toFixed(4)]));
+                    const totals = data.usageByModel.reduce((a, m) => ({ calls: a.calls + parseInt(m.call_count), tIn: a.tIn + parseInt(m.total_tokens_in || 0), tOut: a.tOut + parseInt(m.total_tokens_out || 0), cost: a.cost + parseFloat(m.total_cost) }), { calls: 0, tIn: 0, tOut: 0, cost: 0 });
+                    rows.push(['합계', '', '', totals.calls, totals.tIn, totals.tOut, totals.cost.toFixed(4)]);
+                    const csv = rows.map(r => r.join(',')).join('\n');
+                    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+                    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+                    a.download = `docstore-usage-${range}-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+                  }} className="ml-auto px-2.5 py-1.5 rounded-full text-xs bg-border text-text-secondary hover:text-text transition-colors">
+                    CSV 내보내기
+                  </button>
+                )}
               </div>
 
-              {/* 모델별 사용량 */}
+              {/* 모델별 사용량 + 합계 */}
               {data.usageByModel?.length > 0 ? (
                 <Card>
                   <h4 className="text-xs font-bold text-text mb-3">모델별 사용량</h4>
                   <div className="space-y-1">
                     {data.usageByModel.map((m, i) => (
-                      <div key={i} className="flex items-center justify-between text-xs py-2 border-b border-border/50 last:border-0">
+                      <div key={i} className="flex items-center justify-between text-xs py-2 border-b border-border/50">
                         <div className="flex items-center gap-2 min-w-0">
                           <Badge color={providerColors[m.provider] || 'gray'}>{m.provider}</Badge>
                           <span className="text-text truncate">{m.model}</span>
@@ -2596,18 +2624,52 @@
                         </div>
                       </div>
                     ))}
+                    {/* 합계 행 */}
+                    {(() => {
+                      const t = data.usageByModel.reduce((a, m) => ({
+                        calls: a.calls + parseInt(m.call_count),
+                        tIn: a.tIn + parseInt(m.total_tokens_in || 0),
+                        tOut: a.tOut + parseInt(m.total_tokens_out || 0),
+                        cost: a.cost + parseFloat(m.total_cost)
+                      }), { calls: 0, tIn: 0, tOut: 0, cost: 0 });
+                      return (
+                        <div className="flex items-center justify-between text-xs py-2.5 mt-1 border-t-2 border-border">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-text">합계</span>
+                            <span className="text-text-secondary text-[10px]">토큰: 입력 {t.tIn.toLocaleString()} / 출력 {t.tOut.toLocaleString()}</span>
+                          </div>
+                          <div className="flex gap-3 shrink-0">
+                            <span className="font-bold text-text">{t.calls}회</span>
+                            <span className="text-primary font-bold">${t.cost.toFixed(4)}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </Card>
               ) : (
                 <Card><p className="text-xs text-text-secondary text-center py-6">선택한 기간에 사용 기록이 없습니다.</p></Card>
               )}
 
-              {/* 전체 에러 로그 */}
+              {/* 에러 로그 + 필터 */}
               {data.recentErrors?.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-bold text-text mb-2">에러 로그</h4>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-bold text-text">에러 로그 ({data.recentErrors.length}건)</h4>
+                    <div className="flex gap-1">
+                      {['all', ...new Set(data.recentErrors.map(e => e.provider))].map(f => (
+                        <button key={f} onClick={() => setErrorFilter(f)}
+                          className={`px-2 py-0.5 rounded-full text-[10px] transition-colors ${
+                            errorFilter === f ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                          }`}
+                        >{f === 'all' ? '전체' : f}</button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="space-y-1.5">
-                    {data.recentErrors.map((e, i) => (
+                    {data.recentErrors
+                      .filter(e => errorFilter === 'all' || e.provider === errorFilter)
+                      .map((e, i) => (
                       <Card key={i} className="border-red-200">
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 text-xs">
@@ -2619,6 +2681,9 @@
                         </div>
                       </Card>
                     ))}
+                    {data.recentErrors.filter(e => errorFilter === 'all' || e.provider === errorFilter).length === 0 && (
+                      <p className="text-xs text-text-secondary text-center py-3">필터 조건에 맞는 에러가 없습니다.</p>
+                    )}
                   </div>
                 </div>
               )}
