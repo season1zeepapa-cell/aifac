@@ -2,8 +2,7 @@
 // 법제처 API에서 조문을 가져와 DB에 저장하고 임베딩 생성
 // + 조문 간 참조 관계 파싱
 const { getLawDetail } = require('../lib/law-fetcher');
-const { generateEnrichedEmbeddings } = require('../lib/embeddings');
-const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
+const { chunkText, generateEmbeddings } = require('../lib/embeddings');
 const { query: dbQuery } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -156,69 +155,34 @@ module.exports = async (req, res) => {
 
     console.log(`  ${articles.length}개 조문 저장 완료 (참조 관계 포함)`);
 
-    // 5) AI 분석 + enriched 임베딩 생성
+    // 5) 임베딩 생성 (비동기 or 동기)
     const embeddingPromise = (async () => {
       try {
-        // 전체 텍스트 합치기
-        const fullText = articles.map(a => `${a.label}\n${a.content}`).join('\n\n');
-
-        // AI 문서 분석 (요약/키워드/태그)
-        let analysis = { summary: '', keywords: [], tags: [] };
-        try {
-          analysis = await analyzeDocument(fullText, title, '법령');
-          if (analysis.summary || analysis.keywords.length > 0) {
-            await dbQuery(
-              'UPDATE documents SET summary = $1, keywords = $2 WHERE id = $3',
-              [analysis.summary, analysis.keywords, documentId]
-            );
-          }
-          // 태그 자동 추가
-          for (const tagName of analysis.tags) {
-            let tagResult = await dbQuery('SELECT id FROM tags WHERE name = $1', [tagName]);
-            if (tagResult.rows.length === 0) {
-              tagResult = await dbQuery('INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]);
-            }
-            await dbQuery(
-              'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-              [documentId, tagResult.rows[0].id]
-            );
-            await dbQuery(
-              'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
-              [tagResult.rows[0].id]
-            );
-          }
-          console.log(`  AI 분석 완료: 태그 ${analysis.tags.length}개`);
-        } catch (analyzeErr) {
-          console.error(`  AI 분석 실패:`, analyzeErr.message);
-        }
-
-        // 섹션별 요약 생성
-        try {
-          const savedSections = await dbQuery(
-            'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY id',
-            [documentId]
-          );
-          const sectionSummaries = await analyzeSections(savedSections.rows);
-          for (const [sectionId, summary] of sectionSummaries) {
-            await dbQuery('UPDATE document_sections SET summary = $1 WHERE id = $2', [summary, sectionId]);
-          }
-        } catch (secErr) {
-          console.error(`  섹션 요약 실패:`, secErr.message);
-        }
-
-        // enriched 임베딩 생성
-        const totalChunks = await generateEnrichedEmbeddings(
-          { query: dbQuery },
-          documentId,
-          {
-            title,
-            summary: analysis.summary,
-            category: '법령',
-            tags: analysis.tags,
-            keywords: analysis.keywords,
-          }
+        let totalChunks = 0;
+        const savedSections = await dbQuery(
+          'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
+          [documentId]
         );
-        console.log(`  enriched 임베딩 완료: ${totalChunks}개 청크`);
+
+        for (const section of savedSections.rows) {
+          if (!section.raw_text || section.raw_text.trim().length === 0) continue;
+
+          const chunks = chunkText(section.raw_text);
+          if (chunks.length === 0) continue;
+
+          const embeddings = await generateEmbeddings(chunks);
+          for (let i = 0; i < chunks.length; i++) {
+            const vecStr = `[${embeddings[i].join(',')}]`;
+            await dbQuery(
+              `INSERT INTO document_chunks (section_id, chunk_text, embedding, chunk_index)
+               VALUES ($1, $2, $3::vector, $4)`,
+              [section.id, chunks[i], vecStr, i]
+            );
+          }
+          totalChunks += chunks.length;
+        }
+        await dbQuery(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
+        console.log(`  임베딩 생성 완료: ${totalChunks}개 청크`);
       } catch (embErr) {
         await dbQuery(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
         console.error(`  임베딩 생성 실패:`, embErr.message);

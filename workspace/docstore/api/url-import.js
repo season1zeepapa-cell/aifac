@@ -3,8 +3,7 @@
 // { url: "https://example.com/page", title: "제목" (선택), category: "기타" (선택) }
 const https = require('https');
 const http = require('http');
-const { generateEnrichedEmbeddings } = require('../lib/embeddings');
-const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
+const { chunkText, generateEmbeddings } = require('../lib/embeddings');
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -157,64 +156,31 @@ module.exports = async (req, res) => {
 
     console.log(`[URL Import] 저장 완료: 문서 ID ${documentId}, ${paragraphs.length}개 섹션`);
 
-    // 6) AI 분석 + enriched 임베딩 생성
+    // 6) 임베딩 생성
     const embeddingPromise = (async () => {
       try {
-        // AI 문서 분석
-        let analysis = { summary: '', keywords: [], tags: [] };
-        try {
-          analysis = await analyzeDocument(extractedText, title, category);
-          if (analysis.summary || analysis.keywords.length > 0) {
-            await query(
-              'UPDATE documents SET summary = $1, keywords = $2 WHERE id = $3',
-              [analysis.summary, analysis.keywords, documentId]
-            );
-          }
-          for (const tagName of analysis.tags) {
-            let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
-            if (tagResult.rows.length === 0) {
-              tagResult = await query('INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]);
-            }
-            await query(
-              'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-              [documentId, tagResult.rows[0].id]
-            );
-            await query(
-              'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
-              [tagResult.rows[0].id]
-            );
-          }
-        } catch (analyzeErr) {
-          console.error(`[URL Import] AI 분석 실패:`, analyzeErr.message);
-        }
-
-        // 섹션별 요약
-        try {
-          const savedSections = await query(
-            'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY id',
-            [documentId]
-          );
-          const sectionSummaries = await analyzeSections(savedSections.rows);
-          for (const [sectionId, summary] of sectionSummaries) {
-            await query('UPDATE document_sections SET summary = $1 WHERE id = $2', [summary, sectionId]);
-          }
-        } catch (secErr) {
-          console.error(`[URL Import] 섹션 요약 실패:`, secErr.message);
-        }
-
-        // enriched 임베딩 생성
-        const totalChunks = await generateEnrichedEmbeddings(
-          { query },
-          documentId,
-          {
-            title,
-            summary: analysis.summary,
-            category,
-            tags: analysis.tags,
-            keywords: analysis.keywords,
-          }
+        let totalChunks = 0;
+        const savedSections = await query(
+          'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
+          [documentId]
         );
-        console.log(`[URL Import] enriched 임베딩 완료: ${totalChunks}개 청크`);
+        for (const section of savedSections.rows) {
+          if (!section.raw_text || section.raw_text.trim().length === 0) continue;
+          const chunks = chunkText(section.raw_text);
+          if (chunks.length === 0) continue;
+          const embeddings = await generateEmbeddings(chunks);
+          for (let i = 0; i < chunks.length; i++) {
+            const vecStr = `[${embeddings[i].join(',')}]`;
+            await query(
+              `INSERT INTO document_chunks (section_id, chunk_text, embedding, chunk_index)
+               VALUES ($1, $2, $3::vector, $4)`,
+              [section.id, chunks[i], vecStr, i]
+            );
+          }
+          totalChunks += chunks.length;
+        }
+        await query(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
+        console.log(`[URL Import] 임베딩 완료: ${totalChunks}개 청크`);
       } catch (embErr) {
         await query(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
         console.error(`[URL Import] 임베딩 실패:`, embErr.message);
