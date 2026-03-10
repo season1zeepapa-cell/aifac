@@ -142,7 +142,9 @@ module.exports = async function handler(req, res) {
     if (req.file) {
       // multipart 업로드
       fileBuffer = req.file.buffer;
-      filename = sanitizeFilename(req.file.originalname);
+      // multer는 파일명을 Latin-1로 디코딩하므로 UTF-8로 재변환 (한글 깨짐 방지)
+      const rawName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+      filename = sanitizeFilename(rawName);
       mimetype = req.file.mimetype;
     } else if (req.body && req.body.fileBase64) {
       // JSON base64 업로드
