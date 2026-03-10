@@ -246,6 +246,106 @@
       return { progress, message, start, finish, reset };
     }
 
+    // ── XHR 기반 실시간 업로드 진행률 훅 ──
+    // 파일 전송(0~50%): 바이트 기반 실시간, 서버 처리(50~100%): 시뮬레이션
+    function useUploadProgress() {
+      const [progress, setProgress] = React.useState(0);
+      const [message, setMessage] = React.useState('');
+      const timerRef = React.useRef(null);
+      const xhrRef = React.useRef(null);
+
+      // XHR로 파일 업로드 + 진행률 추적
+      const upload = React.useCallback((url, formData, token) => {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhrRef.current = xhr;
+
+          // 파일 전송 진행률 (0~50%)
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = (e.loaded / e.total) * 50;
+              setProgress(pct);
+              const mb = (e.loaded / 1024 / 1024).toFixed(1);
+              const totalMb = (e.total / 1024 / 1024).toFixed(1);
+              setMessage(`파일 전송 중... ${mb}MB / ${totalMb}MB`);
+            }
+          };
+
+          // 파일 전송 완료 → 서버 처리 시뮬레이션 시작 (50~95%)
+          xhr.upload.onload = () => {
+            setProgress(50);
+            setMessage('서버에서 텍스트 추출 중...');
+            const serverSteps = [
+              { msg: '서버에서 텍스트 추출 중...', pct: 55, delay: 3000 },
+              { msg: 'DB 저장 중...', pct: 62, delay: 3000 },
+              { msg: '임베딩 생성 중...', pct: 70, delay: 5000 },
+              { msg: '임베딩 처리 중...', pct: 80, delay: 5000 },
+              { msg: '마무리 중...', pct: 90, delay: 5000 },
+            ];
+            let idx = 0;
+            timerRef.current = setInterval(() => {
+              idx++;
+              if (idx < serverSteps.length) {
+                setProgress(serverSteps[idx].pct);
+                setMessage(serverSteps[idx].msg);
+              } else {
+                setProgress(prev => Math.min(95, prev + 0.5));
+              }
+            }, serverSteps[idx]?.delay || 4000);
+          };
+
+          // 응답 수신 완료
+          xhr.onload = () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText));
+              } catch {
+                reject(new Error('응답 파싱 실패'));
+              }
+            } else {
+              try {
+                const err = JSON.parse(xhr.responseText);
+                reject(new Error(err.error || `업로드 실패 (${xhr.status})`));
+              } catch {
+                reject(new Error(`업로드 실패 (${xhr.status})`));
+              }
+            }
+          };
+
+          xhr.onerror = () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+            reject(new Error('네트워크 오류'));
+          };
+
+          xhr.open('POST', url);
+          if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+          xhr.send(formData);
+        });
+      }, []);
+
+      const finish = React.useCallback((msg) => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        xhrRef.current = null;
+        setProgress(100);
+        setMessage(msg || '완료!');
+      }, []);
+
+      const reset = React.useCallback(() => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        xhrRef.current = null;
+        setProgress(0);
+        setMessage('');
+      }, []);
+
+      React.useEffect(() => () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        if (xhrRef.current) xhrRef.current.abort();
+      }, []);
+
+      return { progress, message, upload, finish, reset };
+    }
+
     // ========================================
     // 카테고리 상수
     // ========================================
@@ -793,22 +893,12 @@
         handleFileSelect(e.dataTransfer.files[0]);
       }, [handleFileSelect]);
 
-      // ── 업로드 실행 (SSE 실시간 진행) ──
-      // 업로드 진행 단계 시뮬레이션
-      const uploadSteps = useMemo(() => [
-        { message: '파일 전송 중...', progress: 10, duration: 2000 },
-        { message: '텍스트 추출 중...', progress: 25, duration: 3000 },
-        { message: 'DB 저장 중...', progress: 40, duration: 2000 },
-        { message: '임베딩 생성 중...', progress: 55, duration: 4000 },
-        { message: '임베딩 처리 중...', progress: 70, duration: 5000 },
-        { message: '마무리 중...', progress: 85, duration: 5000 },
-      ], []);
-      const uploadProgress = useSimulatedProgress(uploadSteps);
+      // ── 업로드 실행 (XHR 실시간 진행률) ──
+      const uploadProgress = useUploadProgress();
 
       const handleUpload = useCallback(async () => {
         if (!file) return;
         setUploading(true);
-        uploadProgress.start();
         setError(null);
         setResult(null);
         try {
@@ -824,12 +914,8 @@
           if (contentField) formData.append('contentField', contentField);
           if (contentType) formData.append('contentType', contentType);
 
-          const res = await authFetch(`${API_BASE_URL}/upload`, { method: 'POST', body: formData });
-          if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.error || `업로드 실패 (${res.status})`);
-          }
-          const data = await res.json();
+          const token = getAuthToken();
+          const data = await uploadProgress.upload(`${API_BASE_URL}/upload`, formData, token);
           uploadProgress.finish('업로드 완료!');
           setResult(data);
           setTimeout(() => {
