@@ -3055,9 +3055,9 @@
                     <ResultCard key={idx} r={r}>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-text text-sm">{r.documentTitle}</span>
+                          <span className="font-medium text-text text-sm">{highlightText(r.documentTitle, results.query)}</span>
                           <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>{r.category}</Badge>
-                          {r.label ? <Badge color="gray">{r.label}</Badge> : <Badge color="gray">섹션 {r.sectionIndex + 1}</Badge>}
+                          {r.label ? <Badge color="gray">{highlightText(r.label, results.query)}</Badge> : <Badge color="gray">섹션 {r.sectionIndex + 1}</Badge>}
                         </div>
                         <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
                           {highlightText(r.rawText, results.query)}
@@ -3080,13 +3080,13 @@
                     <ResultCard key={idx} r={r}>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-text text-sm">{r.documentTitle}</span>
+                          <span className="font-medium text-text text-sm">{highlightText(r.documentTitle, results.query)}</span>
                           <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>{r.category}</Badge>
                           <Badge color="green">유사도 {(r.similarity * 100).toFixed(1)}%</Badge>
-                          {r.label && <Badge color="gray">{r.label}</Badge>}
+                          {r.label && <Badge color="gray">{highlightText(r.label, results.query)}</Badge>}
                         </div>
                         <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
-                          {r.chunkText?.length > 300 ? r.chunkText.slice(0, 300) + '...' : r.chunkText}
+                          {highlightText(r.chunkText, results.query)}
                         </p>
                       </div>
                     </ResultCard>

@@ -5,19 +5,59 @@ const { setCors } = require('../lib/cors');
 const { getSignedUrl, deleteDocumentFiles, isStorageAvailable } = require('../lib/storage');
 const { sendError } = require('../lib/error-handler');
 
-// 문서 영구 삭제 — chunks → sections → tags → Storage → documents 순서로 제거
+// 단일 문서 영구 삭제 — chunks → sections → tags → Storage → documents 순서
 async function deleteDocumentPermanently(docId) {
-  const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [docId]);
-  const sectionIds = sectionRows.rows.map(r => r.id);
-  if (sectionIds.length > 0) {
-    await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+  await query('BEGIN');
+  try {
+    const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [docId]);
+    const sectionIds = sectionRows.rows.map(r => r.id);
+    if (sectionIds.length > 0) {
+      await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+    }
+    await query('DELETE FROM document_sections WHERE document_id = $1', [docId]);
+    await query('DELETE FROM document_tags WHERE document_id = $1', [docId]);
+    await query('DELETE FROM documents WHERE id = $1', [docId]);
+    await query('COMMIT');
+  } catch (err) {
+    await query('ROLLBACK');
+    throw err;
   }
-  await query('DELETE FROM document_sections WHERE document_id = $1', [docId]);
-  await query('DELETE FROM document_tags WHERE document_id = $1', [docId]);
+  // Storage 삭제는 트랜잭션 밖에서 (외부 서비스이므로 실패해도 DB 롤백 불필요)
   if (isStorageAvailable()) {
-    await deleteDocumentFiles(docId);
+    try { await deleteDocumentFiles(docId); } catch (e) {
+      console.warn(`[Documents] Storage 파일 삭제 실패 (문서 ${docId}):`, e.message);
+    }
   }
-  await query('DELETE FROM documents WHERE id = $1', [docId]);
+}
+
+// 복수 문서 배치 영구 삭제 — 트랜잭션 1회로 전체 처리
+async function deleteDocumentsBatch(docIds) {
+  if (docIds.length === 0) return;
+  await query('BEGIN');
+  try {
+    // 1) 해당 문서들의 섹션 ID 일괄 조회
+    const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = ANY($1)', [docIds]);
+    const sectionIds = sectionRows.rows.map(r => r.id);
+    // 2) chunks → sections → tags → documents 순서로 배치 삭제
+    if (sectionIds.length > 0) {
+      await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+    }
+    await query('DELETE FROM document_sections WHERE document_id = ANY($1)', [docIds]);
+    await query('DELETE FROM document_tags WHERE document_id = ANY($1)', [docIds]);
+    await query('DELETE FROM documents WHERE id = ANY($1)', [docIds]);
+    await query('COMMIT');
+  } catch (err) {
+    await query('ROLLBACK');
+    throw err;
+  }
+  // Storage 파일 삭제 (트랜잭션 밖, 개별 실패 무시)
+  if (isStorageAvailable()) {
+    for (const docId of docIds) {
+      try { await deleteDocumentFiles(docId); } catch (e) {
+        console.warn(`[Documents] Storage 파일 삭제 실패 (문서 ${docId}):`, e.message);
+      }
+    }
+  }
 }
 
 module.exports = async function handler(req, res) {
@@ -201,13 +241,12 @@ module.exports = async function handler(req, res) {
         return res.json({ success: true, message: '문서가 영구 삭제되었습니다.' });
       }
 
-      // 휴지통 비우기 — 모든 소프트 삭제 문서를 영구 제거
+      // 휴지통 비우기 — 트랜잭션 배치 삭제로 전체 처리
       if (action === 'emptyTrash') {
         const trashed = await query('SELECT id FROM documents WHERE deleted_at IS NOT NULL');
-        for (const row of trashed.rows) {
-          await deleteDocumentPermanently(row.id);
-        }
-        return res.json({ success: true, message: `${trashed.rows.length}개 문서가 영구 삭제되었습니다.`, count: trashed.rows.length });
+        const docIds = trashed.rows.map(r => r.id);
+        await deleteDocumentsBatch(docIds);
+        return res.json({ success: true, message: `${docIds.length}개 문서가 영구 삭제되었습니다.`, count: docIds.length });
       }
 
       // 태그 추가 — { action: 'addTag', id: 문서ID, tagName: '태그명' }
