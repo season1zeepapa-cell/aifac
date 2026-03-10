@@ -11,9 +11,10 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
-    :root {
+    :root, [data-theme="light"] {
       --bg: #f5f7fa;
       --card-bg: #ffffff;
+      --card-bg-hover: #f8fafc;
       --text: #1e293b;
       --text-secondary: #64748b;
       --primary: #3b82f6;
@@ -21,7 +22,41 @@
       --border: #e2e8f0;
       --danger: #ef4444;
       --danger-hover: #dc2626;
+      --input-bg: #ffffff;
+      --badge-bg: #f1f5f9;
+      --shadow-color: rgba(0,0,0,0.08);
     }
+    [data-theme="dark"] {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-bg-hover: #334155;
+      --text: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --primary: #60a5fa;
+      --primary-hover: #3b82f6;
+      --border: #334155;
+      --danger: #f87171;
+      --danger-hover: #ef4444;
+      --input-bg: #1e293b;
+      --badge-bg: #334155;
+      --shadow-color: rgba(0,0,0,0.3);
+    }
+    /* 다크모드에서 상태 배경색 조정 */
+    [data-theme="dark"] .bg-red-50 { background: rgba(239,68,68,0.12) !important; }
+    [data-theme="dark"] .bg-green-50 { background: rgba(34,197,94,0.12) !important; }
+    [data-theme="dark"] .bg-blue-50 { background: rgba(59,130,246,0.12) !important; }
+    [data-theme="dark"] .bg-yellow-50 { background: rgba(234,179,8,0.12) !important; }
+    [data-theme="dark"] .bg-slate-50 { background: rgba(100,116,139,0.12) !important; }
+    [data-theme="dark"] .bg-gray-50 { background: rgba(100,116,139,0.12) !important; }
+    [data-theme="dark"] .border-red-200 { border-color: rgba(239,68,68,0.3) !important; }
+    [data-theme="dark"] .border-green-200 { border-color: rgba(34,197,94,0.3) !important; }
+    [data-theme="dark"] .border-blue-200 { border-color: rgba(59,130,246,0.3) !important; }
+    [data-theme="dark"] .border-yellow-200 { border-color: rgba(234,179,8,0.3) !important; }
+    [data-theme="dark"] .bg-primary\/5, [data-theme="dark"] .bg-primary\/10 { background: rgba(96,165,250,0.1) !important; }
+    [data-theme="dark"] .bg-gray-100 { background: var(--badge-bg) !important; }
+    [data-theme="dark"] .bg-slate-100 { background: var(--badge-bg) !important; }
+    [data-theme="dark"] .text-gray-400 { color: var(--text-secondary) !important; }
+    [data-theme="dark"] .text-gray-500 { color: var(--text-secondary) !important; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -40,7 +75,7 @@
     }
     .drop-zone.drag-over {
       border-color: var(--primary);
-      background: rgba(59, 130, 246, 0.06);
+      background: color-mix(in srgb, var(--primary) 8%, transparent);
     }
     /* 스크롤바 */
     ::-webkit-scrollbar { width: 6px; }
@@ -71,7 +106,7 @@
       background: var(--primary);
       color: #fff;
       border: none;
-      box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+      box-shadow: 0 2px 8px var(--shadow-color);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -86,7 +121,7 @@
     .markdown-body li { margin-bottom: 0.25em; }
     .markdown-body strong { color: var(--primary); }
     .markdown-body h1, .markdown-body h2, .markdown-body h3 { margin-top: 1em; margin-bottom: 0.5em; color: var(--text); font-weight: 600; }
-    .markdown-body code { background: rgba(59,130,246,0.08); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+    .markdown-body code { background: color-mix(in srgb, var(--primary) 10%, transparent); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
     .markdown-body blockquote { border-left: 3px solid var(--primary); padding-left: 1em; color: var(--text-secondary); margin: 0.5em 0; }
   </style>
   <script>
@@ -94,14 +129,23 @@
       theme: {
         extend: {
           colors: {
-            bg: '#f5f7fa',
-            'card-bg': '#ffffff',
-            'card-bg-hover': '#f8fafc',
-            text: '#1e293b',
-            'text-secondary': '#64748b',
-            primary: '#3b82f6',
-            'primary-hover': '#2563eb',
-            border: '#e2e8f0',
+            bg: 'var(--bg)',
+            'card-bg': 'var(--card-bg)',
+            'card-bg-hover': 'var(--card-bg-hover)',
+            text: 'var(--text)',
+            'text-secondary': 'var(--text-secondary)',
+            primary: 'var(--primary)',
+            'primary-hover': 'var(--primary-hover)',
+            border: 'var(--border)',
+            danger: 'var(--danger)',
+            'danger-hover': 'var(--danger-hover)',
+            'input-bg': 'var(--input-bg)',
+            'badge-bg': 'var(--badge-bg)',
+          },
+          boxShadow: {
+            'sm': '0 1px 2px var(--shadow-color)',
+            'md': '0 4px 6px var(--shadow-color)',
+            'lg': '0 10px 15px var(--shadow-color)',
           }
         }
       }
@@ -110,8 +154,35 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    // 다크모드 깜빡임 방지: React 렌더링 전에 테마 적용
+    (function() {
+      var theme = localStorage.getItem('docstore_theme') || 'light';
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ========================================
+    // 다크모드 테마 관리
+    // ========================================
+    function useTheme() {
+      const [theme, setThemeState] = useState(() => {
+        return localStorage.getItem('docstore_theme') || 'light';
+      });
+
+      useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('docstore_theme', theme);
+      }, [theme]);
+
+      const toggle = useCallback(() => {
+        setThemeState(prev => prev === 'light' ? 'dark' : 'light');
+      }, []);
+
+      return { theme, toggle };
+    }
 
     // ========================================
     // API 설정
@@ -525,7 +596,7 @@
             onChange={onChange}
             placeholder={placeholder}
             disabled={disabled}
-            className="w-full px-3 py-2 bg-white border border-border rounded-lg text-text placeholder-text-secondary/50 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors disabled:opacity-50"
+            className="w-full px-3 py-2 bg-card-bg border border-border rounded-lg text-text placeholder-text-secondary/50 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors disabled:opacity-50"
           />
           {error && <span className="text-sm text-red-500">{error}</span>}
         </div>
@@ -540,7 +611,7 @@
           <select
             value={value}
             onChange={onChange}
-            className="w-full px-3 py-2 bg-white border border-border rounded-lg text-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors appearance-none cursor-pointer"
+            className="w-full px-3 py-2 bg-card-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors appearance-none cursor-pointer"
             style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0a0a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
           >
             {options.map(opt => (
@@ -582,13 +653,13 @@
           <button
             type="button"
             onClick={() => setOpen(!open)}
-            className="w-full px-3 py-2 bg-white border border-border rounded-lg text-left text-sm text-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+            className="w-full px-3 py-2 bg-card-bg border border-border rounded-lg text-left text-sm text-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
           >
             <span className={selectedIds.length === 0 ? 'text-text-secondary' : ''}>{displayText}</span>
             <svg className="w-3 h-3 absolute right-3 top-1/2 mt-2 -translate-y-1/2 text-text-secondary" fill="currentColor" viewBox="0 0 12 12"><path d="M6 8L1 3h10z"/></svg>
           </button>
           {open && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-border rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+            <div className="absolute top-full left-0 right-0 mt-1 bg-card-bg border border-border rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
               {selectedIds.length > 0 && (
                 <button
                   onClick={() => onChange([])}
@@ -701,10 +772,10 @@
     // ========================================
 
     // 헤더
-    function Header({ onLogout, onHomeClick }) {
+    function Header({ onLogout, onHomeClick, theme, onToggleTheme }) {
       const user = getAuthUser();
       return (
-        <header className="bg-white border-b border-border px-4 py-3 sticky top-0 z-40 shadow-sm">
+        <header className="bg-card-bg border-b border-border px-4 py-3 sticky top-0 z-40 shadow-sm">
           <div className="max-w-3xl mx-auto flex items-center justify-between">
             <button onClick={onHomeClick} className="flex items-center gap-1.5 hover:opacity-70 transition-opacity">
               <h1 className="text-xl font-bold text-primary">DocStore</h1>
@@ -712,6 +783,18 @@
             {onLogout && (
               <div className="flex items-center gap-3">
                 {user && <span className="text-xs text-text-secondary">{user.name}</span>}
+                {/* 다크모드 토글 */}
+                <button
+                  onClick={onToggleTheme}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-text-secondary hover:text-text hover:bg-card-bg-hover transition-colors"
+                  title={theme === 'light' ? '다크모드' : '라이트모드'}
+                >
+                  {theme === 'light' ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                  )}
+                </button>
                 <button
                   onClick={onLogout}
                   className="text-xs text-text-secondary hover:text-red-500 border border-border rounded px-2 py-1 transition-colors"
@@ -746,7 +829,7 @@
       ];
 
       return (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-border z-40 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
+        <nav className="fixed bottom-0 left-0 right-0 bg-card-bg border-t border-border z-40 shadow-sm">
           <div className="max-w-3xl mx-auto grid grid-cols-5">
             {tabs.map(tab => (
               <button
@@ -1049,19 +1132,19 @@
             <button
               onClick={() => setUploadMode('file')}
               className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
-                uploadMode === 'file' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-text'
+                uploadMode === 'file' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
             >파일 업로드</button>
             <button
               onClick={() => setUploadMode('law')}
               className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
-                uploadMode === 'law' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-text'
+                uploadMode === 'law' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
             >법령 검색</button>
             <button
               onClick={() => setUploadMode('url')}
               className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
-                uploadMode === 'url' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-text'
+                uploadMode === 'url' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
             >URL 크롤링</button>
           </div>
@@ -2185,7 +2268,7 @@
                     className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
                       categoryFilter === cat.value
                         ? 'bg-primary text-white shadow-sm'
-                        : 'bg-white border border-border text-text-secondary hover:text-text hover:border-primary/30'
+                        : 'bg-card-bg border border-border text-text-secondary hover:text-text hover:border-primary/30'
                     }`}
                   >
                     {cat.label}
@@ -2206,7 +2289,7 @@
               className={`relative px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors shrink-0 ${
                 showTrash
                   ? 'bg-red-50 text-red-500 border border-red-200'
-                  : 'bg-white border border-border text-text-secondary hover:text-text'
+                  : 'bg-card-bg border border-border text-text-secondary hover:text-text'
               }`}
             >
               <svg className="w-4 h-4 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
@@ -3058,7 +3141,7 @@
                   <div className={`rounded-2xl px-4 py-3 ${
                     msg.role === 'user'
                       ? 'bg-primary text-white rounded-br-md'
-                      : 'bg-white border border-border rounded-bl-md shadow-sm'
+                      : 'bg-card-bg border border-border rounded-bl-md shadow-sm'
                   }`}>
                     {msg.role === 'assistant' ? (
                       <div>
@@ -3117,7 +3200,7 @@
             {/* 로딩 인디케이터 */}
             {loading && (
               <div className="flex justify-start">
-                <div className="bg-white border border-border rounded-2xl rounded-bl-md px-4 py-3 shadow-sm">
+                <div className="bg-card-bg border border-border rounded-2xl rounded-bl-md px-4 py-3 shadow-sm">
                   <div className="flex items-center gap-2">
                     <div className="flex gap-1">
                       <div className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -3632,7 +3715,7 @@
                           <form className="flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); handleUpdateLimit(key.provider, editingLimit.value); }}>
                             <input type="number" min="0" value={editingLimit.value}
                               onChange={e => setEditingLimit({ ...editingLimit, value: e.target.value })}
-                              className="w-16 px-1.5 py-0.5 text-xs border border-primary rounded text-text text-center bg-white"
+                              className="w-16 px-1.5 py-0.5 text-xs border border-primary rounded text-text text-center bg-card-bg"
                               autoFocus onBlur={() => setTimeout(() => setEditingLimit(null), 200)} />
                             <button type="submit" className="text-[10px] px-1.5 py-0.5 bg-primary text-white rounded hover:bg-primary/90">저장</button>
                             <span className="text-[10px] text-text-secondary">(0=무제한)</span>
@@ -3875,7 +3958,7 @@
                           dragOverIndex === index && dragIndex !== null && dragIndex !== index
                             ? 'border-primary border-2 bg-blue-50/50'
                             : engine.is_enabled && engine.is_available
-                              ? 'bg-white border-border shadow-sm'
+                              ? 'bg-card-bg border-border shadow-sm'
                               : !engine.is_available
                                 ? 'bg-gray-50 border-dashed border-gray-300'
                                 : 'bg-gray-50 border-border/50 opacity-70'
@@ -3932,7 +4015,7 @@
     // ========================================
     // 로그인 화면
     // ========================================
-    function LoginScreen({ onLogin }) {
+    function LoginScreen({ onLogin, theme, onToggleTheme }) {
       const [id, setId] = useState('');
       const [password, setPassword] = useState('');
       const [error, setError] = useState('');
@@ -3964,6 +4047,16 @@
       return (
         <div className="min-h-screen flex items-center justify-center px-4">
           <div className="w-full max-w-sm">
+            {/* 테마 토글 */}
+            <div className="flex justify-end mb-4">
+              <button onClick={onToggleTheme} className="w-8 h-8 flex items-center justify-center rounded-lg text-text-secondary hover:text-text transition-colors" title={theme === 'light' ? '다크모드' : '라이트모드'}>
+                {theme === 'light' ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                )}
+              </button>
+            </div>
             {/* 로고 영역 */}
             <div className="text-center mb-8">
               <div className="text-4xl mb-2">&#128218;</div>
@@ -3972,7 +4065,7 @@
             </div>
 
             {/* 로그인 폼 */}
-            <form onSubmit={handleSubmit} className="bg-white rounded-xl p-6 border border-border shadow-lg">
+            <form onSubmit={handleSubmit} className="bg-card-bg rounded-xl p-6 border border-border shadow-lg">
               {error && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
                   {error}
@@ -3985,7 +4078,7 @@
                   type="text"
                   value={id}
                   onChange={e => setId(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-white border border-border rounded-lg text-text text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  className="w-full px-3 py-2.5 bg-card-bg border border-border rounded-lg text-text text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   placeholder="아이디를 입력하세요"
                   autoFocus
                   autoComplete="username"
@@ -3998,7 +4091,7 @@
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-white border border-border rounded-lg text-text text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  className="w-full px-3 py-2.5 bg-card-bg border border-border rounded-lg text-text text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   placeholder="비밀번호를 입력하세요"
                   autoComplete="current-password"
                 />
@@ -4021,6 +4114,7 @@
       const [isLoggedIn, setIsLoggedIn] = useState(!!getAuthToken());
       const [activeTab, setActiveTab] = useState('upload');
       const [refreshKey, setRefreshKey] = useState(0);
+      const { theme, toggle: toggleTheme } = useTheme();
 
       // 업로드 완료 시 문서 목록 새로고침 트리거
       const handleUploadComplete = useCallback(() => {
@@ -4040,12 +4134,12 @@
 
       // 로그인 전이면 로그인 화면 표시
       if (!isLoggedIn) {
-        return <LoginScreen onLogin={() => setIsLoggedIn(true)} />;
+        return <LoginScreen onLogin={() => setIsLoggedIn(true)} theme={theme} onToggleTheme={toggleTheme} />;
       }
 
       return (
         <div className="min-h-screen pb-16">
-          <Header onLogout={handleLogout} onHomeClick={handleHomeClick} />
+          <Header onLogout={handleLogout} onHomeClick={handleHomeClick} theme={theme} onToggleTheme={toggleTheme} />
           <main className="max-w-3xl mx-auto px-4 py-5">
             {activeTab === 'upload' && (
               <UploadTab onUploadComplete={handleUploadComplete} />
