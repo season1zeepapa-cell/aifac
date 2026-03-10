@@ -448,15 +448,14 @@
     // ========================================
 
     // 헤더
-    function Header({ onLogout }) {
+    function Header({ onLogout, onHomeClick }) {
       const user = getAuthUser();
       return (
         <header className="bg-white border-b border-border px-4 py-3 sticky top-0 z-40 shadow-sm">
           <div className="max-w-3xl mx-auto flex items-center justify-between">
-            <div>
+            <button onClick={onHomeClick} className="flex items-center gap-1.5 hover:opacity-70 transition-opacity">
               <h1 className="text-xl font-bold text-primary">DocStore</h1>
-              <p className="text-xs text-text-secondary mt-0.5 hidden">지식 문서 관리 시스템</p>
-            </div>
+            </button>
             {onLogout && (
               <div className="flex items-center gap-3">
                 {user && <span className="text-xs text-text-secondary">{user.name}</span>}
@@ -2776,6 +2775,13 @@
         setIsLoggedIn(false);
       }, []);
 
+      // 홈 버튼: 문서 목록 탭으로 이동 + 새로고침
+      const handleHomeClick = useCallback(() => {
+        setActiveTab('documents');
+        setRefreshKey(k => k + 1);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, []);
+
       // 로그인 전이면 로그인 화면 표시
       if (!isLoggedIn) {
         return <LoginScreen onLogin={() => setIsLoggedIn(true)} />;
@@ -2783,7 +2789,7 @@
 
       return (
         <div className="min-h-screen pb-16">
-          <Header onLogout={handleLogout} />
+          <Header onLogout={handleLogout} onHomeClick={handleHomeClick} />
           <main className="max-w-3xl mx-auto px-4 py-5">
             {activeTab === 'upload' && (
               <UploadTab onUploadComplete={handleUploadComplete} />
