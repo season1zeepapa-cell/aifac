@@ -1,11 +1,11 @@
 // RAG (Retrieval-Augmented Generation) 질의응답 API
 // POST /api/rag
-// { question: "...", topK: 5, provider: "gemini"|"openai"|"claude" }
+// { question: "...", topK: 5, provider: "gemini"|"openai"|"claude", history: [...] }
 //
 // 처리 흐름:
 // 1) 질문을 벡터로 변환
 // 2) 유사도 높은 조문/청크 topK개 검색
-// 3) 검색 결과를 컨텍스트로 선택된 LLM에 전달
+// 3) 검색 결과 + 대화 히스토리를 컨텍스트로 선택된 LLM에 전달
 // 4) 근거 조문과 함께 답변 생성
 const { query } = require('../lib/db');
 const { generateEmbedding } = require('../lib/embeddings');
@@ -24,7 +24,7 @@ module.exports = async (req, res) => {
 
   if (checkRateLimit(req, res, 'rag')) return;
 
-  const { question, topK = 5, docId, provider = 'gemini' } = req.body;
+  const { question, topK = 5, docId, provider = 'gemini', history = [] } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
   }
@@ -87,11 +87,19 @@ module.exports = async (req, res) => {
       });
     }
 
-    // 3) 선택된 LLM에 컨텍스트와 함께 질문
+    // 3) 선택된 LLM에 컨텍스트 + 대화 히스토리와 함께 질문
     const contextText = sources.map((s, i) => {
       const header = s.label || `${s.documentTitle} - ${s.category}`;
       return `[근거 ${i + 1}] ${header}\n${s.text}`;
     }).join('\n\n---\n\n');
+
+    // 대화 히스토리 구성 (최근 10턴 = 20메시지까지)
+    const recentHistory = Array.isArray(history) ? history.slice(-20) : [];
+    const historyText = recentHistory.length > 0
+      ? '\n\n--- 이전 대화 ---\n' + recentHistory.map(h =>
+          h.role === 'user' ? `사용자: ${h.content}` : `AI: ${h.content}`
+        ).join('\n\n')
+      : '';
 
     const prompt = `당신은 법령 및 규정 전문 AI 어시스턴트입니다. 아래 근거 자료를 참고하여 사용자의 질문에 정확하게 답변해주세요.
 
@@ -101,11 +109,13 @@ module.exports = async (req, res) => {
 - 근거 자료에 없는 내용은 "해당 내용은 제공된 자료에서 확인할 수 없습니다"라고 답변하세요
 - 답변은 한국어로 작성하세요
 - 핵심을 먼저 말하고, 상세 설명을 이어서 하세요
+- 이전 대화가 있으면 맥락을 이어서 답변하세요
 
 --- 근거 자료 ---
 ${contextText}
+${historyText}
 
---- 질문 ---
+--- 현재 질문 ---
 ${question.trim()}`;
 
     const answer = await callLLM(prompt, { provider, temperature: 0.3, maxTokens: 2048 });
