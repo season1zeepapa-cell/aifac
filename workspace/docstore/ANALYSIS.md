@@ -324,6 +324,7 @@ workspace/docstore/
 │   ├── embeddings.js            # 청크 분할 + OpenAI 임베딩
 │   ├── law-fetcher.js           # 법제처 API 클라이언트
 │   ├── api-tracker.js           # API 호출 추적
+│   ├── doc-analyzer.js          # AI 문서 분석 (요약/키워드/태그 자동 생성)
 │   └── ocr/
 │       ├── index.js             # OCR 엔진 매니저
 │       ├── gemini-vision.js     # Gemini 2.5 Flash OCR
@@ -335,6 +336,8 @@ workspace/docstore/
 └── scripts/
     ├── create-tables.js         # DB 스키마 생성
     ├── add-original-file.js     # 원본 파일 컬럼 마이그레이션
+    ├── add-labeling-tables.js   # 라벨링 시스템 마이그레이션
+    ├── reindex-enriched.js      # 기존 문서 enriched 임베딩 재처리
     ├── generate-embeddings.js   # 기존 문서 임베딩 생성
     └── import-pdf.js            # CLI PDF 임포트
 ```
@@ -343,9 +346,11 @@ workspace/docstore/
 
 | 테이블 | 용도 | 주요 컬럼 |
 |--------|------|-----------|
-| `documents` | 문서 메타 + 원본 파일 | id, title, file_type, category, original_file(BYTEA), original_filename, original_mimetype, file_size |
-| `document_sections` | 추출 텍스트 | document_id(FK), section_type, raw_text, metadata(JSONB: summary, references 등) |
-| `document_chunks` | 벡터 임베딩 | section_id(FK), chunk_text, embedding(vector 1536) |
+| `documents` | 문서 메타 + 원본 파일 | id, title, file_type, category, summary, keywords(TEXT[]), summary_embedding(vector 1536), original_file(BYTEA) |
+| `document_sections` | 추출 텍스트 | document_id(FK), section_type, raw_text, summary, metadata(JSONB) |
+| `document_chunks` | 벡터 임베딩 | section_id(FK), chunk_text, enriched_text, embedding(vector 1536) |
+| `tags` | 태그 정의 | id, name(UNIQUE), color, usage_count |
+| `document_tags` | 문서↔태그 연결 | document_id(FK), tag_id(FK) — 복합 PK |
 | `api_usage` | API 호출 기록 | provider, model, endpoint, status, tokens_in/out, cost_estimate |
 | `api_key_status` | API 키 상태 | provider, is_active, daily_limit, last_checked, last_error |
 | `ocr_engine_config` | OCR 엔진 설정 | engine_id, is_enabled, priority_order |
@@ -544,6 +549,164 @@ workspace/docstore/
 3. **요약 캐싱** — 동일 섹션 중복 요약 방지 (현재 적용됨)
 4. **임베딩 배치화** — 개별 → 배치로 API 호출 횟수 최소화 (미적용)
 5. **Rate Limiting** — 일일 한도 설정으로 비용 상한 제어 (미적용)
+
+---
+
+## 벡터화 중심 라벨링 설계 (2026-03-10)
+
+> 문서가 많아지고 종류가 다양해질수록, 검색 정확도를 높이려면
+> "맥락 정보(요약, 태그, 키워드)"를 벡터에 포함시키는 **enriched embedding** 전략이 필요
+
+### 현재 문제점
+
+| 항목 | 현재 상태 | 문제 |
+|------|----------|------|
+| 카테고리 | `category` 단일 자유텍스트 | "법령"/"법률"/"법" 중복, 정규화 안됨 |
+| 태그 | 없음 | 하나의 문서에 여러 주제 붙일 수 없음 |
+| 검색 필터 | `docId`, `chapter` 2개뿐 | 카테고리별, 태그별 필터 불가 |
+| 문서 요약 | 섹션 metadata.summary만 존재 | 문서 전체 요약 없음, 벡터화에 미반영 |
+| 임베딩 | 청크 원문 텍스트만 벡터화 | 맥락 정보 없어 유사도 정확도 낮음 |
+
+### 개선: enriched embedding 전략
+
+```
+[현재] embedding = vectorize(청크_원문)
+[개선] embedding = vectorize(맥락_프리픽스 + 청크_원문)
+
+맥락 프리픽스 예시:
+  [문서] 개인정보 보호법
+  [분류] 법령
+  [태그] CCTV, 개인정보, 설치기준
+  [문서요약] 개인정보의 수집·이용·제공 원칙과 정보주체 권리를 규정
+  [장] 제4장 영상정보처리기기
+  [조항] 제25조 영상정보처리기기의 설치·운영 제한
+  [섹션요약] 공개된 장소에 영상정보처리기기 설치 시 요건과 제한사항
+  (원문 텍스트...)
+```
+
+### DB 스키마 변경
+
+#### 신규 테이블
+
+```sql
+-- 태그 정의
+CREATE TABLE tags (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(50) UNIQUE NOT NULL,
+  color VARCHAR(7) DEFAULT '#6B7280',
+  usage_count INT DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 문서 ↔ 태그 연결 (다대다)
+CREATE TABLE document_tags (
+  document_id INT REFERENCES documents(id) ON DELETE CASCADE,
+  tag_id INT REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (document_id, tag_id)
+);
+
+CREATE INDEX idx_document_tags_doc ON document_tags(document_id);
+CREATE INDEX idx_document_tags_tag ON document_tags(tag_id);
+```
+
+#### 기존 테이블 확장
+
+```sql
+-- documents 테이블
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS summary TEXT;
+  -- 문서 전체 1~3줄 AI 요약
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[];
+  -- AI 추출 핵심 키워드 5~10개
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS summary_embedding vector(1536);
+  -- 문서 요약 벡터 (문서 단위 검색용)
+
+-- document_sections 테이블
+ALTER TABLE document_sections ADD COLUMN IF NOT EXISTS summary TEXT;
+  -- 섹션별 1줄 AI 요약
+
+-- document_chunks 테이블
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS enriched_text TEXT;
+  -- 맥락 프리픽스 + 원문 (이걸로 embedding 생성)
+```
+
+### enriched_text 생성 로직
+
+```javascript
+function buildEnrichedText({
+  chunkText, docTitle, docSummary, category,
+  tags, keywords, sectionSummary, sectionMeta
+}) {
+  const parts = [];
+  // 1) 문서 맥락
+  parts.push(`[문서] ${docTitle}`);
+  if (category) parts.push(`[분류] ${category}`);
+  if (tags.length) parts.push(`[태그] ${tags.join(', ')}`);
+  if (keywords.length) parts.push(`[키워드] ${keywords.join(', ')}`);
+  // 2) 문서 요약
+  if (docSummary) parts.push(`[문서요약] ${docSummary}`);
+  // 3) 섹션 맥락
+  const { label, chapter, section, articleTitle } = sectionMeta;
+  if (chapter) parts.push(`[장] ${chapter}`);
+  if (label) parts.push(`[조항] ${label}`);
+  if (sectionSummary) parts.push(`[섹션요약] ${sectionSummary}`);
+  // 4) 원문
+  parts.push(chunkText);
+  return parts.join('\n');
+}
+```
+
+### 처리 파이프라인
+
+```
+문서 업로드/임포트
+    ↓
+1. 텍스트 추출 & 섹션 분할 (기존)
+    ↓
+2. AI 메타데이터 생성 (Gemini) ← 신규
+   • 문서 전체 요약 → documents.summary
+   • 키워드 추출 → documents.keywords
+   • 섹션별 요약 → document_sections.summary
+   • 태그 자동 추천 → tags + document_tags
+    ↓
+3. enriched 임베딩 생성 ← 핵심 변경
+   • buildEnrichedText() 로 맥락 프리픽스 합성
+   • enriched_text 저장 + embedding 벡터 저장
+    ↓
+4. 문서 요약 벡터 생성 ← 신규
+   • documents.summary_embedding (문서 단위 검색용)
+```
+
+### 2단계 검색 (문서→청크)
+
+```sql
+-- 1단계: 관련 문서 찾기 (summary_embedding)
+SELECT id, title, summary
+FROM documents
+WHERE summary_embedding IS NOT NULL
+ORDER BY summary_embedding <=> $1::vector
+LIMIT 5;
+
+-- 2단계: 해당 문서 내 상세 청크 검색
+SELECT dc.chunk_text, dc.enriched_text
+FROM document_chunks dc
+JOIN document_sections ds ON dc.section_id = ds.id
+WHERE ds.document_id = ANY($2)
+ORDER BY dc.embedding <=> $1::vector
+LIMIT 10;
+```
+
+### 구현 순서
+
+| 순서 | 작업 | 상태 |
+|------|------|------|
+| 1 | DB 마이그레이션 (테이블/컬럼 추가) | ✅ 완료 |
+| 2 | AI 요약·키워드·태그 자동 생성 (`lib/doc-analyzer.js`) | ✅ 완료 |
+| 3 | enriched_text 생성 + 임베딩 개선 (`lib/embeddings.js`) | ✅ 완료 |
+| 4 | 업로드/임포트 파이프라인에 통합 (upload/law-import/url-import) | ✅ 완료 |
+| 5 | 검색 API 태그 필터 + 요약 정보 반환 | ✅ 완료 |
+| 6 | 태그 관리 API (`documents.js` 통합: addTag/removeTag/analyze) | ✅ 완료 |
+| 7 | 기존 문서 일괄 재처리 스크립트 (`scripts/reindex-enriched.js`) | ✅ 완료 |
+| 8 | 프론트엔드 UI (태그 표시/필터/분석 버튼) | 미구현 |
 
 ---
 

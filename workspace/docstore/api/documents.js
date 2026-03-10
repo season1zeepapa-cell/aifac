@@ -1,4 +1,4 @@
-// 문서 목록 조회 / 상세 조회 / 삭제 API
+// 문서 목록 조회 / 상세 조회 / 삭제 / 태그 관리 API
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -55,10 +55,18 @@ module.exports = async function handler(req, res) {
         return res.send(row.original_file);
       }
 
-      // 단건 조회 — 문서 메타 + 섹션 텍스트
+      // 태그 목록 조회 — ?tags=all
+      if (req.query.tags === 'all') {
+        const tagsResult = await query(
+          'SELECT id, name, color, usage_count FROM tags ORDER BY usage_count DESC, name'
+        );
+        return res.json({ tags: tagsResult.rows });
+      }
+
+      // 단건 조회 — 문서 메타 + 섹션 텍스트 + 태그
       if (id) {
         const doc = await query(
-          `SELECT id, title, file_type, category,
+          `SELECT id, title, file_type, category, summary, keywords,
                   upload_date AS created_at, metadata, embedding_status,
                   original_filename, original_mimetype, file_size
            FROM documents WHERE id = $1`, [id]
@@ -66,37 +74,85 @@ module.exports = async function handler(req, res) {
         if (doc.rows.length === 0) {
           return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
         }
-        // 섹션 조회 (프론트에서 쓰는 필드명에 맞춤)
+        // 섹션 조회 (summary 컬럼 포함)
         const sections = await query(
           `SELECT id, section_type, section_index,
-                  raw_text AS text, image_url, metadata
+                  raw_text AS text, image_url, metadata, summary
            FROM document_sections
            WHERE document_id = $1
            ORDER BY section_index`, [id]
         );
-        return res.json({ document: doc.rows[0], sections: sections.rows });
+        // 태그 조회
+        const docTags = await query(
+          `SELECT t.id, t.name, t.color
+           FROM tags t
+           JOIN document_tags dt ON t.id = dt.tag_id
+           WHERE dt.document_id = $1
+           ORDER BY t.name`, [id]
+        );
+        return res.json({
+          document: doc.rows[0],
+          sections: sections.rows,
+          tags: docTags.rows,
+        });
       }
 
-      // 목록 조회 (카테고리 필터 가능)
+      // 목록 조회 (카테고리/태그 필터 가능)
+      const tag = req.query.tag || '';
       let sql = `
-        SELECT d.id, d.title, d.file_type, d.category,
+        SELECT d.id, d.title, d.file_type, d.category, d.summary,
                d.upload_date AS created_at, d.metadata,
                d.embedding_status, d.original_filename, d.file_size,
-               COUNT(s.id) AS section_count
+               COUNT(DISTINCT s.id) AS section_count
         FROM documents d
         LEFT JOIN document_sections s ON s.document_id = d.id
       `;
       let params = [];
+      let whereClauses = [];
+      let paramIdx = 1;
 
       if (category) {
-        sql += ' WHERE d.category = $1';
-        params = [category];
+        whereClauses.push(`d.category = $${paramIdx}`);
+        params.push(category);
+        paramIdx++;
+      }
+      if (tag) {
+        sql += ' JOIN document_tags dt ON dt.document_id = d.id JOIN tags t ON t.id = dt.tag_id';
+        whereClauses.push(`t.name = $${paramIdx}`);
+        params.push(tag);
+        paramIdx++;
+      }
+
+      if (whereClauses.length > 0) {
+        sql += ' WHERE ' + whereClauses.join(' AND ');
       }
 
       sql += ' GROUP BY d.id ORDER BY d.upload_date DESC';
 
       const docs = await query(sql, params);
-      return res.json({ documents: docs.rows });
+
+      // 각 문서의 태그도 함께 조회
+      const docIds = docs.rows.map(d => d.id);
+      let docTagsMap = {};
+      if (docIds.length > 0) {
+        const allTags = await query(
+          `SELECT dt.document_id, t.id, t.name, t.color
+           FROM document_tags dt
+           JOIN tags t ON t.id = dt.tag_id
+           WHERE dt.document_id = ANY($1)`, [docIds]
+        );
+        for (const row of allTags.rows) {
+          if (!docTagsMap[row.document_id]) docTagsMap[row.document_id] = [];
+          docTagsMap[row.document_id].push({ id: row.id, name: row.name, color: row.color });
+        }
+      }
+
+      const docsWithTags = docs.rows.map(d => ({
+        ...d,
+        tags: docTagsMap[d.id] || [],
+      }));
+
+      return res.json({ documents: docsWithTags });
     }
 
     // POST: 문서 삭제
@@ -126,6 +182,139 @@ module.exports = async function handler(req, res) {
         await query('DELETE FROM documents WHERE id = $1', [id]);
 
         return res.json({ success: true, message: '문서가 삭제되었습니다.' });
+      }
+
+      // 태그 추가 — { action: 'addTag', id: 문서ID, tagName: '태그명' }
+      if (action === 'addTag' && id && req.body.tagName) {
+        const tagName = req.body.tagName.trim();
+        const color = req.body.color || '#6B7280';
+        // 태그가 없으면 생성
+        let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
+        if (tagResult.rows.length === 0) {
+          tagResult = await query(
+            'INSERT INTO tags (name, color) VALUES ($1, $2) RETURNING id',
+            [tagName, color]
+          );
+        }
+        const tagId = tagResult.rows[0].id;
+        // 문서-태그 연결 (중복 무시)
+        await query(
+          'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [id, tagId]
+        );
+        // usage_count 갱신
+        await query(
+          'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
+          [tagId]
+        );
+        return res.json({ success: true, tagId, tagName });
+      }
+
+      // 태그 제거 — { action: 'removeTag', id: 문서ID, tagId: 태그ID }
+      if (action === 'removeTag' && id && req.body.tagId) {
+        const tagId = req.body.tagId;
+        await query('DELETE FROM document_tags WHERE document_id = $1 AND tag_id = $2', [id, tagId]);
+        // usage_count 갱신
+        await query(
+          'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
+          [tagId]
+        );
+        return res.json({ success: true });
+      }
+
+      // AI 분석 실행 — { action: 'analyze', id: 문서ID }
+      if (action === 'analyze' && id) {
+        const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
+        const { generateEnrichedEmbeddings } = require('../lib/embeddings');
+
+        // 문서 + 섹션 조회
+        const doc = await query(
+          'SELECT id, title, category, summary FROM documents WHERE id = $1', [id]
+        );
+        if (doc.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
+        const docRow = doc.rows[0];
+
+        const sections = await query(
+          'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
+          [id]
+        );
+
+        // 전체 텍스트 합치기
+        const fullText = sections.rows.map(s => s.raw_text || '').join('\n\n');
+
+        // 1) 문서 분석 (요약/키워드/태그)
+        console.log(`[Analyze] 문서 ${id} AI 분석 시작...`);
+        const analysis = await analyzeDocument(fullText, docRow.title, docRow.category);
+
+        // 2) 문서 요약/키워드 저장
+        await query(
+          'UPDATE documents SET summary = $1, keywords = $2 WHERE id = $3',
+          [analysis.summary, analysis.keywords, id]
+        );
+
+        // 3) 태그 자동 추가
+        for (const tagName of analysis.tags) {
+          let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
+          if (tagResult.rows.length === 0) {
+            tagResult = await query(
+              'INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]
+            );
+          }
+          await query(
+            'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [id, tagResult.rows[0].id]
+          );
+          await query(
+            'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
+            [tagResult.rows[0].id]
+          );
+        }
+
+        // 4) 섹션별 요약 생성
+        const sectionSummaries = await analyzeSections(sections.rows);
+        for (const [sectionId, summary] of sectionSummaries) {
+          await query(
+            'UPDATE document_sections SET summary = $1 WHERE id = $2',
+            [summary, sectionId]
+          );
+        }
+
+        // 5) 기존 청크 삭제 후 enriched 임베딩 재생성
+        const sectionIds = sections.rows.map(s => s.id);
+        if (sectionIds.length > 0) {
+          await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+        }
+
+        // 태그명 배열 조회
+        const tagNames = await query(
+          `SELECT t.name FROM tags t JOIN document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = $1`,
+          [id]
+        );
+        const tagList = tagNames.rows.map(r => r.name);
+
+        const totalChunks = await generateEnrichedEmbeddings(
+          { query },
+          id,
+          {
+            title: docRow.title,
+            summary: analysis.summary,
+            category: docRow.category,
+            tags: tagList,
+            keywords: analysis.keywords,
+          }
+        );
+
+        console.log(`[Analyze] 문서 ${id} 분석 완료: ${totalChunks}개 enriched 청크`);
+
+        return res.json({
+          success: true,
+          documentId: id,
+          summary: analysis.summary,
+          keywords: analysis.keywords,
+          tags: analysis.tags,
+          sectionSummaries: sectionSummaries.size,
+          totalChunks,
+        });
       }
 
       return res.status(400).json({ error: '잘못된 요청입니다.' });

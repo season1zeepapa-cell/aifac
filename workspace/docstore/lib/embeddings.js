@@ -94,4 +94,144 @@ async function generateEmbedding(text) {
   return response.data[0].embedding;
 }
 
-module.exports = { chunkText, generateEmbeddings, generateEmbedding };
+/**
+ * 청크에 맥락 정보를 붙여서 "enriched text" 생성
+ * → 이 텍스트로 임베딩을 만들면 검색 정확도가 크게 올라감
+ *
+ * @param {object} params
+ * @param {string} params.chunkText      - 원본 청크 텍스트
+ * @param {string} params.docTitle       - 문서 제목
+ * @param {string} params.docSummary     - 문서 요약 (AI 생성)
+ * @param {string} params.category       - 카테고리
+ * @param {string[]} params.tags         - 태그 배열
+ * @param {string[]} params.keywords     - 키워드 배열
+ * @param {string} params.sectionSummary - 섹션 요약
+ * @param {object} params.sectionMeta    - 섹션 메타 (label, chapter 등)
+ * @returns {string} enriched text
+ */
+function buildEnrichedText({
+  chunkText,
+  docTitle = '',
+  docSummary = '',
+  category = '',
+  tags = [],
+  keywords = [],
+  sectionSummary = '',
+  sectionMeta = {},
+}) {
+  const parts = [];
+
+  // 1) 문서 맥락
+  if (docTitle) parts.push(`[문서] ${docTitle}`);
+  if (category) parts.push(`[분류] ${category}`);
+  if (tags.length > 0) parts.push(`[태그] ${tags.join(', ')}`);
+  if (keywords.length > 0) parts.push(`[키워드] ${keywords.join(', ')}`);
+
+  // 2) 문서 요약
+  if (docSummary) parts.push(`[문서요약] ${docSummary}`);
+
+  // 3) 섹션 맥락
+  const { label, chapter, section, articleTitle } = sectionMeta;
+  if (chapter) parts.push(`[장] ${chapter}`);
+  if (section) parts.push(`[절] ${section}`);
+  if (label) parts.push(`[조항] ${label}`);
+  if (articleTitle) parts.push(`[조항제목] ${articleTitle}`);
+  if (sectionSummary) parts.push(`[섹션요약] ${sectionSummary}`);
+
+  // 4) 원본 텍스트
+  parts.push(chunkText);
+
+  return parts.join('\n');
+}
+
+/**
+ * 문서의 섹션들에 대해 enriched 임베딩을 생성하고 DB에 저장
+ * (업로드/임포트 파이프라인에서 기존 임베딩 로직을 대체)
+ *
+ * @param {object} db - { query } DB 헬퍼
+ * @param {number} documentId - 문서 ID
+ * @param {object} docContext - 문서 맥락 정보
+ * @param {string} docContext.title - 문서 제목
+ * @param {string} docContext.summary - 문서 요약
+ * @param {string} docContext.category - 카테고리
+ * @param {string[]} docContext.tags - 태그 배열
+ * @param {string[]} docContext.keywords - 키워드 배열
+ */
+async function generateEnrichedEmbeddings(db, documentId, docContext = {}) {
+  const { title = '', summary = '', category = '', tags = [], keywords = [] } = docContext;
+
+  // 1) 문서의 모든 섹션 조회
+  const savedSections = await db.query(
+    'SELECT id, raw_text, summary, metadata FROM document_sections WHERE document_id = $1 ORDER BY id',
+    [documentId]
+  );
+
+  let totalChunks = 0;
+
+  for (const section of savedSections.rows) {
+    if (!section.raw_text || section.raw_text.trim().length === 0) continue;
+
+    const sectionMeta = section.metadata || {};
+    const sectionSummary = section.summary || '';
+
+    // 2) 원문 청크 분할
+    const chunks = chunkText(section.raw_text);
+    if (chunks.length === 0) continue;
+
+    // 3) 각 청크에 맥락 정보 추가 → enriched text 생성
+    const enrichedTexts = chunks.map(chunk => buildEnrichedText({
+      chunkText: chunk,
+      docTitle: title,
+      docSummary: summary,
+      category,
+      tags,
+      keywords,
+      sectionSummary,
+      sectionMeta,
+    }));
+
+    // 4) enriched text로 임베딩 생성 (배치)
+    const embeddings = await generateEmbeddings(enrichedTexts);
+
+    // 5) DB 저장
+    for (let i = 0; i < chunks.length; i++) {
+      const vecStr = `[${embeddings[i].join(',')}]`;
+      await db.query(
+        `INSERT INTO document_chunks (section_id, chunk_text, enriched_text, embedding, chunk_index)
+         VALUES ($1, $2, $3, $4::vector, $5)`,
+        [section.id, chunks[i], enrichedTexts[i], vecStr, i]
+      );
+    }
+    totalChunks += chunks.length;
+  }
+
+  // 6) 문서 요약 벡터 생성
+  if (summary && summary.trim().length > 0) {
+    try {
+      const summaryVec = await generateEmbedding(summary);
+      const vecStr = `[${summaryVec.join(',')}]`;
+      await db.query(
+        'UPDATE documents SET summary_embedding = $1::vector WHERE id = $2',
+        [vecStr, documentId]
+      );
+    } catch (err) {
+      console.error(`[Embeddings] 문서 요약 벡터 생성 실패:`, err.message);
+    }
+  }
+
+  // 7) 임베딩 상태 업데이트
+  await db.query(
+    `UPDATE documents SET embedding_status = 'done' WHERE id = $1`,
+    [documentId]
+  );
+
+  return totalChunks;
+}
+
+module.exports = {
+  chunkText,
+  generateEmbeddings,
+  generateEmbedding,
+  buildEnrichedText,
+  generateEnrichedEmbeddings,
+};

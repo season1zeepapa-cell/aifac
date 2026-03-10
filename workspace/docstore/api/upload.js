@@ -11,7 +11,8 @@
 const multer = require('multer');
 const { extractFromPdf } = require('../lib/pdf-extractor');
 const { detectFileType, extractFromFile } = require('../lib/text-extractor');
-const { chunkText, generateEmbeddings } = require('../lib/embeddings');
+const { generateEnrichedEmbeddings } = require('../lib/embeddings');
+const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -157,34 +158,70 @@ module.exports = async function handler(req, res) {
 
     console.log(`[Upload] 저장 완료: 문서 ID ${documentId}, ${sections.length}개 섹션`);
 
-    // 3) 비동기 임베딩 생성
+    // 3) AI 분석 + enriched 임베딩 생성
     const embeddingPromise = (async () => {
       try {
-        let totalChunks = 0;
-        const savedSections = await query(
-          'SELECT id, raw_text FROM document_sections WHERE document_id = $1 ORDER BY id',
-          [documentId]
-        );
+        // 전체 텍스트 합치기
+        const fullText = sections.map(s => s.text || '').join('\n\n');
 
-        for (const section of savedSections.rows) {
-          if (!section.raw_text || section.raw_text.trim().length === 0) continue;
-
-          const chunks = chunkText(section.raw_text);
-          if (chunks.length === 0) continue;
-
-          const embeddings = await generateEmbeddings(chunks);
-          for (let i = 0; i < chunks.length; i++) {
-            const vecStr = `[${embeddings[i].join(',')}]`;
+        // AI 문서 분석 (요약/키워드/태그 생성)
+        let analysis = { summary: '', keywords: [], tags: [] };
+        try {
+          analysis = await analyzeDocument(fullText, title, category);
+          // 문서 요약/키워드 저장
+          if (analysis.summary || analysis.keywords.length > 0) {
             await query(
-              `INSERT INTO document_chunks (section_id, chunk_text, embedding, chunk_index)
-               VALUES ($1, $2, $3::vector, $4)`,
-              [section.id, chunks[i], vecStr, i]
+              'UPDATE documents SET summary = $1, keywords = $2 WHERE id = $3',
+              [analysis.summary, analysis.keywords, documentId]
             );
           }
-          totalChunks += chunks.length;
+          // 태그 자동 추가
+          for (const tagName of analysis.tags) {
+            let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
+            if (tagResult.rows.length === 0) {
+              tagResult = await query('INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]);
+            }
+            await query(
+              'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+              [documentId, tagResult.rows[0].id]
+            );
+            await query(
+              'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
+              [tagResult.rows[0].id]
+            );
+          }
+          console.log(`[Upload] AI 분석 완료: 요약 ${analysis.summary.length}자, 태그 ${analysis.tags.length}개`);
+        } catch (analyzeErr) {
+          console.error(`[Upload] AI 분석 실패 (문서 ${documentId}):`, analyzeErr.message);
         }
-        await query(`UPDATE documents SET embedding_status = 'done' WHERE id = $1`, [documentId]);
-        console.log(`[Upload] 임베딩 완료: 문서 ID ${documentId}, ${totalChunks}개 청크`);
+
+        // 섹션별 요약 생성
+        try {
+          const savedSections = await query(
+            'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY id',
+            [documentId]
+          );
+          const sectionSummaries = await analyzeSections(savedSections.rows);
+          for (const [sectionId, summary] of sectionSummaries) {
+            await query('UPDATE document_sections SET summary = $1 WHERE id = $2', [summary, sectionId]);
+          }
+        } catch (secErr) {
+          console.error(`[Upload] 섹션 요약 실패 (문서 ${documentId}):`, secErr.message);
+        }
+
+        // enriched 임베딩 생성
+        const totalChunks = await generateEnrichedEmbeddings(
+          { query },
+          documentId,
+          {
+            title,
+            summary: analysis.summary,
+            category,
+            tags: analysis.tags,
+            keywords: analysis.keywords,
+          }
+        );
+        console.log(`[Upload] enriched 임베딩 완료: 문서 ${documentId}, ${totalChunks}개 청크`);
       } catch (embErr) {
         await query(`UPDATE documents SET embedding_status = 'failed' WHERE id = $1`, [documentId]).catch(() => {});
         console.error(`[Upload] 임베딩 실패 (문서 ID ${documentId}):`, embErr.message);

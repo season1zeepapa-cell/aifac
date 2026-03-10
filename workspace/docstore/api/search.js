@@ -25,6 +25,7 @@ module.exports = async function handler(req, res) {
   // 필터 옵션
   const chapter = req.query.chapter || '';  // 장 필터 (예: "제1장")
   const docId = req.query.docId || '';      // 특정 문서만 검색
+  const tag = req.query.tag || '';          // 태그 필터
 
   if (!q || q.trim().length === 0) {
     return res.status(400).json({ error: '검색어(q)가 필요합니다.' });
@@ -51,20 +52,32 @@ module.exports = async function handler(req, res) {
         params.push(`%${chapter}%`);
         paramIdx++;
       }
+      if (tag) {
+        filterClauses.push(`EXISTS (
+          SELECT 1 FROM document_tags dt
+          JOIN tags t ON t.id = dt.tag_id
+          WHERE dt.document_id = ds.document_id AND t.name = $${paramIdx}
+        )`);
+        params.push(tag);
+        paramIdx++;
+      }
       params.push(limit);
 
       const result = await query(
         `SELECT
            dc.id AS chunk_id,
            dc.chunk_text,
+           dc.enriched_text,
            dc.chunk_index,
            dc.section_id,
            ds.section_type,
            ds.section_index,
+           ds.summary AS section_summary,
            ds.metadata AS section_metadata,
            ds.document_id,
            d.title AS document_title,
            d.category,
+           d.summary AS document_summary,
            1 - (dc.embedding <=> $1::vector) AS similarity
          FROM document_chunks dc
          JOIN document_sections ds ON dc.section_id = ds.id
@@ -89,8 +102,10 @@ module.exports = async function handler(req, res) {
             sectionId: row.section_id,
             sectionType: row.section_type,
             sectionIndex: row.section_index,
+            sectionSummary: row.section_summary || '',
             documentId: row.document_id,
             documentTitle: row.document_title,
+            documentSummary: row.document_summary || '',
             category: row.category,
             // 계층 라벨 정보
             label: meta.label || '',
@@ -116,6 +131,15 @@ module.exports = async function handler(req, res) {
         params.push(`%${chapter}%`);
         paramIdx++;
       }
+      if (tag) {
+        filterClauses.push(`EXISTS (
+          SELECT 1 FROM document_tags dt
+          JOIN tags t ON t.id = dt.tag_id
+          WHERE dt.document_id = ds.document_id AND t.name = $${paramIdx}
+        )`);
+        params.push(tag);
+        paramIdx++;
+      }
       params.push(limit);
 
       const result = await query(
@@ -124,10 +148,12 @@ module.exports = async function handler(req, res) {
            ds.section_type,
            ds.section_index,
            ds.raw_text,
+           ds.summary AS section_summary,
            ds.metadata AS section_metadata,
            ds.document_id,
            d.title AS document_title,
-           d.category
+           d.category,
+           d.summary AS document_summary
          FROM document_sections ds
          JOIN documents d ON ds.document_id = d.id
          WHERE ${filterClauses.join(' AND ')}
@@ -147,8 +173,10 @@ module.exports = async function handler(req, res) {
             sectionType: row.section_type,
             sectionIndex: row.section_index,
             rawText: row.raw_text,
+            sectionSummary: row.section_summary || '',
             documentId: row.document_id,
             documentTitle: row.document_title,
+            documentSummary: row.document_summary || '',
             category: row.category,
             label: meta.label || '',
             chapter: meta.chapter || '',
