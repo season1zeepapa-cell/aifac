@@ -1,24 +1,22 @@
 // RAG (Retrieval-Augmented Generation) 질의응답 API
 // POST /api/rag
-// { question: "...", topK: 5, provider: "gemini"|"openai"|"claude", history: [...] }
+// { question, topK, provider, history, docId, docIds, llmOptions }
 //
 // 처리 흐름:
-// 1) 질문을 벡터로 변환
-// 2) 유사도 높은 조문/청크 topK개 검색
-// 3) 검색 결과 + 대화 히스토리를 컨텍스트로 선택된 LLM에 전달
-// 4) 근거 조문과 함께 답변 생성
+// 1) 멀티홉 검색: 질문 벡터화 → 1차 검색 → 참조 추출 → 2차 검색
+// 2) 근거 체인 프롬프트로 LLM 호출
+// 3) 구조화된 답변 + 근거 체인 + 교차 참조 반환
 const { query } = require('../lib/db');
-const { generateEmbedding } = require('../lib/embeddings');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
-const { callLLM, getAvailableProviders } = require('../lib/gemini');
+const { callLLM } = require('../lib/gemini');
 const { sendError } = require('../lib/error-handler');
+const { multiHopSearch } = require('../lib/rag-agent');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
 
-  // 인증 체크
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
@@ -31,57 +29,20 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // 1) 질문을 벡터로 변환
-    console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..." (${provider})`);
-    const embedding = await generateEmbedding(question.trim());
-    const vecStr = `[${embedding.join(',')}]`;
-
-    // 2) 유사 청크 검색
-    let filterClause = 'dc.embedding IS NOT NULL';
-    let params = [vecStr];
-    let paramIdx = 2;
-
     // 문서 필터: docIds(배열) 우선, docId(단일) 하위 호환
     const resolvedDocIds = Array.isArray(docIds) && docIds.length > 0
       ? docIds.map(id => parseInt(id, 10))
       : docId ? [parseInt(docId, 10)] : [];
-    if (resolvedDocIds.length > 0) {
-      filterClause += ` AND ds.document_id = ANY($${paramIdx})`;
-      params.push(resolvedDocIds);
-      paramIdx++;
-    }
-    params.push(Math.min(parseInt(topK, 10) || 5, 10));
 
-    const searchResult = await query(
-      `SELECT
-         dc.chunk_text,
-         ds.section_type,
-         ds.metadata AS section_metadata,
-         d.title AS document_title,
-         d.category,
-         1 - (dc.embedding <=> $1::vector) AS similarity
-       FROM document_chunks dc
-       JOIN document_sections ds ON dc.section_id = ds.id
-       JOIN documents d ON ds.document_id = d.id
-       WHERE ${filterClause}
-       ORDER BY dc.embedding <=> $1::vector
-       LIMIT $${paramIdx}`,
-      params
-    );
-
-    const sources = searchResult.rows.map(row => {
-      const meta = row.section_metadata || {};
-      return {
-        text: row.chunk_text,
-        documentTitle: row.document_title,
-        category: row.category,
-        label: meta.label || '',
-        chapter: meta.chapter || '',
-        similarity: parseFloat(row.similarity).toFixed(4),
-      };
+    // 1) 멀티홉 검색
+    console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..." (${provider})`);
+    const searchResult = await multiHopSearch(query, question.trim(), {
+      topK: Math.min(parseInt(topK, 10) || 5, 10),
+      docIds: resolvedDocIds,
     });
 
-    console.log(`[RAG] ${sources.length}개 근거 자료 검색 완료`);
+    const sources = searchResult.sources;
+    console.log(`[RAG] ${sources.length}개 근거 자료 검색 (${searchResult.hops}홉${searchResult.crossRefs ? ', 교차참조: ' + searchResult.crossRefs.length + '건' : ''})`);
 
     if (sources.length === 0) {
       return res.json({
@@ -92,13 +53,13 @@ module.exports = async (req, res) => {
       });
     }
 
-    // 3) 선택된 LLM에 컨텍스트 + 대화 히스토리와 함께 질문
+    // 2) 근거 체인 프롬프트 구성
     const contextText = sources.map((s, i) => {
       const header = s.label || `${s.documentTitle} - ${s.category}`;
-      return `[근거 ${i + 1}] ${header}\n${s.text}`;
+      return `[근거 ${i + 1}] ${header} (${s.documentTitle})\n${s.text}`;
     }).join('\n\n---\n\n');
 
-    // 대화 히스토리 구성 (최근 10턴 = 20메시지까지)
+    // 대화 히스토리 (최근 10턴 = 20메시지)
     const recentHistory = Array.isArray(history) ? history.slice(-20) : [];
     const historyText = recentHistory.length > 0
       ? '\n\n--- 이전 대화 ---\n' + recentHistory.map(h =>
@@ -108,12 +69,33 @@ module.exports = async (req, res) => {
 
     const prompt = `당신은 법령 및 규정 전문 AI 어시스턴트입니다. 아래 근거 자료를 참고하여 사용자의 질문에 정확하게 답변해주세요.
 
-규칙:
-- 근거 자료에 있는 내용만을 바탕으로 답변하세요
-- 답변 시 어떤 근거(조문)를 참고했는지 [근거 N] 형태로 인용하세요
+## 답변 형식
+
+반드시 아래 구조로 답변하세요. 각 섹션 제목은 정확히 아래 형식을 사용하세요.
+
+### 결론
+질문에 대한 직접 답변을 1~3문장으로 작성하세요.
+
+### 근거 체인
+결론에 이르는 논리 경로를 단계별로 작성하세요. 각 단계마다:
+- **[근거 N] 출처 조문명**: 해당 조문의 핵심 내용 인용 → 이 근거가 의미하는 바를 설명
+
+단계 간 연결이 있으면 "→ 따라서" 또는 "→ 이에 근거하여" 등으로 이어주세요.
+
+### 교차 참조
+근거 자료 사이의 관계를 정리하세요 (있는 경우만):
+- 조문A → (준용/적용/예외) → 조문B
+- 법률A ↔ 법률B (관련 조문)
+
+관계가 없으면 이 섹션은 생략하세요.
+
+### 주의사항
+예외 조항, 단서, 주의할 점이 있으면 작성하세요. 없으면 생략하세요.
+
+## 규칙
+- 근거 자료에 있는 내용만 바탕으로 답변하세요
 - 근거 자료에 없는 내용은 "해당 내용은 제공된 자료에서 확인할 수 없습니다"라고 답변하세요
 - 답변은 한국어로 작성하세요
-- 핵심을 먼저 말하고, 상세 설명을 이어서 하세요
 - 이전 대화가 있으면 맥락을 이어서 답변하세요
 
 --- 근거 자료 ---
@@ -123,28 +105,33 @@ ${historyText}
 --- 현재 질문 ---
 ${question.trim()}`;
 
-    // llmOptions로 모델/온도/토큰 등 상세 설정 적용
+    // 3) LLM 호출
     const callOpts = {
       provider,
       temperature: llmOptions.temperature ?? 0.3,
-      maxTokens: llmOptions.maxTokens ?? 2048,
+      maxTokens: llmOptions.maxTokens ?? 3072,
     };
     if (llmOptions.model) callOpts.model = llmOptions.model;
     if (llmOptions.thinkingBudget) callOpts.thinkingBudget = llmOptions.thinkingBudget;
     const answer = await callLLM(prompt, callOpts);
-    console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자)`);
+    console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자, ${searchResult.hops}홉)`);
 
-    // 4) 응답
+    // 4) 응답 — 근거 체인 구조 포함
     res.json({
       question: question.trim(),
       answer,
       provider,
+      hops: searchResult.hops,
+      crossRefs: searchResult.crossRefs || [],
       sources: sources.map(s => ({
         documentTitle: s.documentTitle,
+        documentId: s.documentId,
         label: s.label,
         chapter: s.chapter,
+        articleNumber: s.articleNumber,
+        articleTitle: s.articleTitle,
         similarity: s.similarity,
-        excerpt: s.text.substring(0, 200) + (s.text.length > 200 ? '...' : ''),
+        excerpt: s.text.substring(0, 300) + (s.text.length > 300 ? '...' : ''),
       })),
     });
   } catch (err) {

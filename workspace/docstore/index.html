@@ -3421,6 +3421,8 @@
             content: data.answer,
             sources: data.sources || [],
             provider: data.provider,
+            hops: data.hops || 1,
+            crossRefs: data.crossRefs || [],
           };
           setChatMessages(prev => [...prev, assistantMsg]);
         } catch (err) {
@@ -3562,11 +3564,21 @@
                   }`}>
                     {msg.role === 'assistant' ? (
                       <div>
-                        {/* 프로바이더 뱃지 */}
+                        {/* 프로바이더 뱃지 + 멀티홉 표시 */}
                         <div className="flex items-center gap-1.5 mb-2">
                           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white"
                             style={{ backgroundColor: msg.provider === 'gemini' ? '#3b82f6' : msg.provider === 'openai' ? '#22c55e' : '#f97316' }}
                           >{providerName(msg.provider)}</span>
+                          {msg.hops > 1 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium">
+                              {msg.hops}홉 검색
+                            </span>
+                          )}
+                          {msg.crossRefs && msg.crossRefs.length > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
+                              교차참조 {msg.crossRefs.length}건
+                            </span>
+                          )}
                         </div>
                         <div
                           className="text-sm text-text leading-relaxed markdown-body"
@@ -3592,20 +3604,29 @@
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                         근거자료 {msg.sources.length}건
+                        {(() => {
+                          const docSet = new Set(msg.sources.map(s => s.documentTitle));
+                          return docSet.size > 1 ? ` (${docSet.size}개 문서)` : '';
+                        })()}
                       </button>
                       {expandedSources[idx] && (
                         <div className="mt-2 space-y-1.5">
-                          {msg.sources.map((src, si) => (
-                            <div key={si} className="text-xs bg-bg border border-border rounded-lg p-2.5">
-                              <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                                <span className="font-medium text-primary">근거 {si + 1}</span>
-                                <span className="text-text font-medium">{src.documentTitle}</span>
-                                {src.label && <span className="text-text-secondary">({src.label})</span>}
-                                <span className="text-green-600">{(src.similarity * 100).toFixed(1)}%</span>
+                          {msg.sources.map((src, si) => {
+                            const simPercent = (src.similarity * 100).toFixed(1);
+                            const simColor = simPercent >= 80 ? 'text-green-600' : simPercent >= 60 ? 'text-yellow-600' : 'text-text-secondary';
+                            return (
+                              <div key={si} className="text-xs bg-bg border border-border rounded-lg p-2.5">
+                                <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                  <span className="font-medium text-primary">근거 {si + 1}</span>
+                                  <span className="text-text font-medium">{src.documentTitle}</span>
+                                  {src.label && <span className="text-text-secondary">({src.label})</span>}
+                                  {src.chapter && !src.label && <span className="text-text-secondary">{src.chapter}</span>}
+                                  <span className={`${simColor} font-medium`}>{simPercent}%</span>
+                                </div>
+                                <p className="text-text-secondary leading-relaxed">{src.excerpt}</p>
                               </div>
-                              <p className="text-text-secondary leading-relaxed">{src.excerpt}</p>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
