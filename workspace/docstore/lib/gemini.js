@@ -60,10 +60,12 @@ function callGemini(prompt, options = {}) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       timeout,
     }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+      // Buffer 배열로 모아서 한 번에 UTF-8 디코딩 (멀티바이트 문자 깨짐 방지)
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
         try {
+          const data = Buffer.concat(chunks).toString('utf8');
           const parsed = JSON.parse(data);
           if (res.statusCode !== 200) {
             reject(new Error(parsed.error?.message || `Gemini API ${res.statusCode}`));
@@ -107,10 +109,11 @@ function callOpenAI(prompt, options = {}) {
       },
       timeout,
     }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
         try {
+          const data = Buffer.concat(chunks).toString('utf8');
           const parsed = JSON.parse(data);
           if (res.statusCode !== 200) {
             reject(new Error(parsed.error?.message || `OpenAI API ${res.statusCode}`));
@@ -155,10 +158,11 @@ function callClaude(prompt, options = {}) {
       },
       timeout,
     }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
         try {
+          const data = Buffer.concat(chunks).toString('utf8');
           const parsed = JSON.parse(data);
           if (res.statusCode !== 200) {
             reject(new Error(parsed.error?.message || `Claude API ${res.statusCode}`));
