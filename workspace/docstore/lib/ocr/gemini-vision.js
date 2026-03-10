@@ -1,5 +1,6 @@
 // Gemini Vision OCR 플러그인
 const https = require('https');
+const { GEMINI_MODEL } = require('../gemini');
 
 module.exports = {
   id: 'gemini-vision',
@@ -16,7 +17,7 @@ module.exports = {
 
   async execute(base64, mediaType, prompt) {
     const apiKey = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
     const body = JSON.stringify({
       contents: [{
         parts: [

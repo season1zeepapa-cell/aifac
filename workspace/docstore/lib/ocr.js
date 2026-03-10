@@ -92,7 +92,8 @@ const ALL_ENGINES = {
     free: false,
     isAvailable() { return !!process.env.GEMINI_API_KEY; },
     async execute(base64, mediaType, prompt) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+      const { GEMINI_MODEL } = require('./gemini');
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
       const body = JSON.stringify({
         contents: [{
           parts: [

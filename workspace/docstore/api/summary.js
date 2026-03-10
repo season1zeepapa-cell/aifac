@@ -8,39 +8,7 @@ const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
-const https = require('https');
-
-// Gemini API 호출
-function callGemini(prompt, apiKey) {
-  return new Promise((resolve, reject) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    const body = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 256 },
-    });
-
-    const req = https.request(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000,
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          resolve(text.trim());
-        } catch {
-          reject(new Error('Gemini 응답 파싱 실패'));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
+const { callGemini } = require('../lib/gemini');
 
 // 섹션 1개 요약 생성
 async function summarizeSection(section, apiKey) {
@@ -54,7 +22,7 @@ async function summarizeSection(section, apiKey) {
 
 ${label ? `[조문] ${label}\n` : ''}${text.substring(0, 2000)}`;
 
-  return callGemini(prompt, apiKey);
+  return callGemini(prompt, { apiKey, maxTokens: 256, timeout: 15000 });
 }
 
 module.exports = async (req, res) => {

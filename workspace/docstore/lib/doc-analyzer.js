@@ -4,49 +4,7 @@
 //   const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
 //   const analysis = await analyzeDocument(sectionsText, title, category);
 //   const sectionSummaries = await analyzeSections(sections);
-const https = require('https');
-
-/**
- * Gemini API 호출 헬퍼
- * @param {string} prompt - 프롬프트
- * @param {object} options - { maxTokens, temperature }
- * @returns {Promise<string>} 응답 텍스트
- */
-function callGemini(prompt, options = {}) {
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) return Promise.reject(new Error('GEMINI_API_KEY 미설정'));
-
-  const { maxTokens = 1024, temperature = 0.2 } = options;
-
-  return new Promise((resolve, reject) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    const body = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature, maxOutputTokens: maxTokens },
-    });
-
-    const req = https.request(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000,
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          resolve(text.trim());
-        } catch {
-          reject(new Error('Gemini 응답 파싱 실패'));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
+const { callGemini } = require('./gemini');
 
 /**
  * 문서 전체 분석 — 요약, 키워드, 태그 추천
@@ -155,4 +113,4 @@ ${sectionList}`;
   return summaries;
 }
 
-module.exports = { analyzeDocument, analyzeSections, callGemini };
+module.exports = { analyzeDocument, analyzeSections };

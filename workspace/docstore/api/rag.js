@@ -12,42 +12,7 @@ const { generateEmbedding } = require('../lib/embeddings');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
-const https = require('https');
-
-// Gemini API 호출 헬퍼
-function callGemini(prompt, apiKey) {
-  return new Promise((resolve, reject) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    const body = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 2048,
-      },
-    });
-
-    const req = https.request(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000,
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          resolve(text);
-        } catch {
-          reject(new Error('Gemini 응답 파싱 실패'));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
+const { callGemini } = require('../lib/gemini');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
@@ -147,7 +112,7 @@ ${contextText}
 --- 질문 ---
 ${question.trim()}`;
 
-    const answer = await callGemini(prompt, apiKey);
+    const answer = await callGemini(prompt, { apiKey, temperature: 0.3, maxTokens: 2048 });
     console.log(`[RAG] 답변 생성 완료 (${answer.length}자)`);
 
     // 4) 응답
