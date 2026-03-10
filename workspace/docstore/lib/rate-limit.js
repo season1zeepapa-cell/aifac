@@ -10,6 +10,7 @@ const LIMITS = {
   search:     { windowMs: 60000, max: 60 },   // 1분 60건
   lawImport:  { windowMs: 60000, max: 5 },    // 1분 5건
   urlImport:  { windowMs: 60000, max: 10 },   // 1분 10건
+  ocr:        { windowMs: 60000, max: 10 },   // 1분 10건 (Upstage RPS=1 고려)
   default:    { windowMs: 60000, max: 30 },   // 1분 30건
 };
 

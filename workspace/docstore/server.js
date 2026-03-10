@@ -57,6 +57,10 @@ app.post('/api/summary', (req, res) => summaryHandler(req, res));
 const urlImportHandler = require('./api/url-import');
 app.post('/api/url-import', (req, res) => urlImportHandler(req, res));
 
+// ── POST /api/ocr ────────────────────────────────────
+const ocrHandler = require('./api/ocr');
+app.post('/api/ocr', (req, res) => ocrHandler(req, res));
+
 // ── /api/api-usage (GET, POST) — API 사용량 + OCR 설정 ──
 const apiUsageHandler = require('./api/api-usage');
 app.get('/api/api-usage', (req, res) => apiUsageHandler(req, res));
