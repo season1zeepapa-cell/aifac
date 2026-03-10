@@ -2250,6 +2250,9 @@
       const [editingLimit, setEditingLimit] = useState(null);
       // 에러 필터
       const [errorFilter, setErrorFilter] = useState('all');
+      // 드래그 앤 드롭
+      const [dragIndex, setDragIndex] = useState(null);
+      const [dragOverIndex, setDragOverIndex] = useState(null);
       // OCR 상태
       const [engines, setEngines] = useState([]);
       const [ocrLoading, setOcrLoading] = useState(true);
@@ -2336,6 +2339,27 @@
           });
         } catch { fetchEngines(); }
       }, [engines, fetchEngines]);
+
+      // 드래그 완료 시 순서 반영
+      const handleDragEnd = useCallback(async () => {
+        if (dragIndex === null || dragOverIndex === null || dragIndex === dragOverIndex) {
+          setDragIndex(null);
+          setDragOverIndex(null);
+          return;
+        }
+        const ne = [...engines];
+        const [moved] = ne.splice(dragIndex, 1);
+        ne.splice(dragOverIndex, 0, moved);
+        setEngines(ne);
+        setDragIndex(null);
+        setDragOverIndex(null);
+        try {
+          await authFetch(`${API_BASE_URL}/api-usage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'ocrUpdatePriority', order: ne.map(e => e.engine_id) }),
+          });
+        } catch { fetchEngines(); }
+      }, [dragIndex, dragOverIndex, engines, fetchEngines]);
 
       const handleOcrToggle = useCallback(async (engineId, currentEnabled) => {
         setActionLoading(`ocr-toggle-${engineId}`);
@@ -2892,15 +2916,22 @@
                   <div className="space-y-2">
                     {engines.map((engine, index) => (
                       <div key={engine.engine_id}
-                        className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
-                          engine.is_enabled && engine.is_available
-                            ? 'bg-white border-border shadow-sm'
-                            : !engine.is_available
-                              ? 'bg-gray-50 border-dashed border-gray-300'
-                              : 'bg-gray-50 border-border/50 opacity-70'
-                        }`}
+                        draggable
+                        onDragStart={() => setDragIndex(index)}
+                        onDragOver={(e) => { e.preventDefault(); setDragOverIndex(index); }}
+                        onDragEnd={handleDragEnd}
+                        onTouchStart={(e) => { setDragIndex(index); }}
+                        className={`flex items-center gap-2 p-3 rounded-lg border transition-all ${
+                          dragOverIndex === index && dragIndex !== null && dragIndex !== index
+                            ? 'border-primary border-2 bg-blue-50/50'
+                            : engine.is_enabled && engine.is_available
+                              ? 'bg-white border-border shadow-sm'
+                              : !engine.is_available
+                                ? 'bg-gray-50 border-dashed border-gray-300'
+                                : 'bg-gray-50 border-border/50 opacity-70'
+                        } ${dragIndex === index ? 'opacity-40 scale-95' : ''} cursor-grab active:cursor-grabbing`}
                       >
-                        <span className={`text-sm font-bold w-6 text-center ${engine.is_available ? 'text-primary' : 'text-gray-300'}`}>{index + 1}</span>
+                        <span className={`text-sm font-bold w-6 text-center ${engine.is_available ? 'text-primary' : 'text-gray-300'}`} title="드래그하여 순서 변경">{index + 1}</span>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`text-sm font-medium truncate ${engine.is_available ? 'text-text' : 'text-text-secondary'}`}>{engine.name}</span>
