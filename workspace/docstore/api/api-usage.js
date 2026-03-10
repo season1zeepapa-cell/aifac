@@ -107,6 +107,36 @@ module.exports = async function handler(req, res) {
         LIMIT 10
       `);
 
+      // 7) 전일 비교 데이터 (오늘 vs 어제)
+      const prevComparison = await query(`
+        SELECT
+          'today' AS period,
+          COUNT(*) AS call_count,
+          COALESCE(SUM(cost_estimate), 0) AS total_cost,
+          COUNT(*) FILTER (WHERE status != 'success') AS error_count
+        FROM api_usage WHERE created_at >= CURRENT_DATE
+        UNION ALL
+        SELECT
+          'yesterday' AS period,
+          COUNT(*) AS call_count,
+          COALESCE(SUM(cost_estimate), 0) AS total_cost,
+          COUNT(*) FILTER (WHERE status != 'success') AS error_count
+        FROM api_usage WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' AND created_at < CURRENT_DATE
+      `);
+
+      // 8) OCR 엔진별 사용 통계 (최근 7일)
+      const ocrStats = await query(`
+        SELECT
+          model AS engine,
+          COUNT(*) AS call_count,
+          COUNT(*) FILTER (WHERE status = 'success') AS success_count,
+          COUNT(*) FILTER (WHERE status != 'success') AS error_count
+        FROM api_usage
+        WHERE endpoint = 'ocr' AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+        GROUP BY model
+        ORDER BY call_count DESC
+      `);
+
       return res.json({
         keys: keyStatus.rows.map(k => ({
           ...k,
@@ -116,6 +146,8 @@ module.exports = async function handler(req, res) {
         usageByModel: usageByModel.rows,
         dailyTrend: dailyTrend.rows,
         recentErrors: recentErrors.rows,
+        prevComparison: prevComparison.rows,
+        ocrStats: ocrStats.rows,
         range,
       });
     }

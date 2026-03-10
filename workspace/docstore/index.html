@@ -2471,21 +2471,42 @@
                 >&#x21BB; 새로고침</button>
               </div>
 
-              {/* 요약 카드 */}
-              <div className="grid grid-cols-3 gap-3">
-                <Card>
-                  <p className="text-[10px] text-text-secondary uppercase tracking-wider">총 호출</p>
-                  <p className="text-2xl font-bold text-text mt-1">{totalCalls.toLocaleString()}</p>
-                </Card>
-                <Card>
-                  <p className="text-[10px] text-text-secondary uppercase tracking-wider">예상 비용</p>
-                  <p className="text-2xl font-bold text-primary mt-1">${totalCost.toFixed(4)}</p>
-                </Card>
-                <Card>
-                  <p className="text-[10px] text-text-secondary uppercase tracking-wider">에러</p>
-                  <p className={`text-2xl font-bold mt-1 ${totalErrors > 0 ? 'text-red-500' : 'text-green-500'}`}>{totalErrors}</p>
-                </Card>
-              </div>
+              {/* 요약 카드 + 전일 비교 */}
+              {(() => {
+                const today = data.prevComparison?.find(r => r.period === 'today');
+                const yesterday = data.prevComparison?.find(r => r.period === 'yesterday');
+                const diffBadge = (todayVal, yesterdayVal) => {
+                  if (!yesterday || parseInt(yesterdayVal) === 0) return null;
+                  const pct = Math.round(((todayVal - yesterdayVal) / yesterdayVal) * 100);
+                  if (pct === 0) return null;
+                  return <span className={`text-[10px] font-medium ${pct > 0 ? 'text-red-400' : 'text-green-500'}`}>{pct > 0 ? '\u2191' : '\u2193'}{Math.abs(pct)}%</span>;
+                };
+                return (
+                  <div className="grid grid-cols-3 gap-3">
+                    <Card>
+                      <p className="text-[10px] text-text-secondary uppercase tracking-wider">총 호출</p>
+                      <div className="flex items-end gap-1.5 mt-1">
+                        <p className="text-2xl font-bold text-text">{totalCalls.toLocaleString()}</p>
+                        {today && yesterday && diffBadge(parseInt(today.call_count), parseInt(yesterday.call_count))}
+                      </div>
+                    </Card>
+                    <Card>
+                      <p className="text-[10px] text-text-secondary uppercase tracking-wider">예상 비용</p>
+                      <div className="flex items-end gap-1.5 mt-1">
+                        <p className="text-2xl font-bold text-primary">${totalCost.toFixed(4)}</p>
+                        {today && yesterday && diffBadge(parseFloat(today.total_cost), parseFloat(yesterday.total_cost))}
+                      </div>
+                    </Card>
+                    <Card>
+                      <p className="text-[10px] text-text-secondary uppercase tracking-wider">에러</p>
+                      <div className="flex items-end gap-1.5 mt-1">
+                        <p className={`text-2xl font-bold ${totalErrors > 0 ? 'text-red-500' : 'text-green-500'}`}>{totalErrors}</p>
+                        {today && yesterday && diffBadge(parseInt(today.error_count), parseInt(yesterday.error_count))}
+                      </div>
+                    </Card>
+                  </div>
+                );
+              })()}
 
               {/* 프로바이더별 요약 */}
               <Card>
@@ -2840,6 +2861,29 @@
                   </Card>
                 );
               })()}
+
+              {/* OCR 사용 통계 (최근 7일) */}
+              {data?.ocrStats?.length > 0 && (
+                <Card>
+                  <h4 className="text-xs font-bold text-text mb-2">최근 7일 OCR 사용 현황</h4>
+                  <div className="space-y-1.5">
+                    {data.ocrStats.map(s => {
+                      const total = parseInt(s.call_count);
+                      const success = parseInt(s.success_count);
+                      const rate = total > 0 ? Math.round((success / total) * 100) : 0;
+                      return (
+                        <div key={s.engine} className="flex items-center justify-between text-xs">
+                          <span className="text-text">{s.engine}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-text-secondary">{total}회</span>
+                            <span className={`font-medium ${rate >= 90 ? 'text-green-600' : rate >= 70 ? 'text-yellow-600' : 'text-red-500'}`}>성공률 {rate}%</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Card>
+              )}
 
               {ocrLoading ? (
                 <div className="text-center py-8 text-text-secondary text-sm">로딩...</div>
