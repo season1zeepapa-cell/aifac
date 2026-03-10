@@ -233,7 +233,12 @@ module.exports = async function handler(req, res) {
           await engine.execute(testBase64, 'image/png', '이 이미지에 텍스트가 있으면 추출해주세요.');
           return res.json({ success: true, message: `${engine.name} 연결 성공!` });
         } catch (err) {
-          return res.json({ success: false, message: `${engine.name}: ${err.message?.substring(0, 100)}` });
+          // 빈 이미지라 텍스트 없음 = API 연결은 성공
+          const msg = err.message || '';
+          if (msg.includes('텍스트가 추출되지 않았') || msg.includes('빈 결과')) {
+            return res.json({ success: true, message: `${engine.name} 연결 성공! (테스트 이미지에 텍스트 없음)` });
+          }
+          return res.json({ success: false, message: `${engine.name}: ${msg.substring(0, 100)}` });
         }
       }
 
