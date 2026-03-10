@@ -66,6 +66,10 @@ const apiUsageHandler = require('./api/api-usage');
 app.get('/api/api-usage', (req, res) => apiUsageHandler(req, res));
 app.post('/api/api-usage', (req, res) => apiUsageHandler(req, res));
 
+// ── GET /api/law-graph — 법령 참조 관계 그래프 ──
+const lawGraphHandler = require('./api/law-graph');
+app.get('/api/law-graph', (req, res) => lawGraphHandler(req, res));
+
 // ── /api/deidentify (GET, POST) — 비식별화 키워드 관리 ──
 const deidentifyHandler = require('./api/deidentify');
 app.get('/api/deidentify', (req, res) => deidentifyHandler(req, res));
