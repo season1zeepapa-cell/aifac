@@ -255,151 +255,99 @@ module.exports = async function handler(req, res) {
         return res.json({ success: true });
       }
 
-      // AI 분석 실행 — { action: 'analyze', id: 문서ID } (SSE 지원)
+      // AI 분석 실행 — { action: 'analyze', id: 문서ID }
       if (action === 'analyze' && id) {
         const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
         const { generateEnrichedEmbeddings } = require('../lib/embeddings');
 
-        // SSE 모드 판별
-        const wantsSSE = (req.headers.accept || '').includes('text/event-stream');
-        let sse;
-        if (wantsSSE) {
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',
-          });
-          sse = {
-            isSSE: true,
-            send(step, data = {}) { res.write(`event: progress\ndata: ${JSON.stringify({ step, ...data })}\n\n`); },
-            done(result) { res.write(`event: done\ndata: ${JSON.stringify({ step: 'done', ...result })}\n\n`); res.end(); },
-            error(msg) { res.write(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`); res.end(); },
-          };
-        } else {
-          sse = { isSSE: false, send() {}, done(r) { res.json(r); }, error(msg, c = 500) { res.status(c).json({ error: msg }); } };
-        }
+        // 문서 + 섹션 조회
+        const doc = await query(
+          'SELECT id, title, category, summary FROM documents WHERE id = $1', [id]
+        );
+        if (doc.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
+        const docRow = doc.rows[0];
 
-        try {
-          sse.send('loading', { message: '문서 데이터 로드 중...', progress: 5 });
+        const sections = await query(
+          'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
+          [id]
+        );
 
-          // 문서 + 섹션 조회
-          const doc = await query(
-            'SELECT id, title, category, summary FROM documents WHERE id = $1', [id]
-          );
-          if (doc.rows.length === 0) return sse.error('문서를 찾을 수 없습니다.', 404);
-          const docRow = doc.rows[0];
+        // 전체 텍스트 합치기
+        const fullText = sections.rows.map(s => s.raw_text || '').join('\n\n');
 
-          const sections = await query(
-            'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
-            [id]
-          );
+        // 1) 문서 분석 (요약/키워드/태그)
+        console.log(`[Analyze] 문서 ${id} AI 분석 시작...`);
+        const analysis = await analyzeDocument(fullText, docRow.title, docRow.category);
 
-          const fullText = sections.rows.map(s => s.raw_text || '').join('\n\n');
+        // 2) 문서 요약/키워드 저장
+        await query(
+          'UPDATE documents SET summary = $1, keywords = $2 WHERE id = $3',
+          [analysis.summary, analysis.keywords, id]
+        );
 
-          // 1) 문서 분석 (요약/키워드/태그)
-          sse.send('analyzing', { message: 'AI 문서 분석 중 (요약/키워드/태그)...', progress: 15 });
-          console.log(`[Analyze] 문서 ${id} AI 분석 시작...`);
-          const analysis = await analyzeDocument(fullText, docRow.title, docRow.category);
-
-          // 2) 문서 요약/키워드 저장
-          sse.send('saving_analysis', { message: '분석 결과 저장 중...', progress: 30 });
+        // 3) 태그 자동 추가
+        for (const tagName of analysis.tags) {
+          let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
+          if (tagResult.rows.length === 0) {
+            tagResult = await query(
+              'INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]
+            );
+          }
           await query(
-            'UPDATE documents SET summary = $1, keywords = $2 WHERE id = $3',
-            [analysis.summary, analysis.keywords, id]
+            'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [id, tagResult.rows[0].id]
           );
-
-          // 3) 태그 자동 추가
-          sse.send('tagging', { message: '태그 생성 중...', progress: 35 });
-          for (const tagName of analysis.tags) {
-            let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
-            if (tagResult.rows.length === 0) {
-              tagResult = await query(
-                'INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]
-              );
-            }
-            await query(
-              'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-              [id, tagResult.rows[0].id]
-            );
-            await query(
-              'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
-              [tagResult.rows[0].id]
-            );
-          }
-
-          // 4) 섹션별 요약 생성
-          sse.send('section_summary', {
-            message: `${sections.rows.length}개 섹션 요약 생성 중...`,
-            progress: 40,
-          });
-          const sectionSummaries = await analyzeSections(sections.rows);
-          for (const [sectionId, summary] of sectionSummaries) {
-            await query(
-              'UPDATE document_sections SET summary = $1 WHERE id = $2',
-              [summary, sectionId]
-            );
-          }
-
-          sse.send('section_summary_done', {
-            message: `${sectionSummaries.size}개 섹션 요약 완료`,
-            progress: 60,
-          });
-
-          // 5) 기존 청크 삭제 후 enriched 임베딩 재생성
-          sse.send('embedding', { message: 'Enriched 임베딩 재생성 중...', progress: 65 });
-
-          const sectionIds = sections.rows.map(s => s.id);
-          if (sectionIds.length > 0) {
-            await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
-          }
-
-          const tagNames = await query(
-            `SELECT t.name FROM tags t JOIN document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = $1`,
-            [id]
+          await query(
+            'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
+            [tagResult.rows[0].id]
           );
-          const tagList = tagNames.rows.map(r => r.name);
-
-          const totalChunks = await generateEnrichedEmbeddings(
-            { query },
-            id,
-            {
-              title: docRow.title,
-              summary: analysis.summary,
-              category: docRow.category,
-              tags: tagList,
-              keywords: analysis.keywords,
-            },
-            // SSE 콜백: 임베딩 진행률 전송
-            (current, total, chunks) => {
-              const embProgress = 65 + Math.round((current / total) * 30);
-              sse.send('embedding', {
-                message: `임베딩 생성 중... (${current}/${total} 섹션, ${chunks}개 청크)`,
-                progress: embProgress,
-                current, total, totalChunks: chunks,
-              });
-            }
-          );
-
-          console.log(`[Analyze] 문서 ${id} 분석 완료: ${totalChunks}개 enriched 청크`);
-
-          sse.done({
-            success: true,
-            documentId: id,
-            summary: analysis.summary,
-            keywords: analysis.keywords,
-            tags: analysis.tags,
-            sectionSummaries: sectionSummaries.size,
-            totalChunks,
-          });
-        } catch (err) {
-          if (sse.isSSE) {
-            sse.error(err.message || 'AI 분석 중 오류 발생');
-          } else {
-            throw err; // 기존 에러 핸들러로 전달
-          }
         }
-        return;
+
+        // 4) 섹션별 요약 생성
+        const sectionSummaries = await analyzeSections(sections.rows);
+        for (const [sectionId, summary] of sectionSummaries) {
+          await query(
+            'UPDATE document_sections SET summary = $1 WHERE id = $2',
+            [summary, sectionId]
+          );
+        }
+
+        // 5) 기존 청크 삭제 후 enriched 임베딩 재생성
+        const sectionIds = sections.rows.map(s => s.id);
+        if (sectionIds.length > 0) {
+          await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+        }
+
+        // 태그명 배열 조회
+        const tagNames = await query(
+          `SELECT t.name FROM tags t JOIN document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = $1`,
+          [id]
+        );
+        const tagList = tagNames.rows.map(r => r.name);
+
+        const totalChunks = await generateEnrichedEmbeddings(
+          { query },
+          id,
+          {
+            title: docRow.title,
+            summary: analysis.summary,
+            category: docRow.category,
+            tags: tagList,
+            keywords: analysis.keywords,
+          }
+        );
+
+        console.log(`[Analyze] 문서 ${id} 분석 완료: ${totalChunks}개 enriched 청크`);
+
+        return res.json({
+          success: true,
+          documentId: id,
+          summary: analysis.summary,
+          keywords: analysis.keywords,
+          tags: analysis.tags,
+          sectionSummaries: sectionSummaries.size,
+          totalChunks,
+        });
       }
 
       return res.status(400).json({ error: '잘못된 요청입니다.' });

@@ -157,58 +157,49 @@
       });
     }
 
-    // SSE(Server-Sent Events) 스트리밍 fetch 래퍼
-    // 서버에서 보내는 실시간 진행 이벤트를 수신하며 콜백으로 전달
-    // onProgress({ step, message, progress, ... }) — 진행 상황
-    // 반환값: 최종 결과 데이터 (done 이벤트의 data)
-    async function authFetchSSE(url, options = {}, onProgress = () => {}) {
-      const token = getAuthToken();
-      const headers = {
-        ...options.headers,
-        'Accept': 'text/event-stream',
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+    // 시뮬레이션 진행률 — 서버 응답을 기다리는 동안 단계별 메시지를 표시
+    // steps: [{ message, duration(ms), progress }] — 각 단계 정보
+    // 서버 응답이 오면 자동으로 100%로 전환
+    function useSimulatedProgress(steps) {
+      const [progress, setProgress] = React.useState(0);
+      const [message, setMessage] = React.useState('');
+      const timerRef = React.useRef(null);
 
-      const res = await fetch(url, { ...options, headers });
+      const start = React.useCallback(() => {
+        let stepIdx = 0;
+        setProgress(steps[0]?.progress || 5);
+        setMessage(steps[0]?.message || '처리 중...');
 
-      if (res.status === 401) { clearAuthToken(); window.location.reload(); }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let result = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // 마지막 불완전한 줄은 버퍼에 유지
-
-        let currentEvent = null;
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (currentEvent === 'error') {
-                throw new Error(data.error || '서버 오류');
-              } else if (currentEvent === 'done') {
-                result = data;
-                onProgress(data);
-              } else if (currentEvent === 'progress') {
-                onProgress(data);
-              }
-            } catch (e) {
-              if (e.message && !e.message.includes('JSON')) throw e;
-            }
-            currentEvent = null;
+        timerRef.current = setInterval(() => {
+          stepIdx++;
+          if (stepIdx < steps.length) {
+            setProgress(steps[stepIdx].progress);
+            setMessage(steps[stepIdx].message);
+          } else {
+            // 마지막 단계 이후 천천히 증가 (최대 92%)
+            setProgress(prev => Math.min(92, prev + 1));
           }
-        }
-      }
-      return result;
+        }, steps[stepIdx]?.duration || 3000);
+      }, [steps]);
+
+      const finish = React.useCallback((msg) => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        setProgress(100);
+        setMessage(msg || '완료!');
+      }, []);
+
+      const reset = React.useCallback(() => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        setProgress(0);
+        setMessage('');
+      }, []);
+
+      // 컴포넌트 언마운트 시 타이머 정리
+      React.useEffect(() => () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+      }, []);
+
+      return { progress, message, start, finish, reset };
     }
 
     // ========================================
@@ -587,8 +578,6 @@
       const [contentType, setContentType] = useState('general'); // 이미지 OCR 타입
       const [previewInfo, setPreviewInfo] = useState(null); // CSV/XLSX 열 목록, JSON 필드 미리보기
       const [uploading, setUploading] = useState(false);
-      const [progress, setProgress] = useState(0);
-      const [progressMsg, setProgressMsg] = useState(''); // SSE 진행 메시지
       const [result, setResult] = useState(null);
       const [error, setError] = useState(null);
       const [dragOver, setDragOver] = useState(false);
@@ -599,8 +588,6 @@
       const [lawResults, setLawResults] = useState([]);
       const [lawSearching, setLawSearching] = useState(false);
       const [importing, setImporting] = useState(null);
-      const [lawProgress, setLawProgress] = useState(0); // 법령 임포트 진행률
-      const [lawProgressMsg, setLawProgressMsg] = useState('');
       const [lawError, setLawError] = useState(null);
       const [lawResult, setLawResult] = useState(null);
       const [lawImportedMap, setLawImportedMap] = useState({}); // lawId → { documentId, title, importedAt }
@@ -695,11 +682,21 @@
       }, [handleFileSelect]);
 
       // ── 업로드 실행 (SSE 실시간 진행) ──
+      // 업로드 진행 단계 시뮬레이션
+      const uploadSteps = useMemo(() => [
+        { message: '파일 전송 중...', progress: 10, duration: 2000 },
+        { message: '텍스트 추출 중...', progress: 25, duration: 3000 },
+        { message: 'DB 저장 중...', progress: 40, duration: 2000 },
+        { message: '임베딩 생성 중...', progress: 55, duration: 4000 },
+        { message: '임베딩 처리 중...', progress: 70, duration: 5000 },
+        { message: '마무리 중...', progress: 85, duration: 5000 },
+      ], []);
+      const uploadProgress = useSimulatedProgress(uploadSteps);
+
       const handleUpload = useCallback(async () => {
         if (!file) return;
         setUploading(true);
-        setProgress(5);
-        setProgressMsg('업로드 준비 중...');
+        uploadProgress.start();
         setError(null);
         setResult(null);
         try {
@@ -715,29 +712,24 @@
           if (contentField) formData.append('contentField', contentField);
           if (contentType) formData.append('contentType', contentType);
 
-          const data = await authFetchSSE(
-            `${API_BASE_URL}/upload`,
-            { method: 'POST', body: formData },
-            (evt) => {
-              if (evt.progress != null) setProgress(evt.progress);
-              if (evt.message) setProgressMsg(evt.message);
-            }
-          );
-
-          setProgress(100);
-          setProgressMsg('완료!');
+          const res = await authFetch(`${API_BASE_URL}/upload`, { method: 'POST', body: formData });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `업로드 실패 (${res.status})`);
+          }
+          const data = await res.json();
+          uploadProgress.finish('업로드 완료!');
           setResult(data);
           setTimeout(() => {
-            setFile(null); setFileType(null); setTitle(''); setProgress(0);
-            setProgressMsg('');
+            setFile(null); setFileType(null); setTitle('');
+            uploadProgress.reset();
             setPreviewInfo(null); setContentColumn(''); setContentField('');
             if (fileInputRef.current) fileInputRef.current.value = '';
             if (onUploadComplete) onUploadComplete();
           }, 2000);
         } catch (err) {
           setError(err.message);
-          setProgress(0);
-          setProgressMsg('');
+          uploadProgress.reset();
         } finally {
           setUploading(false);
         }
@@ -747,7 +739,7 @@
         setFile(null); setFileType(null); setTitle(''); setCategory('기타');
         setSectionType('full'); setCustomDelimiter(''); setContentColumn('');
         setContentField(''); setContentType('general'); setPreviewInfo(null);
-        setError(null); setResult(null); setProgress(0);
+        setError(null); setResult(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }, []);
 
@@ -779,28 +771,31 @@
         }
       }, [lawQuery]);
 
-      // 법령 임포트 (SSE 실시간 진행)
+      // 법령 임포트 진행 단계 시뮬레이션
+      const lawSteps = useMemo(() => [
+        { message: '법제처 API 조회 중...', progress: 10, duration: 3000 },
+        { message: '조문 데이터 수신 중...', progress: 25, duration: 4000 },
+        { message: '조문 저장 중...', progress: 40, duration: 3000 },
+        { message: '참조 관계 분석 중...', progress: 55, duration: 2000 },
+        { message: '임베딩 생성 중...', progress: 65, duration: 5000 },
+        { message: '임베딩 처리 중...', progress: 80, duration: 5000 },
+      ], []);
+      const lawImportProgress = useSimulatedProgress(lawSteps);
+
       const handleLawImport = useCallback(async (law) => {
         setImporting(law.id);
-        setLawProgress(5);
-        setLawProgressMsg('임포트 준비 중...');
+        lawImportProgress.start();
         setLawError(null);
         setLawResult(null);
         try {
-          const data = await authFetchSSE(
-            `${API_BASE_URL}/law-import`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ lawId: law.id, lawName: law.name }),
-            },
-            (evt) => {
-              if (evt.progress != null) setLawProgress(evt.progress);
-              if (evt.message) setLawProgressMsg(evt.message);
-            }
-          );
-          setLawProgress(100);
-          setLawProgressMsg('완료!');
+          const res = await authFetch(`${API_BASE_URL}/law-import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lawId: law.id, lawName: law.name }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `임포트 실패 (${res.status})`);
+          lawImportProgress.finish('임포트 완료!');
           setLawResult(data);
           setLawImportedMap(prev => ({
             ...prev,
@@ -809,8 +804,9 @@
           if (onUploadComplete) onUploadComplete();
         } catch (err) {
           setLawError(err.message);
+          lawImportProgress.reset();
         } finally {
-          setTimeout(() => { setLawProgress(0); setLawProgressMsg(''); }, 2000);
+          setTimeout(() => lawImportProgress.reset(), 2000);
           setImporting(null);
         }
       }, [onUploadComplete]);
@@ -977,12 +973,12 @@
                 </Card>
               )}
 
-              {progress > 0 && (
+              {uploadProgress.progress > 0 && (
                 <div className="space-y-2">
-                  <ProgressBar value={progress} />
+                  <ProgressBar value={uploadProgress.progress} />
                   <div className="flex justify-between items-center">
-                    <p className="text-xs text-text-secondary">{progressMsg || (progress < 100 ? '처리 중...' : '완료!')}</p>
-                    <span className="text-xs text-primary font-medium">{Math.round(progress)}%</span>
+                    <p className="text-xs text-text-secondary">{uploadProgress.message}</p>
+                    <span className="text-xs text-primary font-medium">{Math.round(uploadProgress.progress)}%</span>
                   </div>
                 </div>
               )}
@@ -1110,13 +1106,13 @@
               )}
 
               {/* 법령 임포트 진행률 */}
-              {lawProgress > 0 && (
+              {lawImportProgress.progress > 0 && (
                 <Card>
                   <div className="space-y-2">
-                    <ProgressBar value={lawProgress} />
+                    <ProgressBar value={lawImportProgress.progress} />
                     <div className="flex justify-between items-center">
-                      <p className="text-xs text-text-secondary">{lawProgressMsg || '처리 중...'}</p>
-                      <span className="text-xs text-primary font-medium">{Math.round(lawProgress)}%</span>
+                      <p className="text-xs text-text-secondary">{lawImportProgress.message}</p>
+                      <span className="text-xs text-primary font-medium">{Math.round(lawImportProgress.progress)}%</span>
                     </div>
                   </div>
                 </Card>
@@ -1211,8 +1207,6 @@
       const [tagLoading, setTagLoading] = useState(false);
       // AI 분석
       const [analyzing, setAnalyzing] = useState(false);
-      const [analyzeProgress, setAnalyzeProgress] = useState(0);
-      const [analyzeMsg, setAnalyzeMsg] = useState('');
       // 원본 이미지 미리보기 Blob URL
       const [previewUrl, setPreviewUrl] = useState(null);
 
@@ -1409,34 +1403,40 @@
         }
       }, [documentId]);
 
-      // AI 분석 실행 (SSE 실시간 진행)
+      // AI 분석 진행 단계 시뮬레이션
+      const analyzeSteps = useMemo(() => [
+        { message: 'AI 문서 분석 중 (요약/키워드)...', progress: 15, duration: 5000 },
+        { message: '태그 생성 중...', progress: 30, duration: 3000 },
+        { message: '섹션별 요약 생성 중...', progress: 45, duration: 5000 },
+        { message: '섹션 요약 처리 중...', progress: 60, duration: 5000 },
+        { message: 'Enriched 임베딩 생성 중...', progress: 75, duration: 6000 },
+        { message: '임베딩 마무리 중...', progress: 88, duration: 5000 },
+      ], []);
+      const analyzeProgress2 = useSimulatedProgress(analyzeSteps);
+
       const handleAnalyze = useCallback(async () => {
         if (!documentId) return;
         setAnalyzing(true);
-        setAnalyzeProgress(5);
-        setAnalyzeMsg('분석 준비 중...');
+        analyzeProgress2.start();
         try {
-          await authFetchSSE(
-            `${API_BASE_URL}/documents`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'analyze', id: documentId }),
-            },
-            (evt) => {
-              if (evt.progress != null) setAnalyzeProgress(evt.progress);
-              if (evt.message) setAnalyzeMsg(evt.message);
-            }
-          );
-          setAnalyzeProgress(100);
-          setAnalyzeMsg('분석 완료!');
+          const res = await authFetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'analyze', id: documentId }),
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || 'AI 분석 실패');
+          }
+          analyzeProgress2.finish('분석 완료!');
           // 분석 완료 후 문서 데이터 리로드
           const docRes = await authFetch(`${API_BASE_URL}/documents?id=${documentId}`);
           if (docRes.ok) setData(await docRes.json());
         } catch (err) {
           alert(`AI 분석 실패: ${err.message}`);
+          analyzeProgress2.reset();
         } finally {
-          setTimeout(() => { setAnalyzeProgress(0); setAnalyzeMsg(''); }, 2000);
+          setTimeout(() => analyzeProgress2.reset(), 2000);
           setAnalyzing(false);
         }
       }, [documentId]);
@@ -1617,12 +1617,12 @@
               </div>
 
               {/* AI 분석 진행률 */}
-              {analyzeProgress > 0 && (
+              {analyzeProgress2.progress > 0 && (
                 <div className="space-y-2">
-                  <ProgressBar value={analyzeProgress} />
+                  <ProgressBar value={analyzeProgress2.progress} />
                   <div className="flex justify-between items-center">
-                    <p className="text-xs text-text-secondary">{analyzeMsg || '분석 중...'}</p>
-                    <span className="text-xs text-primary font-medium">{Math.round(analyzeProgress)}%</span>
+                    <p className="text-xs text-text-secondary">{analyzeProgress2.message || '분석 중...'}</p>
+                    <span className="text-xs text-primary font-medium">{Math.round(analyzeProgress2.progress)}%</span>
                   </div>
                 </div>
               )}
