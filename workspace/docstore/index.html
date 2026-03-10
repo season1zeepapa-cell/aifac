@@ -1449,33 +1449,53 @@
       const [categoryFilter, setCategoryFilter] = useState('');
       const [selectedDocId, setSelectedDocId] = useState(null);
       const [deleting, setDeleting] = useState(null);
+      // 휴지통 모드 토글
+      const [showTrash, setShowTrash] = useState(false);
+      const [trashCount, setTrashCount] = useState(0);
 
       // 문서 목록 불러오기
       const fetchDocuments = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-          const query = categoryFilter ? `?category=${encodeURIComponent(categoryFilter)}` : '';
+          let query = showTrash
+            ? '?trash=true'
+            : categoryFilter ? `?category=${encodeURIComponent(categoryFilter)}` : '';
           const res = await authFetch(`${API_BASE_URL}/documents${query}`);
           if (!res.ok) throw new Error('문서 목록을 불러올 수 없습니다.');
           const data = await res.json();
-          // 응답이 배열인지 객체인지 확인
           setDocuments(Array.isArray(data) ? data : data.documents || []);
         } catch (err) {
           setError(err.message);
         } finally {
           setLoading(false);
         }
-      }, [categoryFilter]);
+      }, [categoryFilter, showTrash]);
+
+      // 휴지통 개수 조회
+      const fetchTrashCount = useCallback(async () => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/documents?trash=true`);
+          if (res.ok) {
+            const data = await res.json();
+            const docs = Array.isArray(data) ? data : data.documents || [];
+            setTrashCount(docs.length);
+          }
+        } catch {}
+      }, []);
 
       useEffect(() => {
         fetchDocuments();
       }, [fetchDocuments]);
 
-      // 문서 삭제
+      useEffect(() => {
+        if (!showTrash) fetchTrashCount();
+      }, [showTrash, fetchTrashCount, documents]);
+
+      // 소프트 삭제 (휴지통으로 이동)
       const handleDelete = useCallback(async (id, e) => {
         e.stopPropagation();
-        if (!confirm('이 문서를 삭제하시겠습니까?')) return;
+        if (!confirm('이 문서를 휴지통으로 이동하시겠습니까?')) return;
         setDeleting(id);
         try {
           const res = await authFetch(`${API_BASE_URL}/documents`, {
@@ -1492,6 +1512,73 @@
         }
       }, []);
 
+      // 복구
+      const handleRestore = useCallback(async (id, e) => {
+        e.stopPropagation();
+        setDeleting(id);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'restore', id }),
+          });
+          if (!res.ok) throw new Error('복구에 실패했습니다.');
+          setDocuments(prev => prev.filter(d => d.id !== id));
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          setDeleting(null);
+        }
+      }, []);
+
+      // 영구 삭제
+      const handlePermanentDelete = useCallback(async (id, e) => {
+        e.stopPropagation();
+        if (!confirm('이 문서를 영구 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+        setDeleting(id);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'permanentDelete', id }),
+          });
+          if (!res.ok) throw new Error('영구 삭제에 실패했습니다.');
+          setDocuments(prev => prev.filter(d => d.id !== id));
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          setDeleting(null);
+        }
+      }, []);
+
+      // 휴지통 비우기
+      const handleEmptyTrash = useCallback(async () => {
+        if (!confirm(`휴지통의 모든 문서(${documents.length}개)를 영구 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+        setLoading(true);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'emptyTrash' }),
+          });
+          if (!res.ok) throw new Error('휴지통 비우기에 실패했습니다.');
+          setDocuments([]);
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [documents.length]);
+
+      // 경과 시간 표시 (삭제 후 며칠 경과)
+      const getDeletedAgo = (deletedAt) => {
+        const diff = Date.now() - new Date(deletedAt).getTime();
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        if (days === 0) return '오늘';
+        if (days === 1) return '어제';
+        return `${days}일 전`;
+      };
+
       // 카테고리별 뱃지 색상
       const getCategoryColor = (cat) => {
         switch (cat) {
@@ -1504,21 +1591,58 @@
 
       return (
         <div className="space-y-4 fade-in">
-          {/* 카테고리 필터 */}
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {CATEGORIES.map(cat => (
+          {/* 카테고리 필터 + 휴지통 토글 */}
+          <div className="flex items-center gap-2">
+            {!showTrash && (
+              <div className="flex gap-2 overflow-x-auto pb-1 flex-1">
+                {CATEGORIES.map(cat => (
+                  <button
+                    key={cat.value}
+                    onClick={() => setCategoryFilter(cat.value)}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
+                      categoryFilter === cat.value
+                        ? 'bg-primary text-white'
+                        : 'bg-border text-text-secondary hover:text-text'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {showTrash && (
+              <div className="flex-1">
+                <span className="text-sm text-text-secondary">
+                  휴지통 ({documents.length}개)
+                </span>
+              </div>
+            )}
+            {/* 휴지통 버튼 */}
+            <button
+              onClick={() => { setShowTrash(!showTrash); setCategoryFilter(''); }}
+              className={`relative px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors shrink-0 ${
+                showTrash
+                  ? 'bg-red-500/20 text-red-400'
+                  : 'bg-border text-text-secondary hover:text-text'
+              }`}
+            >
+              <svg className="w-4 h-4 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              {showTrash ? '목록으로' : '휴지통'}
+              {!showTrash && trashCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">
+                  {trashCount}
+                </span>
+              )}
+            </button>
+            {/* 휴지통 비우기 */}
+            {showTrash && documents.length > 0 && (
               <button
-                key={cat.value}
-                onClick={() => setCategoryFilter(cat.value)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-                  categoryFilter === cat.value
-                    ? 'bg-primary text-white'
-                    : 'bg-border text-text-secondary hover:text-text'
-                }`}
+                onClick={handleEmptyTrash}
+                className="px-3 py-1.5 rounded-full text-sm font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors shrink-0"
               >
-                {cat.label}
+                비우기
               </button>
-            ))}
+            )}
           </div>
 
           {/* 로딩 */}
@@ -1535,18 +1659,20 @@
             </Card>
           ) : documents.length === 0 ? (
             <EmptyState
-              icon="📄"
-              title="문서가 없습니다"
-              description={categoryFilter ? `'${categoryFilter}' 카테고리에 문서가 없습니다.` : '업로드 탭에서 PDF를 업로드하세요.'}
+              icon={showTrash ? "🗑️" : "📄"}
+              title={showTrash ? "휴지통이 비어 있습니다" : "문서가 없습니다"}
+              description={showTrash
+                ? '삭제된 문서가 없습니다.'
+                : categoryFilter ? `'${categoryFilter}' 카테고리에 문서가 없습니다.` : '업로드 탭에서 PDF를 업로드하세요.'}
             />
           ) : (
             /* 문서 카드 목록 */
             <div className="space-y-3">
               {documents.map(doc => (
-                <Card key={doc.id} hoverable onClick={() => setSelectedDocId(doc.id)}>
+                <Card key={doc.id} hoverable={!showTrash} onClick={() => !showTrash && setSelectedDocId(doc.id)}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-text truncate">{doc.title}</h3>
+                      <h3 className={`font-medium truncate ${showTrash ? 'text-text-secondary' : 'text-text'}`}>{doc.title}</h3>
                       <div className="flex flex-wrap items-center gap-2 mt-2">
                         <Badge color={getCategoryColor(doc.category)}>{doc.category}</Badge>
                         {FILE_TYPE_CONFIG[doc.file_type] && (
@@ -1555,35 +1681,62 @@
                           </Badge>
                         )}
                         {doc.file_type === 'law' && <Badge color="primary">법령</Badge>}
-                        <Badge color={doc.embedding_status === 'done' ? 'green' : doc.embedding_status === 'failed' ? 'red' : 'yellow'}>
-                          {doc.embedding_status === 'done' ? '벡터 완료' : doc.embedding_status === 'failed' ? '벡터 실패' : '벡터 대기'}
-                        </Badge>
-                        <span className="text-xs text-text-secondary">{formatDate(doc.created_at)}</span>
+                        {showTrash && doc.deleted_at ? (
+                          <span className="text-xs text-red-400">{getDeletedAgo(doc.deleted_at)} 삭제</span>
+                        ) : (
+                          <React.Fragment>
+                            <Badge color={doc.embedding_status === 'done' ? 'green' : doc.embedding_status === 'failed' ? 'red' : 'yellow'}>
+                              {doc.embedding_status === 'done' ? '벡터 완료' : doc.embedding_status === 'failed' ? '벡터 실패' : '벡터 대기'}
+                            </Badge>
+                            <span className="text-xs text-text-secondary">{formatDate(doc.created_at)}</span>
+                          </React.Fragment>
+                        )}
                         {doc.section_count != null && (
                           <span className="text-xs text-text-secondary">{doc.section_count}개 섹션</span>
                         )}
                         {doc.file_size > 0 && (
                           <span className="text-xs text-text-secondary">{formatFileSize(doc.file_size)}</span>
                         )}
-                        {doc.original_filename && (
-                          <span className="text-xs text-text-secondary" title={doc.original_filename}>
-                            {doc.original_filename.length > 20 ? doc.original_filename.slice(0, 20) + '...' : doc.original_filename}
-                          </span>
-                        )}
                       </div>
                     </div>
-                    <button
-                      onClick={(e) => handleDelete(doc.id, e)}
-                      disabled={deleting === doc.id}
-                      className="p-2 text-text-secondary hover:text-red-400 transition-colors shrink-0"
-                      aria-label="삭제"
-                    >
-                      {deleting === doc.id ? (
-                        <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                      )}
-                    </button>
+                    {/* 일반 모드: 삭제 버튼 / 휴지통 모드: 복구 + 영구삭제 */}
+                    {showTrash ? (
+                      <div className="flex gap-1 shrink-0">
+                        <button
+                          onClick={(e) => handleRestore(doc.id, e)}
+                          disabled={deleting === doc.id}
+                          className="p-2 text-text-secondary hover:text-green-400 transition-colors"
+                          title="복구"
+                        >
+                          {deleting === doc.id ? (
+                            <div className="w-4 h-4 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+                          )}
+                        </button>
+                        <button
+                          onClick={(e) => handlePermanentDelete(doc.id, e)}
+                          disabled={deleting === doc.id}
+                          className="p-2 text-text-secondary hover:text-red-400 transition-colors"
+                          title="영구 삭제"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => handleDelete(doc.id, e)}
+                        disabled={deleting === doc.id}
+                        className="p-2 text-text-secondary hover:text-red-400 transition-colors shrink-0"
+                        aria-label="삭제"
+                      >
+                        {deleting === doc.id ? (
+                          <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </Card>
               ))}

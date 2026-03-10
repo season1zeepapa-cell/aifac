@@ -39,7 +39,7 @@ module.exports = async function handler(req, res) {
       const vecStr = `[${embedding.join(',')}]`;
 
       // 필터 조건 동적 생성
-      let filterClauses = ['dc.embedding IS NOT NULL'];
+      let filterClauses = ['dc.embedding IS NOT NULL', 'd.deleted_at IS NULL'];
       let params = [vecStr];
       let paramIdx = 2;
 
@@ -118,7 +118,7 @@ module.exports = async function handler(req, res) {
       });
     } else {
       // ── 텍스트 ILIKE 검색 (와일드카드 이스케이프) ──
-      let filterClauses = [`ds.raw_text ILIKE $1 ESCAPE '\\'`];
+      let filterClauses = [`ds.raw_text ILIKE $1 ESCAPE '\\'`, 'd.deleted_at IS NULL'];
       let params = [`%${escapeIlike(q.trim())}%`];
       let paramIdx = 2;
 

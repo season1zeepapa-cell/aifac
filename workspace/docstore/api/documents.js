@@ -63,7 +63,7 @@ module.exports = async function handler(req, res) {
         const doc = await query(
           `SELECT id, title, file_type, category, summary, keywords,
                   upload_date AS created_at, metadata, embedding_status,
-                  original_filename, original_mimetype, file_size, storage_path
+                  original_filename, original_mimetype, file_size, storage_path, deleted_at
            FROM documents WHERE id = $1`, [id]
         );
         if (doc.rows.length === 0) {
@@ -93,36 +93,36 @@ module.exports = async function handler(req, res) {
       }
 
       // 목록 조회 (카테고리/태그 필터 가능)
+      // ?trash=true 이면 휴지통(삭제된 문서), 아니면 정상 문서만
+      const isTrash = req.query.trash === 'true';
       const tag = req.query.tag || '';
       let sql = `
         SELECT d.id, d.title, d.file_type, d.category, d.summary,
                d.upload_date AS created_at, d.metadata,
                d.embedding_status, d.original_filename, d.file_size, d.storage_path,
+               ${isTrash ? 'd.deleted_at,' : ''}
                COUNT(DISTINCT s.id) AS section_count
         FROM documents d
         LEFT JOIN document_sections s ON s.document_id = d.id
       `;
       let params = [];
-      let whereClauses = [];
+      let whereClauses = [isTrash ? 'd.deleted_at IS NOT NULL' : 'd.deleted_at IS NULL'];
       let paramIdx = 1;
 
-      if (category) {
+      if (category && !isTrash) {
         whereClauses.push(`d.category = $${paramIdx}`);
         params.push(category);
         paramIdx++;
       }
-      if (tag) {
+      if (tag && !isTrash) {
         sql += ' JOIN document_tags dt ON dt.document_id = d.id JOIN tags t ON t.id = dt.tag_id';
         whereClauses.push(`t.name = $${paramIdx}`);
         params.push(tag);
         paramIdx++;
       }
 
-      if (whereClauses.length > 0) {
-        sql += ' WHERE ' + whereClauses.join(' AND ');
-      }
-
-      sql += ' GROUP BY d.id ORDER BY d.upload_date DESC';
+      sql += ' WHERE ' + whereClauses.join(' AND ');
+      sql += ` GROUP BY d.id ORDER BY ${isTrash ? 'd.deleted_at DESC' : 'd.upload_date DESC'}`;
 
       const docs = await query(sql, params);
 
@@ -154,34 +154,58 @@ module.exports = async function handler(req, res) {
     if (req.method === 'POST') {
       const { action, id } = req.body;
 
+      // 소프트 삭제 — deleted_at 타임스탬프 기록 (휴지통으로 이동)
       if (action === 'delete' && id) {
-        // 손자(chunks) → 자식(sections) → 부모(documents) 순서로 삭제
-        // 1) 해당 문서의 섹션 ID 목록 조회
-        const sectionRows = await query(
-          'SELECT id FROM document_sections WHERE document_id = $1', [id]
-        );
-        const sectionIds = sectionRows.rows.map(r => r.id);
+        await query('UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL', [id]);
+        return res.json({ success: true, message: '문서가 휴지통으로 이동되었습니다.' });
+      }
 
-        // 2) 섹션에 연결된 청크(임베딩) 삭제
-        if (sectionIds.length > 0) {
-          await query(
-            `DELETE FROM document_chunks WHERE section_id = ANY($1)`,
-            [sectionIds]
-          );
+      // 복구 — deleted_at을 NULL로 되돌림
+      if (action === 'restore' && id) {
+        await query('UPDATE documents SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL', [id]);
+        return res.json({ success: true, message: '문서가 복구되었습니다.' });
+      }
+
+      // 영구 삭제 — 실제 데이터 제거 (휴지통에서만 가능)
+      if (action === 'permanentDelete' && id) {
+        // 삭제된 문서만 영구 삭제 가능
+        const check = await query('SELECT id FROM documents WHERE id = $1 AND deleted_at IS NOT NULL', [id]);
+        if (check.rows.length === 0) {
+          return res.status(400).json({ error: '휴지통에 있는 문서만 영구 삭제할 수 있습니다.' });
         }
 
-        // 3) 섹션 삭제
+        // 손자(chunks) → 자식(sections) → 태그 → Storage → 부모(documents)
+        const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [id]);
+        const sectionIds = sectionRows.rows.map(r => r.id);
+        if (sectionIds.length > 0) {
+          await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+        }
         await query('DELETE FROM document_sections WHERE document_id = $1', [id]);
-
-        // 4) Storage 파일 삭제
+        await query('DELETE FROM document_tags WHERE document_id = $1', [id]);
         if (isStorageAvailable()) {
           await deleteDocumentFiles(id);
         }
-
-        // 5) 문서 삭제
         await query('DELETE FROM documents WHERE id = $1', [id]);
+        return res.json({ success: true, message: '문서가 영구 삭제되었습니다.' });
+      }
 
-        return res.json({ success: true, message: '문서가 삭제되었습니다.' });
+      // 휴지통 비우기 — 모든 소프트 삭제 문서를 영구 제거
+      if (action === 'emptyTrash') {
+        const trashed = await query('SELECT id FROM documents WHERE deleted_at IS NOT NULL');
+        for (const row of trashed.rows) {
+          const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [row.id]);
+          const sectionIds = sectionRows.rows.map(r => r.id);
+          if (sectionIds.length > 0) {
+            await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+          }
+          await query('DELETE FROM document_sections WHERE document_id = $1', [row.id]);
+          await query('DELETE FROM document_tags WHERE document_id = $1', [row.id]);
+          if (isStorageAvailable()) {
+            await deleteDocumentFiles(row.id);
+          }
+          await query('DELETE FROM documents WHERE id = $1', [row.id]);
+        }
+        return res.json({ success: true, message: `${trashed.rows.length}개 문서가 영구 삭제되었습니다.`, count: trashed.rows.length });
       }
 
       // 태그 추가 — { action: 'addTag', id: 문서ID, tagName: '태그명' }
