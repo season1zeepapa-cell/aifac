@@ -66,6 +66,11 @@ const apiUsageHandler = require('./api/api-usage');
 app.get('/api/api-usage', (req, res) => apiUsageHandler(req, res));
 app.post('/api/api-usage', (req, res) => apiUsageHandler(req, res));
 
+// ── /api/deidentify (GET, POST) — 비식별화 키워드 관리 ──
+const deidentifyHandler = require('./api/deidentify');
+app.get('/api/deidentify', (req, res) => deidentifyHandler(req, res));
+app.post('/api/deidentify', (req, res) => deidentifyHandler(req, res));
+
 // ── 서버 시작 / Vercel 서버리스 export ────────────────
 if (require.main === module) {
   app.listen(PORT, () => {

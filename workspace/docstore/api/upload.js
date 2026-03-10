@@ -20,6 +20,7 @@ const { checkRateLimit } = require('../lib/rate-limit');
 const { uploadFile, isStorageAvailable } = require('../lib/storage');
 const { sanitizeFilename } = require('../lib/input-sanitizer');
 const { sendError } = require('../lib/error-handler');
+const { getDeidentifyWords, deidentifySections } = require('../lib/deidentify');
 
 // 허용 MIME 타입 화이트리스트
 const ALLOWED_MIMES = new Set([
@@ -129,9 +130,26 @@ module.exports = async function handler(req, res) {
       extracted = await extractFromFile(fileBuffer, fileType, options);
     }
 
-    const sections = extracted.sections || [];
+    let sections = extracted.sections || [];
     if (sections.length === 0) {
       return res.status(400).json({ error: '추출된 내용이 없습니다.' });
+    }
+
+    // ── 비식별화 처리 ──
+    let deidentifyResult = { totalReplaced: 0 };
+    const enableDeidentify = req.body.deidentify === 'true' || req.body.deidentify === true;
+    if (enableDeidentify) {
+      try {
+        const words = await getDeidentifyWords();
+        if (words.length > 0) {
+          const result = deidentifySections(sections, words);
+          sections = result.sections;
+          deidentifyResult.totalReplaced = result.totalReplaced;
+          console.log(`[Upload] 비식별화: ${words.length}개 키워드, ${result.totalReplaced}건 치환`);
+        }
+      } catch (err) {
+        console.warn('[Upload] 비식별화 처리 실패 (계속 진행):', err.message);
+      }
     }
 
     // ── DB 저장 ──
@@ -196,6 +214,7 @@ module.exports = async function handler(req, res) {
       columns: extracted.columns || null,
       fields: extracted.fields || null,
       embedding: embeddingResult,
+      deidentify: enableDeidentify ? deidentifyResult : undefined,
     });
   } catch (err) {
     sendError(res, err, '[Upload]');

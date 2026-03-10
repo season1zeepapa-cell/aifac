@@ -875,6 +875,7 @@
       const [result, setResult] = useState(null);
       const [error, setError] = useState(null);
       const [dragOver, setDragOver] = useState(false);
+      const [deidentify, setDeidentify] = useState(false); // 비식별화 토글
       const fileInputRef = useRef(null);
 
       // ── 법령 검색 모드 state ──
@@ -996,6 +997,7 @@
           if (contentColumn) formData.append('contentColumn', contentColumn);
           if (contentField) formData.append('contentField', contentField);
           if (contentType) formData.append('contentType', contentType);
+          if (deidentify) formData.append('deidentify', 'true');
 
           const token = getAuthToken();
           const data = await uploadProgress.upload(`${API_BASE_URL}/upload`, formData, token);
@@ -1014,13 +1016,13 @@
         } finally {
           setUploading(false);
         }
-      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, onUploadComplete]);
+      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, deidentify, onUploadComplete]);
 
       const handleReset = useCallback(() => {
         setFile(null); setFileType(null); setTitle(''); setCategory('기타');
         setSectionType('full'); setCustomDelimiter(''); setContentColumn('');
         setContentField(''); setContentType('general'); setPreviewInfo(null);
-        setError(null); setResult(null);
+        setDeidentify(false); setError(null); setResult(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }, []);
 
@@ -1257,6 +1259,22 @@
                 </Card>
               )}
 
+              {/* 비식별화 토글 */}
+              {file && (
+                <Card className="border-border">
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <div>
+                      <p className="text-sm font-medium text-text-primary">비식별화 처리</p>
+                      <p className="text-xs text-text-secondary">등록된 키워드를 마스킹(***) 처리 후 저장합니다</p>
+                    </div>
+                    <div className={`relative w-11 h-6 rounded-full transition-colors ${deidentify ? 'bg-primary' : 'bg-gray-300'}`}
+                      onClick={() => setDeidentify(d => !d)}>
+                      <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${deidentify ? 'translate-x-5' : ''}`} />
+                    </div>
+                  </label>
+                </Card>
+              )}
+
               {uploadProgress.progress > 0 && (
                 <div className="space-y-2">
                   <ProgressBar value={uploadProgress.progress} />
@@ -1275,12 +1293,24 @@
 
               {result && (
                 <Card className="border-green-200 bg-green-50">
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <p className="text-sm text-green-600 font-medium">업로드 완료!</p>
                     <p className="text-xs text-text-secondary">
                       "{result.title}" - {result.sectionCount || 0}개 섹션 추출됨
                       {result.fileType && ` (${FILE_TYPE_CONFIG[result.fileType]?.label || result.fileType})`}
                     </p>
+                    {result.deidentify && (
+                      <div className="flex items-center gap-2 pt-1 border-t border-green-200">
+                        <span className="text-xs font-medium text-green-700">비식별화 결과:</span>
+                        {result.deidentify.totalReplaced > 0 ? (
+                          <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full font-medium">
+                            {result.deidentify.totalReplaced}건 키워드 치환 완료
+                          </span>
+                        ) : (
+                          <span className="text-xs text-text-secondary">일치하는 키워드 없음 (0건)</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </Card>
               )}
@@ -3507,6 +3537,7 @@
         { id: 'usage', label: '사용량' },
         { id: 'llm', label: 'LLM 설정' },
         { id: 'ocr', label: 'OCR 설정' },
+        { id: 'deidentify', label: '비식별화' },
       ];
 
       const ocrStatusBadge = (engine) => {
@@ -4029,6 +4060,186 @@
               )}
             </div>
           )}
+
+          {/* ════════ 비식별화 설정 탭 ════════ */}
+          {subTab === 'deidentify' && (
+            <DeidentifyPanel />
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 비식별화 키워드 관리 패널
+    // ========================================
+    function DeidentifyPanel() {
+      const [words, setWords] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [newKeyword, setNewKeyword] = useState('');
+      const [newReplacement, setNewReplacement] = useState('***');
+      const [bulkInput, setBulkInput] = useState('');
+      const [showBulk, setShowBulk] = useState(false);
+      const [message, setMessage] = useState(null);
+
+      const fetchWords = useCallback(async () => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/deidentify`);
+          if (res.ok) {
+            const data = await res.json();
+            setWords(data.words || []);
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => { fetchWords(); }, [fetchWords]);
+
+      const handleAdd = useCallback(async () => {
+        if (!newKeyword.trim()) return;
+        try {
+          const res = await authFetch(`${API_BASE_URL}/deidentify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'add', keyword: newKeyword.trim(), replacement: newReplacement }),
+          });
+          if (res.ok) {
+            setNewKeyword('');
+            setMessage({ type: 'success', text: `"${newKeyword.trim()}" 추가됨` });
+            fetchWords();
+            setTimeout(() => setMessage(null), 2000);
+          }
+        } catch (err) {
+          setMessage({ type: 'error', text: err.message });
+        }
+      }, [newKeyword, newReplacement, fetchWords]);
+
+      const handleDelete = useCallback(async (id, keyword) => {
+        try {
+          await authFetch(`${API_BASE_URL}/deidentify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id }),
+          });
+          setMessage({ type: 'success', text: `"${keyword}" 삭제됨` });
+          fetchWords();
+          setTimeout(() => setMessage(null), 2000);
+        } catch (err) {
+          setMessage({ type: 'error', text: err.message });
+        }
+      }, [fetchWords]);
+
+      const handleBulkAdd = useCallback(async () => {
+        const keywords = bulkInput.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+        if (keywords.length === 0) return;
+        try {
+          const res = await authFetch(`${API_BASE_URL}/deidentify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'bulkAdd', keyword: keywords, replacement: newReplacement }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setBulkInput('');
+            setShowBulk(false);
+            setMessage({ type: 'success', text: `${data.added}개 키워드 추가됨` });
+            fetchWords();
+            setTimeout(() => setMessage(null), 2000);
+          }
+        } catch (err) {
+          setMessage({ type: 'error', text: err.message });
+        }
+      }, [bulkInput, newReplacement, fetchWords]);
+
+      return (
+        <div className="space-y-4">
+          <Card>
+            <div className="space-y-1">
+              <h3 className="text-sm font-bold text-text">비식별화 키워드 관리</h3>
+              <p className="text-xs text-text-secondary">
+                등록된 키워드는 파일 업로드 시 텍스트에서 자동으로 치환됩니다.
+                업로드 화면에서 "비식별화" 옵션을 켜야 적용됩니다.
+              </p>
+            </div>
+          </Card>
+
+          {message && (
+            <div className={`text-xs px-3 py-2 rounded-lg fade-in ${message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {message.text}
+            </div>
+          )}
+
+          {/* 키워드 추가 */}
+          <Card>
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newKeyword}
+                  onChange={e => setNewKeyword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAdd()}
+                  placeholder="비식별화할 키워드 입력"
+                  className="flex-1 px-3 py-2 bg-bg border border-border rounded-lg text-text text-sm placeholder-text-secondary/50 focus:outline-none focus:border-primary"
+                />
+                <input
+                  type="text"
+                  value={newReplacement}
+                  onChange={e => setNewReplacement(e.target.value)}
+                  placeholder="치환 텍스트"
+                  className="w-20 px-2 py-2 bg-bg border border-border rounded-lg text-text text-sm text-center focus:outline-none focus:border-primary"
+                />
+                <Button onClick={handleAdd} disabled={!newKeyword.trim()}>추가</Button>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowBulk(!showBulk)}
+                  className="text-xs text-primary hover:underline"
+                >{showBulk ? '일괄 입력 닫기' : '일괄 입력'}</button>
+              </div>
+              {showBulk && (
+                <div className="space-y-2">
+                  <textarea
+                    value={bulkInput}
+                    onChange={e => setBulkInput(e.target.value)}
+                    placeholder="한 줄에 하나씩 키워드를 입력하세요&#10;예:&#10;홍길동&#10;010-1234-5678&#10;서울시 강남구"
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-text text-sm placeholder-text-secondary/50 focus:outline-none focus:border-primary h-32 resize-none"
+                  />
+                  <Button onClick={handleBulkAdd} disabled={!bulkInput.trim()}>일괄 추가</Button>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* 등록된 키워드 목록 */}
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-xs font-bold text-text">등록된 키워드 ({words.length}개)</h4>
+            </div>
+            {loading ? (
+              <p className="text-xs text-text-secondary text-center py-4">로딩...</p>
+            ) : words.length === 0 ? (
+              <p className="text-xs text-text-secondary text-center py-4">등록된 키워드가 없습니다.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                {words.map(w => (
+                  <div key={w.id} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-card-bg-hover group">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm text-text font-medium truncate">{w.keyword}</span>
+                      <span className="text-xs text-text-secondary shrink-0">
+                        &rarr; <span className="font-mono bg-badge-bg px-1.5 py-0.5 rounded">{w.replacement}</span>
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleDelete(w.id, w.keyword)}
+                      className="text-xs text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2"
+                    >삭제</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
       );
     }
