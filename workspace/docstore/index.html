@@ -806,8 +806,10 @@
           setLawError(err.message);
           lawImportProgress.reset();
         } finally {
-          setTimeout(() => lawImportProgress.reset(), 2000);
-          setImporting(null);
+          setTimeout(() => {
+            lawImportProgress.reset();
+            setImporting(null);
+          }, 2000);
         }
       }, [onUploadComplete]);
 
@@ -1099,23 +1101,20 @@
                             </Button>
                           )}
                         </div>
+                        {/* 임포트 진행률 — 해당 카드 바로 아래에 표시 */}
+                        {importing === law.id && lawImportProgress.progress > 0 && (
+                          <div className="mt-3 pt-3 border-t border-border space-y-2">
+                            <ProgressBar value={lawImportProgress.progress} />
+                            <div className="flex justify-between items-center">
+                              <p className="text-xs text-text-secondary">{lawImportProgress.message}</p>
+                              <span className="text-xs text-primary font-medium">{Math.round(lawImportProgress.progress)}%</span>
+                            </div>
+                          </div>
+                        )}
                       </Card>
                     );
                   })}
                 </div>
-              )}
-
-              {/* 법령 임포트 진행률 */}
-              {lawImportProgress.progress > 0 && (
-                <Card>
-                  <div className="space-y-2">
-                    <ProgressBar value={lawImportProgress.progress} />
-                    <div className="flex justify-between items-center">
-                      <p className="text-xs text-text-secondary">{lawImportProgress.message}</p>
-                      <span className="text-xs text-primary font-medium">{Math.round(lawImportProgress.progress)}%</span>
-                    </div>
-                  </div>
-                </Card>
               )}
 
               {/* 로딩 */}
