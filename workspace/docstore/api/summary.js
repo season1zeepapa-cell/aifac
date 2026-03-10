@@ -9,6 +9,7 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { callLLM } = require('../lib/gemini');
+const { sendError } = require('../lib/error-handler');
 
 // 섹션 1개 요약 생성
 async function summarizeSection(section, options = {}) {
@@ -116,7 +117,6 @@ module.exports = async (req, res) => {
 
     return res.status(400).json({ error: 'sectionId 또는 documentId가 필요합니다.' });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[Summary]');
   }
 };

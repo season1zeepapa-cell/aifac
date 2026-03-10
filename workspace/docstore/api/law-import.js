@@ -7,6 +7,7 @@ const { query: dbQuery } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
+const { sendError } = require('../lib/error-handler');
 
 /**
  * 조문 텍스트에서 다른 조문 참조를 추출
@@ -199,7 +200,6 @@ module.exports = async (req, res) => {
       embedding: embeddingResult,
     });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[Law Import]');
   }
 };

@@ -12,6 +12,7 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { sanitizeFilename } = require('../lib/input-sanitizer');
+const { sendError } = require('../lib/error-handler');
 
 // OCR 허용 MIME 타입
 const OCR_ALLOWED_MIMES = new Set([
@@ -165,7 +166,6 @@ module.exports = async function handler(req, res) {
       ...ocrResult,
     });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[OCR]');
   }
 };

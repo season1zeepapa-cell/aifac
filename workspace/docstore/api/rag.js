@@ -13,6 +13,7 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { callLLM, getAvailableProviders } = require('../lib/gemini');
+const { sendError } = require('../lib/error-handler');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
@@ -143,7 +144,6 @@ ${question.trim()}`;
       })),
     });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[RAG]');
   }
 };

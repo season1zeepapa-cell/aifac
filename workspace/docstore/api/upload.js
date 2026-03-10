@@ -19,6 +19,7 @@ const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { uploadFile, isStorageAvailable } = require('../lib/storage');
 const { sanitizeFilename } = require('../lib/input-sanitizer');
+const { sendError } = require('../lib/error-handler');
 
 // 허용 MIME 타입 화이트리스트
 const ALLOWED_MIMES = new Set([
@@ -227,7 +228,6 @@ module.exports = async function handler(req, res) {
       embedding: embeddingResult,
     });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[Upload]');
   }
 };

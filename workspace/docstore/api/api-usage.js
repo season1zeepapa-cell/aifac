@@ -6,6 +6,7 @@ const https = require('https');
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
+const { sendError } = require('../lib/error-handler');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, POST, OPTIONS' })) return;
@@ -328,7 +329,6 @@ module.exports = async function handler(req, res) {
 
     res.status(405).json({ error: '허용되지 않는 메서드입니다.' });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[API Usage]');
   }
 };

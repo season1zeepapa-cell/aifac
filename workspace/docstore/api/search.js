@@ -6,6 +6,7 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { escapeIlike } = require('../lib/input-sanitizer');
+const { sendError } = require('../lib/error-handler');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, OPTIONS' })) return;
@@ -188,7 +189,6 @@ module.exports = async function handler(req, res) {
       });
     }
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[Search]');
   }
 };

@@ -10,6 +10,7 @@ const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { uploadFile, isStorageAvailable } = require('../lib/storage');
 const { validateUrl, sanitizeFilename } = require('../lib/input-sanitizer');
+const { sendError } = require('../lib/error-handler');
 
 /**
  * URL에서 HTML을 가져온 뒤 본문 텍스트를 추출
@@ -227,7 +228,6 @@ module.exports = async (req, res) => {
       sectionCount: paragraphs.length,
     });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[URL Import]');
   }
 };

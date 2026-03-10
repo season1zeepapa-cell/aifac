@@ -5,6 +5,7 @@ const { searchLaw, getLawDetail } = require('../lib/law-fetcher');
 const { query: dbQuery } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
+const { sendError } = require('../lib/error-handler');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
@@ -54,7 +55,6 @@ module.exports = async (req, res) => {
 
     return res.status(400).json({ error: 'action은 search 또는 detail이어야 합니다.' });
   } catch (err) {
-    const { sendError } = require('../lib/error-handler');
     sendError(res, err, '[Law]');
   }
 };
