@@ -1902,7 +1902,11 @@
       const [data, setData] = useState(null);
       const [loading, setLoading] = useState(true);
       const [range, setRange] = useState('today');
+      const [subTab, setSubTab] = useState('dashboard');
       const [actionLoading, setActionLoading] = useState(null);
+      // OCR 상태
+      const [engines, setEngines] = useState([]);
+      const [ocrLoading, setOcrLoading] = useState(true);
 
       const fetchData = useCallback(async () => {
         setLoading(true);
@@ -1917,67 +1921,102 @@
         }
       }, [range]);
 
-      useEffect(() => { fetchData(); }, [fetchData]);
+      const fetchEngines = useCallback(async () => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/api-usage?type=ocr`);
+          if (res.ok) {
+            const d = await res.json();
+            setEngines(d.engines || []);
+          }
+        } catch (err) {
+          console.error('[OCR]', err);
+        } finally {
+          setOcrLoading(false);
+        }
+      }, []);
 
-      // 키 테스트
+      useEffect(() => { fetchData(); fetchEngines(); }, [fetchData, fetchEngines]);
+
+      // ── API 키 액션 ──
       const handleTestKey = useCallback(async (provider) => {
         setActionLoading(`test-${provider}`);
         try {
           const res = await authFetch(`${API_BASE_URL}/api-usage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'testKey', provider }),
           });
           const result = await res.json();
           alert(result.message);
           fetchData();
-        } catch (err) {
-          alert('테스트 실패: ' + err.message);
-        } finally {
-          setActionLoading(null);
-        }
+        } finally { setActionLoading(null); }
       }, [fetchData]);
 
-      // 키 활성/비활성 토글
       const handleToggleKey = useCallback(async (provider, currentActive) => {
         setActionLoading(`toggle-${provider}`);
         try {
           await authFetch(`${API_BASE_URL}/api-usage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'toggleKey', provider, isActive: !currentActive }),
           });
           fetchData();
-        } catch (err) {
-          alert('변경 실패: ' + err.message);
-        } finally {
-          setActionLoading(null);
-        }
+        } finally { setActionLoading(null); }
       }, [fetchData]);
 
-      // 한도 변경
       const handleUpdateLimit = useCallback(async (provider, currentLimit) => {
         const newLimit = prompt(`${provider} 일일 호출 한도 (0 = 무제한)`, currentLimit);
         if (newLimit === null) return;
         setActionLoading(`limit-${provider}`);
         try {
           await authFetch(`${API_BASE_URL}/api-usage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'updateLimit', provider, dailyLimit: parseInt(newLimit) || 0 }),
           });
           fetchData();
-        } catch (err) {
-          alert('변경 실패: ' + err.message);
-        } finally {
-          setActionLoading(null);
-        }
+        } finally { setActionLoading(null); }
       }, [fetchData]);
+
+      // ── OCR 액션 ──
+      const handleOcrMove = useCallback(async (index, direction) => {
+        const ne = [...engines];
+        const si = index + direction;
+        if (si < 0 || si >= ne.length) return;
+        [ne[index], ne[si]] = [ne[si], ne[index]];
+        setEngines(ne);
+        try {
+          await authFetch(`${API_BASE_URL}/api-usage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'ocrUpdatePriority', order: ne.map(e => e.engine_id) }),
+          });
+        } catch { fetchEngines(); }
+      }, [engines, fetchEngines]);
+
+      const handleOcrToggle = useCallback(async (engineId, currentEnabled) => {
+        setActionLoading(`ocr-toggle-${engineId}`);
+        try {
+          await authFetch(`${API_BASE_URL}/api-usage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'ocrToggleEngine', engineId, enabled: !currentEnabled }),
+          });
+          fetchEngines();
+        } finally { setActionLoading(null); }
+      }, [fetchEngines]);
+
+      const handleOcrTest = useCallback(async (engineId) => {
+        setActionLoading(`ocr-test-${engineId}`);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/api-usage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'ocrTestEngine', engineId }),
+          });
+          const result = await res.json();
+          alert(result.message);
+        } finally { setActionLoading(null); }
+      }, []);
 
       const providerLabels = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini' };
       const providerColors = { openai: 'green', anthropic: 'yellow', gemini: 'primary' };
 
-      if (loading) {
+      if (loading && !data) {
         return (
           <div className="flex items-center justify-center py-16">
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -1986,342 +2025,312 @@
       }
 
       if (!data) {
-        return <EmptyState icon="⚠️" title="데이터 로드 실패" description="API 사용량 테이블이 생성되지 않았을 수 있습니다." />;
+        return <EmptyState icon="&#9888;" title="데이터 로드 실패" description="API 사용량 테이블이 생성되지 않았을 수 있습니다." />;
       }
 
       const totalCost = data.usageByProvider?.reduce((sum, p) => sum + parseFloat(p.total_cost || 0), 0) || 0;
       const totalCalls = data.usageByProvider?.reduce((sum, p) => sum + parseInt(p.call_count || 0), 0) || 0;
       const totalErrors = data.usageByProvider?.reduce((sum, p) => sum + parseInt(p.error_count || 0), 0) || 0;
 
-      return (
-        <div className="space-y-5 fade-in">
-          {/* 기간 선택 */}
-          <div className="flex gap-2">
-            {[{ v: 'today', l: '오늘' }, { v: 'week', l: '7일' }, { v: 'month', l: '30일' }].map(r => (
-              <button key={r.v} onClick={() => setRange(r.v)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                  range === r.v ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
-                }`}
-              >{r.l}</button>
-            ))}
-            <button onClick={fetchData} className="ml-auto px-3 py-1.5 rounded-full text-sm bg-border text-text-secondary hover:text-text">
-              새로고침
-            </button>
-          </div>
+      const SUB_TABS = [
+        { id: 'dashboard', label: '대시보드' },
+        { id: 'keys', label: 'API 키' },
+        { id: 'usage', label: '사용량' },
+        { id: 'ocr', label: 'OCR 설정' },
+      ];
 
-          {/* 요약 카드 */}
-          <div className="grid grid-cols-3 gap-3">
-            <Card>
-              <p className="text-xs text-text-secondary">총 호출</p>
-              <p className="text-2xl font-bold text-text mt-1">{totalCalls}</p>
-            </Card>
-            <Card>
-              <p className="text-xs text-text-secondary">예상 비용</p>
-              <p className="text-2xl font-bold text-primary mt-1">${totalCost.toFixed(4)}</p>
-            </Card>
-            <Card>
-              <p className="text-xs text-text-secondary">에러</p>
-              <p className={`text-2xl font-bold mt-1 ${totalErrors > 0 ? 'text-red-400' : 'text-green-400'}`}>{totalErrors}</p>
-            </Card>
-          </div>
-
-          {/* API 키 상태 관리 */}
-          <div className="space-y-2">
-            <h3 className="text-sm font-bold text-text">API 키 관리</h3>
-            {data.keys?.map(key => {
-              const usage = data.usageByProvider?.find(u => u.provider === key.provider);
-              const callCount = parseInt(usage?.call_count || 0);
-              const creditErrors = parseInt(usage?.credit_error_count || 0);
-
-              return (
-                <Card key={key.provider}>
-                  <div className="space-y-3">
-                    {/* 상단: 프로바이더 이름 + 상태 뱃지 */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-text">{providerLabels[key.provider] || key.provider}</span>
-                        {key.configured ? (
-                          <Badge color={key.is_active ? 'green' : 'red'}>
-                            {key.is_active ? '활성' : '비활성'}
-                          </Badge>
-                        ) : (
-                          <Badge color="gray">미설정</Badge>
-                        )}
-                        {creditErrors > 0 && <Badge color="red">크레딧 소진</Badge>}
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => handleTestKey(key.provider)}
-                          disabled={!key.configured || actionLoading === `test-${key.provider}`}
-                          className="px-2 py-1 text-xs bg-border rounded hover:bg-card-bg-hover text-text-secondary disabled:opacity-30"
-                        >
-                          {actionLoading === `test-${key.provider}` ? '...' : '테스트'}
-                        </button>
-                        <button
-                          onClick={() => handleToggleKey(key.provider, key.is_active)}
-                          disabled={!key.configured}
-                          className="px-2 py-1 text-xs bg-border rounded hover:bg-card-bg-hover text-text-secondary disabled:opacity-30"
-                        >
-                          {key.is_active ? '비활성화' : '활성화'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* 사용량 + 한도 */}
-                    <div className="flex items-center justify-between text-xs text-text-secondary">
-                      <div className="flex gap-3">
-                        <span>호출: <span className="text-text">{callCount}</span></span>
-                        <span>비용: <span className="text-primary">${parseFloat(usage?.total_cost || 0).toFixed(4)}</span></span>
-                      </div>
-                      <button
-                        onClick={() => handleUpdateLimit(key.provider, key.daily_limit || 0)}
-                        className="hover:text-text"
-                      >
-                        한도: {key.daily_limit || '무제한'} {key.daily_limit ? `(${callCount}/${key.daily_limit})` : ''}
-                      </button>
-                    </div>
-
-                    {/* 한도 프로그레스 바 */}
-                    {key.daily_limit > 0 && (
-                      <div className="w-full bg-border rounded-full h-1.5">
-                        <div
-                          className={`h-1.5 rounded-full transition-all ${
-                            callCount / key.daily_limit > 0.9 ? 'bg-red-500' :
-                            callCount / key.daily_limit > 0.7 ? 'bg-yellow-500' : 'bg-green-500'
-                          }`}
-                          style={{ width: `${Math.min(100, (callCount / key.daily_limit) * 100)}%` }}
-                        />
-                      </div>
-                    )}
-
-                    {/* 에러 메시지 */}
-                    {key.last_error && (
-                      <p className="text-xs text-red-400 bg-red-500/10 px-2 py-1 rounded">
-                        {key.last_error.length > 120 ? key.last_error.slice(0, 120) + '...' : key.last_error}
-                      </p>
-                    )}
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-
-          {/* 모델별 사용량 */}
-          {data.usageByModel?.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-sm font-bold text-text">모델별 사용량</h3>
-              <Card>
-                <div className="space-y-2">
-                  {data.usageByModel.map((m, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-border last:border-0">
-                      <div className="flex items-center gap-2">
-                        <Badge color={providerColors[m.provider] || 'gray'}>{m.provider}</Badge>
-                        <span className="text-text">{m.model}</span>
-                        <span className="text-text-secondary">({m.endpoint})</span>
-                      </div>
-                      <div className="flex gap-3 text-text-secondary">
-                        <span>{m.call_count}회</span>
-                        <span className="text-primary">${parseFloat(m.total_cost).toFixed(4)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            </div>
-          )}
-
-          {/* 최근 에러 */}
-          {data.recentErrors?.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-sm font-bold text-text">최근 에러</h3>
-              {data.recentErrors.map((e, i) => (
-                <Card key={i} className="border-red-500/20">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 text-xs">
-                      <Badge color={e.status === 'credit_exhausted' ? 'red' : 'yellow'}>{e.status}</Badge>
-                      <span className="text-text-secondary">{e.provider} / {e.model}</span>
-                      <span className="text-text-secondary ml-auto">{formatDate(e.created_at)}</span>
-                    </div>
-                    <p className="text-xs text-red-400">
-                      {e.error_message?.length > 150 ? e.error_message.slice(0, 150) + '...' : e.error_message}
-                    </p>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-
-          {/* OCR 엔진 설정 */}
-          <OcrSettingsSection />
-        </div>
-      );
-    }
-
-    // ========================================
-    // OCR 엔진 설정 컴포넌트
-    // ========================================
-    function OcrSettingsSection() {
-      const [engines, setEngines] = useState([]);
-      const [loading, setLoading] = useState(true);
-      const [actionLoading, setActionLoading] = useState(null);
-
-      const fetchEngines = useCallback(async () => {
-        try {
-          const res = await authFetch(`${API_BASE_URL}/api-usage?type=ocr`);
-          if (res.ok) {
-            const data = await res.json();
-            setEngines(data.engines || []);
-          }
-        } catch (err) {
-          console.error('[OCR Settings]', err);
-        } finally {
-          setLoading(false);
-        }
-      }, []);
-
-      useEffect(() => { fetchEngines(); }, [fetchEngines]);
-
-      // 우선순위 변경 (위/아래)
-      const handleMove = useCallback(async (index, direction) => {
-        const newEngines = [...engines];
-        const swapIdx = index + direction;
-        if (swapIdx < 0 || swapIdx >= newEngines.length) return;
-        [newEngines[index], newEngines[swapIdx]] = [newEngines[swapIdx], newEngines[index]];
-        setEngines(newEngines);
-
-        try {
-          await authFetch(`${API_BASE_URL}/api-usage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'ocrUpdatePriority', order: newEngines.map(e => e.engine_id) }),
-          });
-        } catch (err) {
-          fetchEngines(); // 실패 시 원복
-        }
-      }, [engines, fetchEngines]);
-
-      // 활성/비활성 토글
-      const handleToggle = useCallback(async (engineId, currentEnabled) => {
-        setActionLoading(`toggle-${engineId}`);
-        try {
-          await authFetch(`${API_BASE_URL}/api-usage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'ocrToggleEngine', engineId, enabled: !currentEnabled }),
-          });
-          fetchEngines();
-        } catch (err) {
-          alert('변경 실패');
-        } finally {
-          setActionLoading(null);
-        }
-      }, [fetchEngines]);
-
-      // 엔진 테스트
-      const handleTest = useCallback(async (engineId) => {
-        setActionLoading(`test-${engineId}`);
-        try {
-          const res = await authFetch(`${API_BASE_URL}/api-usage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'ocrTestEngine', engineId }),
-          });
-          const result = await res.json();
-          alert(result.message);
-        } catch (err) {
-          alert('테스트 실패');
-        } finally {
-          setActionLoading(null);
-        }
-      }, []);
-
-      // 상태 뱃지
-      const statusBadge = (engine) => {
+      const ocrStatusBadge = (engine) => {
         if (!engine.is_available) return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-600/30 text-gray-400">미설정</span>;
         if (!engine.is_enabled) return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-600/30 text-gray-500">비활성</span>;
         return <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">활성</span>;
       };
 
-      if (loading) return <div className="text-center py-4 text-text-secondary text-sm">로딩...</div>;
-
       return (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-white mb-2">OCR 엔진 우선순위</h3>
-          <p className="text-xs text-text-secondary mb-3">이미지 업로드 시 위에서 아래 순서로 시도합니다. 실패하면 자동으로 다음 엔진으로 넘어갑니다.</p>
-
-          <div className="space-y-2">
-            {engines.map((engine, index) => (
-              <div
-                key={engine.engine_id}
-                className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
-                  engine.is_enabled && engine.is_available
-                    ? 'bg-card-bg border-border'
-                    : 'bg-card-bg/50 border-border/50 opacity-60'
+        <div className="space-y-4 fade-in">
+          {/* 서브 탭 네비게이션 */}
+          <div className="flex gap-1 bg-card-bg rounded-lg p-1 border border-border">
+            {SUB_TABS.map(tab => (
+              <button key={tab.id} onClick={() => setSubTab(tab.id)}
+                className={`flex-1 px-2 py-2 rounded-md text-xs font-medium transition-all ${
+                  subTab === tab.id
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'text-text-secondary hover:text-text hover:bg-border/50'
                 }`}
-              >
-                {/* 순번 */}
-                <span className="text-xs font-bold text-primary w-5 text-center">{index + 1}</span>
-
-                {/* 엔진 정보 */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-medium text-white truncate">{engine.name}</span>
-                    {engine.free && <span className="text-[10px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-400">무료</span>}
-                    {statusBadge(engine)}
-                  </div>
-                  <p className="text-[11px] text-text-secondary truncate">{engine.description}</p>
-                </div>
-
-                {/* 버튼 그룹 */}
-                <div className="flex items-center gap-1 shrink-0">
-                  {/* 위로/아래로 */}
-                  <button
-                    onClick={() => handleMove(index, -1)}
-                    disabled={index === 0}
-                    className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 disabled:cursor-default text-xs"
-                    title="위로"
-                  >&#9650;</button>
-                  <button
-                    onClick={() => handleMove(index, 1)}
-                    disabled={index === engines.length - 1}
-                    className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 disabled:cursor-default text-xs"
-                    title="아래로"
-                  >&#9660;</button>
-
-                  {/* 활성/비활성 토글 */}
-                  <button
-                    onClick={() => handleToggle(engine.engine_id, engine.is_enabled)}
-                    disabled={actionLoading === `toggle-${engine.engine_id}`}
-                    className={`w-8 h-5 rounded-full transition-colors relative ${engine.is_enabled ? 'bg-green-500' : 'bg-gray-600'}`}
-                  >
-                    <span className={`absolute w-3.5 h-3.5 rounded-full bg-white top-[3px] transition-transform ${engine.is_enabled ? 'right-[3px]' : 'left-[3px]'}`} />
-                  </button>
-
-                  {/* 테스트 */}
-                  {engine.is_available && (
-                    <button
-                      onClick={() => handleTest(engine.engine_id)}
-                      disabled={!!actionLoading}
-                      className="text-[10px] px-1.5 py-0.5 rounded border border-border text-text-secondary hover:text-white hover:border-primary transition-colors disabled:opacity-30"
-                    >
-                      {actionLoading === `test-${engine.engine_id}` ? '...' : '테스트'}
-                    </button>
-                  )}
-                </div>
-              </div>
+              >{tab.label}{tab.id === 'ocr' && engines.filter(e => e.is_available && e.is_enabled).length > 0 ? ` (${engines.filter(e => e.is_available && e.is_enabled).length})` : ''}</button>
             ))}
           </div>
 
-          {/* 환경변수 안내 */}
-          <div className="mt-3 p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20">
-            <p className="text-[11px] text-blue-400 font-medium mb-1">환경변수 설정 필요</p>
-            <div className="text-[10px] text-text-secondary space-y-0.5">
-              {engines.filter(e => !e.is_available).map(e => (
-                <div key={e.engine_id}>{e.name}: <code className="text-blue-300">{e.envKey}</code></div>
-              ))}
-              {engines.every(e => e.is_available) && <div>모든 엔진의 API 키가 설정되어 있습니다.</div>}
+          {/* ════════ 대시보드 탭 ════════ */}
+          {subTab === 'dashboard' && (
+            <div className="space-y-4">
+              {/* 기간 선택 + 새로고침 */}
+              <div className="flex gap-2">
+                {[{ v: 'today', l: '오늘' }, { v: 'week', l: '7일' }, { v: 'month', l: '30일' }].map(r => (
+                  <button key={r.v} onClick={() => setRange(r.v)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                      range === r.v ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                    }`}
+                  >{r.l}</button>
+                ))}
+                <button onClick={fetchData}
+                  className="ml-auto px-3 py-1.5 rounded-full text-xs bg-border text-text-secondary hover:text-text"
+                >&#x21BB; 새로고침</button>
+              </div>
+
+              {/* 요약 카드 */}
+              <div className="grid grid-cols-3 gap-3">
+                <Card>
+                  <p className="text-[10px] text-text-secondary uppercase tracking-wider">총 호출</p>
+                  <p className="text-2xl font-bold text-text mt-1">{totalCalls.toLocaleString()}</p>
+                </Card>
+                <Card>
+                  <p className="text-[10px] text-text-secondary uppercase tracking-wider">예상 비용</p>
+                  <p className="text-2xl font-bold text-primary mt-1">${totalCost.toFixed(4)}</p>
+                </Card>
+                <Card>
+                  <p className="text-[10px] text-text-secondary uppercase tracking-wider">에러</p>
+                  <p className={`text-2xl font-bold mt-1 ${totalErrors > 0 ? 'text-red-400' : 'text-green-400'}`}>{totalErrors}</p>
+                </Card>
+              </div>
+
+              {/* 프로바이더별 요약 */}
+              <Card>
+                <h4 className="text-xs font-bold text-text mb-3">프로바이더별 현황</h4>
+                <div className="space-y-3">
+                  {data.usageByProvider?.map(p => {
+                    const cost = parseFloat(p.total_cost || 0);
+                    const calls = parseInt(p.call_count || 0);
+                    const errors = parseInt(p.error_count || 0);
+                    const maxCalls = Math.max(...(data.usageByProvider?.map(x => parseInt(x.call_count || 0)) || [1]));
+                    return (
+                      <div key={p.provider}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <Badge color={providerColors[p.provider] || 'gray'}>{providerLabels[p.provider] || p.provider}</Badge>
+                            <span className="text-xs text-text">{calls}회</span>
+                            {errors > 0 && <span className="text-xs text-red-400">({errors} 에러)</span>}
+                          </div>
+                          <span className="text-xs text-primary font-medium">${cost.toFixed(4)}</span>
+                        </div>
+                        <div className="w-full bg-border rounded-full h-1.5">
+                          <div className="h-1.5 rounded-full bg-primary/70 transition-all" style={{ width: `${maxCalls > 0 ? (calls / maxCalls) * 100 : 0}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {(!data.usageByProvider || data.usageByProvider.length === 0) && (
+                    <p className="text-xs text-text-secondary text-center py-4">선택한 기간에 사용 기록이 없습니다.</p>
+                  )}
+                </div>
+              </Card>
+
+              {/* 최근 에러 (있을 때만) */}
+              {data.recentErrors?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold text-text mb-2">최근 에러 ({data.recentErrors.length}건)</h4>
+                  <div className="space-y-1.5">
+                    {data.recentErrors.slice(0, 5).map((e, i) => (
+                      <Card key={i} className="border-red-500/20">
+                        <div className="flex items-center gap-2 text-xs">
+                          <Badge color={e.status === 'credit_exhausted' ? 'red' : 'yellow'}>{e.status}</Badge>
+                          <span className="text-text-secondary">{e.provider}</span>
+                          <span className="text-text-secondary ml-auto text-[10px]">{formatDate(e.created_at)}</span>
+                        </div>
+                        <p className="text-[11px] text-red-400 mt-1 line-clamp-1">{e.error_message}</p>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* ════════ API 키 관리 탭 ════════ */}
+          {subTab === 'keys' && (
+            <div className="space-y-3">
+              <p className="text-xs text-text-secondary">각 프로바이더의 API 키 상태를 확인하고, 테스트/한도를 관리합니다.</p>
+              {data.keys?.map(key => {
+                const usage = data.usageByProvider?.find(u => u.provider === key.provider);
+                const callCount = parseInt(usage?.call_count || 0);
+                const creditErrors = parseInt(usage?.credit_error_count || 0);
+
+                return (
+                  <Card key={key.provider}>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-text">{providerLabels[key.provider] || key.provider}</span>
+                          {key.configured ? (
+                            <Badge color={key.is_active ? 'green' : 'red'}>{key.is_active ? '활성' : '비활성'}</Badge>
+                          ) : (
+                            <Badge color="gray">미설정</Badge>
+                          )}
+                          {creditErrors > 0 && <Badge color="red">크레딧 소진</Badge>}
+                        </div>
+                        <div className="flex gap-1">
+                          <button onClick={() => handleTestKey(key.provider)}
+                            disabled={!key.configured || actionLoading === `test-${key.provider}`}
+                            className="px-2.5 py-1 text-xs bg-primary/10 border border-primary/30 rounded-md hover:bg-primary/20 text-primary disabled:opacity-30 transition-colors"
+                          >{actionLoading === `test-${key.provider}` ? '...' : '테스트'}</button>
+                          <button onClick={() => handleToggleKey(key.provider, key.is_active)}
+                            disabled={!key.configured}
+                            className="px-2.5 py-1 text-xs bg-border rounded-md hover:bg-card-bg-hover text-text-secondary disabled:opacity-30 transition-colors"
+                          >{key.is_active ? '비활성화' : '활성화'}</button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs text-text-secondary">
+                        <div className="flex gap-4">
+                          <span>호출: <span className="text-text font-medium">{callCount}</span></span>
+                          <span>비용: <span className="text-primary font-medium">${parseFloat(usage?.total_cost || 0).toFixed(4)}</span></span>
+                        </div>
+                        <button onClick={() => handleUpdateLimit(key.provider, key.daily_limit || 0)}
+                          className="hover:text-primary transition-colors"
+                        >한도: {key.daily_limit ? `${callCount}/${key.daily_limit}` : '무제한'}</button>
+                      </div>
+
+                      {key.daily_limit > 0 && (
+                        <div className="w-full bg-border rounded-full h-2">
+                          <div className={`h-2 rounded-full transition-all ${
+                            callCount / key.daily_limit > 0.9 ? 'bg-red-500' :
+                            callCount / key.daily_limit > 0.7 ? 'bg-yellow-500' : 'bg-green-500'
+                          }`} style={{ width: `${Math.min(100, (callCount / key.daily_limit) * 100)}%` }} />
+                        </div>
+                      )}
+
+                      {key.last_error && (
+                        <p className="text-xs text-red-400 bg-red-500/10 px-2.5 py-1.5 rounded-md">{key.last_error.length > 120 ? key.last_error.slice(0, 120) + '...' : key.last_error}</p>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ════════ 사용량 상세 탭 ════════ */}
+          {subTab === 'usage' && (
+            <div className="space-y-4">
+              {/* 기간 선택 */}
+              <div className="flex gap-2">
+                {[{ v: 'today', l: '오늘' }, { v: 'week', l: '7일' }, { v: 'month', l: '30일' }].map(r => (
+                  <button key={r.v} onClick={() => setRange(r.v)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                      range === r.v ? 'bg-primary text-white' : 'bg-border text-text-secondary hover:text-text'
+                    }`}
+                  >{r.l}</button>
+                ))}
+              </div>
+
+              {/* 모델별 사용량 */}
+              {data.usageByModel?.length > 0 ? (
+                <Card>
+                  <h4 className="text-xs font-bold text-text mb-3">모델별 사용량</h4>
+                  <div className="space-y-1">
+                    {data.usageByModel.map((m, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs py-2 border-b border-border/50 last:border-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Badge color={providerColors[m.provider] || 'gray'}>{m.provider}</Badge>
+                          <span className="text-text truncate">{m.model}</span>
+                          <span className="text-text-secondary text-[10px] hidden sm:inline">({m.endpoint})</span>
+                        </div>
+                        <div className="flex gap-3 text-text-secondary shrink-0">
+                          <span>{m.call_count}회</span>
+                          <span className="text-primary font-medium">${parseFloat(m.total_cost).toFixed(4)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              ) : (
+                <Card><p className="text-xs text-text-secondary text-center py-6">선택한 기간에 사용 기록이 없습니다.</p></Card>
+              )}
+
+              {/* 전체 에러 로그 */}
+              {data.recentErrors?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold text-text mb-2">에러 로그</h4>
+                  <div className="space-y-1.5">
+                    {data.recentErrors.map((e, i) => (
+                      <Card key={i} className="border-red-500/20">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 text-xs">
+                            <Badge color={e.status === 'credit_exhausted' ? 'red' : 'yellow'}>{e.status}</Badge>
+                            <span className="text-text-secondary">{e.provider} / {e.model}</span>
+                            <span className="text-text-secondary ml-auto text-[10px]">{formatDate(e.created_at)}</span>
+                          </div>
+                          <p className="text-[11px] text-red-400">{e.error_message?.length > 200 ? e.error_message.slice(0, 200) + '...' : e.error_message}</p>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ════════ OCR 설정 탭 ════════ */}
+          {subTab === 'ocr' && (
+            <div className="space-y-4">
+              <p className="text-xs text-text-secondary">이미지 업로드 시 위에서 아래 순서로 OCR 엔진을 시도합니다. 실패하면 자동으로 다음 엔진으로 넘어갑니다.</p>
+
+              {ocrLoading ? (
+                <div className="text-center py-8 text-text-secondary text-sm">로딩...</div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    {engines.map((engine, index) => (
+                      <div key={engine.engine_id}
+                        className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
+                          engine.is_enabled && engine.is_available ? 'bg-card-bg border-border' : 'bg-card-bg/50 border-border/50 opacity-60'
+                        }`}
+                      >
+                        <span className="text-sm font-bold text-primary w-6 text-center">{index + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-medium text-white truncate">{engine.name}</span>
+                            {engine.free && <span className="text-[10px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-400">무료</span>}
+                            {ocrStatusBadge(engine)}
+                          </div>
+                          <p className="text-[11px] text-text-secondary truncate">{engine.description}</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => handleOcrMove(index, -1)} disabled={index === 0}
+                            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 text-xs">&#9650;</button>
+                          <button onClick={() => handleOcrMove(index, 1)} disabled={index === engines.length - 1}
+                            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 text-xs">&#9660;</button>
+                          <button onClick={() => handleOcrToggle(engine.engine_id, engine.is_enabled)}
+                            disabled={actionLoading === `ocr-toggle-${engine.engine_id}`}
+                            className={`w-9 h-5 rounded-full transition-colors relative ${engine.is_enabled ? 'bg-green-500' : 'bg-gray-600'}`}
+                          ><span className={`absolute w-3.5 h-3.5 rounded-full bg-white top-[3px] transition-transform ${engine.is_enabled ? 'right-[3px]' : 'left-[3px]'}`} /></button>
+                          {engine.is_available && (
+                            <button onClick={() => handleOcrTest(engine.engine_id)} disabled={!!actionLoading}
+                              className="text-[10px] px-2 py-1 rounded-md border border-primary/30 text-primary hover:bg-primary/10 transition-colors disabled:opacity-30"
+                            >{actionLoading === `ocr-test-${engine.engine_id}` ? '...' : '테스트'}</button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 환경변수 안내 */}
+                  {engines.some(e => !e.is_available) && (
+                    <Card className="border-blue-500/20">
+                      <p className="text-xs text-blue-400 font-medium mb-2">환경변수 설정 필요</p>
+                      <div className="text-[11px] text-text-secondary space-y-1">
+                        {engines.filter(e => !e.is_available).map(e => (
+                          <div key={e.engine_id} className="flex items-center gap-2">
+                            <span className="text-text">{e.name}</span>
+                            <code className="text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded">{e.envKey}</code>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       );
     }
