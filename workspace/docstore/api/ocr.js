@@ -80,9 +80,10 @@ function callUpstageOcr(fileBuffer, filename, mimetype) {
     };
 
     const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
+        const data = Buffer.concat(chunks).toString('utf8');
         try {
           const json = JSON.parse(data);
           if (res.statusCode !== 200) {

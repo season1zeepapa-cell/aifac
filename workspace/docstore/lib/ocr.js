@@ -57,9 +57,10 @@ const ALL_ENGINES = {
           },
           timeout: 60000,
         }, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
             try {
               const json = JSON.parse(data);
               if (res.statusCode !== 200) {
@@ -113,9 +114,10 @@ const ALL_ENGINES = {
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
           timeout: 30000,
         }, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
             try {
               const json = JSON.parse(data);
               if (res.statusCode !== 200) {
@@ -171,9 +173,10 @@ const ALL_ENGINES = {
           },
           timeout: 30000,
         }, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
             try {
               const json = JSON.parse(data);
               if (res.statusCode !== 200) {
@@ -228,9 +231,10 @@ const ALL_ENGINES = {
           },
           timeout: 30000,
         }, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
             try {
               const json = JSON.parse(data);
               if (res.statusCode !== 200) {
@@ -280,9 +284,10 @@ const ALL_ENGINES = {
           },
           timeout: 30000,
         }, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
             try {
               const json = JSON.parse(data);
               if (json.IsErroredOnProcessing) {
@@ -346,9 +351,10 @@ const ALL_ENGINES = {
           },
           timeout: 30000,
         }, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
           res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
             try {
               const json = JSON.parse(data);
               if (res.statusCode !== 200) {
