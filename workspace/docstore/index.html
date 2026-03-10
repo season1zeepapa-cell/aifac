@@ -590,6 +590,7 @@
       const [importing, setImporting] = useState(null);
       const [lawError, setLawError] = useState(null);
       const [lawResult, setLawResult] = useState(null);
+      const [lawVisibleCount, setLawVisibleCount] = useState(5);
       const [lawImportedMap, setLawImportedMap] = useState({}); // lawId → { documentId, title, importedAt }
 
       // ── URL 크롤링 모드 state ──
@@ -751,6 +752,7 @@
         setLawResults([]);
         setLawResult(null);
         setLawImportedMap({});
+        setLawVisibleCount(5);
         try {
           const res = await authFetch(`${API_BASE_URL}/law`, {
             method: 'POST',
@@ -1060,7 +1062,7 @@
               {lawResults.length > 0 && (
                 <div className="space-y-3">
                   <p className="text-sm text-text-secondary">{lawResults.length}건의 법령을 찾았습니다.</p>
-                  {lawResults.map(law => {
+                  {lawResults.slice(0, lawVisibleCount).map(law => {
                     const imported = lawImportedMap[String(law.id)];
                     return (
                       <Card key={law.id} className={imported ? 'border-green-200 bg-green-50/30' : ''}>
@@ -1114,6 +1116,15 @@
                       </Card>
                     );
                   })}
+                  {/* 더보기 버튼 */}
+                  {lawResults.length > lawVisibleCount && (
+                    <button
+                      onClick={() => setLawVisibleCount(prev => prev + 5)}
+                      className="w-full py-2.5 text-sm text-primary hover:text-primary-hover font-medium border border-border rounded-lg hover:bg-primary/5 transition-colors"
+                    >
+                      더보기 ({lawResults.length - lawVisibleCount}건 남음)
+                    </button>
+                  )}
                 </div>
               )}
 
