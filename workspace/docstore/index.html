@@ -119,6 +119,50 @@
     const API_BASE_URL = '/api';
 
     // ========================================
+    // LLM 모델 카탈로그 및 설정
+    // ========================================
+    const GEMINI_CATALOG = [
+      { id:'gemini-2.5-flash',      tier:'추천',   inputP:'$0.30', outputP:'$2.50',  thinking:true,  desc:'최고 가성비 · 기본 권장 모델' },
+      { id:'gemini-2.5-pro',        tier:'최고급', inputP:'$1.25', outputP:'$10.00', thinking:true,  desc:'Gemini 2.5 최고 성능 장문 멀티모달' },
+      { id:'gemini-2.5-flash-lite', tier:'저비용', inputP:'$0.10', outputP:'$0.40',  thinking:false, desc:'2.5 계열 최저 비용 경량 모델' },
+      { id:'gemini-2.0-flash',      tier:'중간',   inputP:'$0.10', outputP:'$0.40',  thinking:false, desc:'빠르고 효율적인 멀티모달' },
+      { id:'gemini-2.0-flash-lite', tier:'저비용', inputP:'$0.075',outputP:'$0.30',  thinking:false, desc:'최저 비용 · 간단한 작업용' },
+    ];
+    const OPENAI_CATALOG = [
+      { id:'gpt-4o-mini',   tier:'추천',   inputP:'$0.15', outputP:'$0.60',  reasoning:false, desc:'균형잡힌 가성비 모델' },
+      { id:'gpt-4o',        tier:'고성능', inputP:'$2.50', outputP:'$10.00', reasoning:false, desc:'강력한 멀티모달 · 영상 이해' },
+      { id:'gpt-4.1',       tier:'고성능', inputP:'$2.00', outputP:'$8.00',  reasoning:false, desc:'GPT-4.1 플래그십 · 뛰어난 성능' },
+      { id:'gpt-4.1-mini',  tier:'중간',   inputP:'$0.40', outputP:'$1.60',  reasoning:false, desc:'GPT-4.1 기반 빠르고 저렴' },
+      { id:'gpt-4.1-nano',  tier:'저비용', inputP:'$0.10', outputP:'$0.40',  reasoning:false, desc:'GPT-4.1 계열 최저 비용' },
+      { id:'o3-mini',       tier:'추론',   inputP:'$1.10', outputP:'$4.40',  reasoning:true,  desc:'경량 추론 특화 모델' },
+      { id:'o4-mini',       tier:'추론',   inputP:'$1.10', outputP:'$4.40',  reasoning:true,  desc:'최신 경량 추론 모델 (o4 세대)' },
+    ];
+    const CLAUDE_CATALOG = [
+      { id:'claude-sonnet-4-20250514', tier:'추천',   inputP:'$3.00', outputP:'$15.00', desc:'Claude Sonnet 4 · 균형잡힌 성능' },
+      { id:'claude-haiku-4-5-20251001',tier:'저비용', inputP:'$0.80', outputP:'$4.00',  desc:'Claude Haiku 4.5 · 빠르고 저렴' },
+    ];
+    const TIER_COLORS = { '추천':'#10b981','저비용':'#06b6d4','중간':'#6b7280','고성능':'#3b82f6','최고급':'#8b5cf6','추론':'#f59e0b' };
+
+    // LLM 설정 전역 상태 (React context 대신 전역 변수로 관리, 새로고침 시 기본값)
+    const DEFAULT_LLM_SETTINGS = {
+      gemini:  { model:'gemini-2.5-flash', temperature:0.3, maxTokens:2048, thinkingBudget:0 },
+      openai:  { model:'gpt-4o-mini',      temperature:0.3, maxTokens:2048 },
+      claude:  { model:'claude-sonnet-4-20250514', temperature:0.3, maxTokens:2048 },
+    };
+    // localStorage에 저장하여 세션 간 유지
+    function loadLlmSettings() {
+      try {
+        const saved = localStorage.getItem('docstore_llm_settings');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+      return JSON.parse(JSON.stringify(DEFAULT_LLM_SETTINGS));
+    }
+    function saveLlmSettings(settings) {
+      localStorage.setItem('docstore_llm_settings', JSON.stringify(settings));
+    }
+    let llmSettings = loadLlmSettings();
+
+    // ========================================
     // 인증 토큰 관리
     // ========================================
     function getAuthToken() {
@@ -2406,6 +2450,232 @@
     }
 
     // ========================================
+    // LLM 설정 패널 컴포넌트 (관리 탭 내 서브탭)
+    // ========================================
+    function LlmSettingsPanel() {
+      const [settings, setSettings] = useState(() => loadLlmSettings());
+      const [saved, setSaved] = useState(false);
+
+      // 프로바이더별 설정 업데이트 헬퍼
+      const updateProvider = useCallback((provider, key, value) => {
+        setSettings(prev => ({
+          ...prev,
+          [provider]: { ...prev[provider], [key]: value },
+        }));
+        setSaved(false);
+      }, []);
+
+      // 모델 변경 시 해당 모델의 기본값 적용
+      const handleModelChange = useCallback((provider, modelId) => {
+        const catalogs = { gemini: GEMINI_CATALOG, openai: OPENAI_CATALOG, claude: CLAUDE_CATALOG };
+        const info = catalogs[provider]?.find(m => m.id === modelId);
+        setSettings(prev => ({
+          ...prev,
+          [provider]: {
+            ...prev[provider],
+            model: modelId,
+            temperature: 0.3,
+            ...(provider === 'gemini' && info?.thinking ? { thinkingBudget: 4096 } : {}),
+            ...(provider === 'gemini' && !info?.thinking ? { thinkingBudget: 0 } : {}),
+          },
+        }));
+        setSaved(false);
+      }, []);
+
+      // 저장
+      const handleSave = useCallback(() => {
+        llmSettings = JSON.parse(JSON.stringify(settings));
+        saveLlmSettings(settings);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }, [settings]);
+
+      // 초기화
+      const handleReset = useCallback(() => {
+        const defaults = JSON.parse(JSON.stringify(DEFAULT_LLM_SETTINGS));
+        setSettings(defaults);
+        llmSettings = defaults;
+        saveLlmSettings(defaults);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }, []);
+
+      // 가격 뱃지
+      const TierBadge = ({ tier }) => (
+        React.createElement('span', {
+          className: 'text-[10px] font-bold text-white px-1.5 py-0.5 rounded',
+          style: { backgroundColor: TIER_COLORS[tier] || '#6b7280' }
+        }, tier)
+      );
+
+      // 프로바이더 섹션 렌더러
+      const ProviderSection = ({ provider, label, catalog, icon }) => {
+        const s = settings[provider];
+        const selectedModel = catalog.find(m => m.id === s.model);
+        const isGemini = provider === 'gemini';
+        const isOpenai = provider === 'openai';
+        const showThinking = isGemini && selectedModel?.thinking;
+        const showReasoning = isOpenai && selectedModel?.reasoning;
+
+        return (
+          <Card>
+            <div className="space-y-4">
+              {/* 헤더 */}
+              <div className="flex items-center gap-2">
+                <span className="text-base">{icon}</span>
+                <h3 className="text-sm font-bold text-text">{label}</h3>
+              </div>
+
+              {/* 모델 선택 */}
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">모델</label>
+                <select
+                  value={s.model}
+                  onChange={e => handleModelChange(provider, e.target.value)}
+                  className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary transition-colors"
+                >
+                  {catalog.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {m.id} — {m.tier} · 입력 {m.inputP} · 출력 {m.outputP}
+                    </option>
+                  ))}
+                </select>
+                {/* 선택된 모델 정보 */}
+                {selectedModel && (
+                  <div className="mt-2 p-2.5 bg-bg rounded-lg border-l-3 border-primary text-xs space-y-1" style={{ borderLeftWidth: '3px' }}>
+                    <div className="flex items-center gap-2">
+                      <TierBadge tier={selectedModel.tier} />
+                      <span className="text-text-secondary">입력 <strong className="text-text">{selectedModel.inputP}</strong> · 출력 <strong className="text-text">{selectedModel.outputP}</strong> / 1M tokens</span>
+                    </div>
+                    <p className="text-text-secondary">{selectedModel.desc}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Temperature 슬라이더 */}
+              {!showReasoning && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-text-secondary">Temperature</label>
+                    <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded">
+                      {(s.temperature ?? 0.3).toFixed(1)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-text-secondary">일관</span>
+                    <input
+                      type="range" min="0" max="2" step="0.1"
+                      value={s.temperature ?? 0.3}
+                      onChange={e => updateProvider(provider, 'temperature', parseFloat(e.target.value))}
+                      className="flex-1 accent-primary h-1 cursor-pointer"
+                      style={{ accentColor: 'var(--primary)' }}
+                    />
+                    <span className="text-[10px] text-text-secondary">창의</span>
+                  </div>
+                  <p className="text-[10px] text-text-secondary mt-1">0 = 항상 같은 답, 2 = 다양한 표현. RAG 권장값: 0.2~0.5</p>
+                </div>
+              )}
+
+              {/* Max Tokens */}
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Max Tokens (최대 응답 길이)</label>
+                <select
+                  value={s.maxTokens || 2048}
+                  onChange={e => updateProvider(provider, 'maxTokens', parseInt(e.target.value))}
+                  className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary transition-colors"
+                >
+                  <option value={512}>512 — 짧은 답변</option>
+                  <option value={1024}>1,024 — 보통</option>
+                  <option value={2048}>2,048 — 상세 (기본)</option>
+                  <option value={4096}>4,096 — 매우 상세</option>
+                  <option value={8192}>8,192 — 최대</option>
+                </select>
+              </div>
+
+              {/* Gemini Thinking Budget */}
+              {showThinking && (
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Thinking Budget (사고 토큰)</label>
+                  <select
+                    value={s.thinkingBudget || 0}
+                    onChange={e => updateProvider(provider, 'thinkingBudget', parseInt(e.target.value))}
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary transition-colors"
+                  >
+                    <option value={0}>OFF — 즉시 응답 (추론 없음)</option>
+                    <option value={1024}>1,024 tokens — 가벼운 추론</option>
+                    <option value={4096}>4,096 tokens — 일반 추론</option>
+                    <option value={8192}>8,192 tokens — 심층 추론</option>
+                    <option value={16384}>16,384 tokens — 최대 추론</option>
+                  </select>
+                  <p className="text-[10px] text-text-secondary mt-1">Gemini 2.5 전용. 사고 토큰 수만큼 비용이 추가됩니다</p>
+                </div>
+              )}
+
+              {/* OpenAI Reasoning Effort */}
+              {showReasoning && (
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Reasoning Effort (추론 강도)</label>
+                  <select
+                    value={s.reasoningEffort || 'medium'}
+                    onChange={e => updateProvider(provider, 'reasoningEffort', e.target.value)}
+                    className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary transition-colors"
+                  >
+                    <option value="low">low — 빠름 (저비용)</option>
+                    <option value="medium">medium — 균형 (기본)</option>
+                    <option value="high">high — 최고 정확 (고비용)</option>
+                  </select>
+                  <p className="text-[10px] text-text-secondary mt-1">o-시리즈 전용. 추론 강도가 높을수록 비용/시간 증가</p>
+                </div>
+              )}
+            </div>
+          </Card>
+        );
+      };
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-text-secondary">AI 채팅에서 사용할 모델과 파라미터를 설정합니다.</p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleReset}
+                className="text-xs text-text-secondary hover:text-red-500 border border-border rounded-lg px-2.5 py-1.5 transition-colors"
+              >기본값</button>
+              <button
+                onClick={handleSave}
+                className={`text-xs font-medium rounded-lg px-3 py-1.5 transition-colors ${
+                  saved
+                    ? 'bg-green-500 text-white'
+                    : 'bg-primary text-white hover:bg-primary-hover'
+                }`}
+              >{saved ? '저장됨' : '저장'}</button>
+            </div>
+          </div>
+
+          <ProviderSection provider="gemini" label="Gemini" catalog={GEMINI_CATALOG} icon="G" />
+          <ProviderSection provider="openai" label="OpenAI" catalog={OPENAI_CATALOG} icon="O" />
+          <ProviderSection provider="claude" label="Claude" catalog={CLAUDE_CATALOG} icon="C" />
+
+          {/* 현재 설정 요약 */}
+          <Card className="bg-bg">
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-text-secondary">현재 적용 설정</p>
+              {['gemini', 'openai', 'claude'].map(p => (
+                <div key={p} className="flex items-center justify-between text-xs">
+                  <span className="text-text font-medium capitalize">{p}</span>
+                  <span className="text-text-secondary">
+                    {settings[p].model} · temp {(settings[p].temperature ?? 0.3).toFixed(1)} · {settings[p].maxTokens || 2048} tokens
+                    {p === 'gemini' && settings[p].thinkingBudget > 0 ? ` · think ${settings[p].thinkingBudget}` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    // ========================================
     // AI 채팅 탭 (멀티턴 RAG 대화)
     // ========================================
     function ChatTab() {
@@ -2458,7 +2728,17 @@
         try {
           // history: 이전 메시지에서 content만 추출 (sources 제외)
           const history = chatMessages.map(m => ({ role: m.role, content: m.content }));
-          const body = { question: text, topK: 5, provider: llmProvider, history };
+          // llmSettings에서 현재 프로바이더 설정을 가져와 전달
+          const providerSettings = llmSettings[llmProvider] || {};
+          const body = {
+            question: text, topK: 5, provider: llmProvider, history,
+            llmOptions: {
+              model: providerSettings.model,
+              temperature: providerSettings.temperature,
+              maxTokens: providerSettings.maxTokens,
+              ...(llmProvider === 'gemini' && providerSettings.thinkingBudget ? { thinkingBudget: providerSettings.thinkingBudget } : {}),
+            },
+          };
           if (filterDocId) body.docId = filterDocId;
 
           const res = await authFetch(`${API_BASE_URL}/rag`, {
@@ -2721,7 +3001,7 @@
             </div>
             <div className="flex items-center justify-between mt-1.5">
               <span className="text-[10px] text-text-secondary">
-                {providerName(llmProvider)} {filterDocId ? `| ${docList.find(d => String(d.id) === filterDocId)?.title || '문서 필터'}` : '| 전체 문서'}
+                {providerName(llmProvider)} ({llmSettings[llmProvider]?.model || '기본'}) {filterDocId ? `| ${docList.find(d => String(d.id) === filterDocId)?.title || '문서 필터'}` : '| 전체 문서'}
               </span>
               <span className="text-[10px] text-text-secondary">Shift+Enter로 줄바꿈</span>
             </div>
@@ -2949,6 +3229,7 @@
         { id: 'dashboard', label: '대시보드' },
         { id: 'keys', label: 'API 키' },
         { id: 'usage', label: '사용량' },
+        { id: 'llm', label: 'LLM 설정' },
         { id: 'ocr', label: 'OCR 설정' },
       ];
 
@@ -3349,6 +3630,11 @@
                 </div>
               )}
             </div>
+          )}
+
+          {/* ════════ LLM 설정 탭 ════════ */}
+          {subTab === 'llm' && (
+            <LlmSettingsPanel />
           )}
 
           {/* ════════ OCR 설정 탭 ════════ */}

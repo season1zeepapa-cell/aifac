@@ -24,7 +24,7 @@ module.exports = async (req, res) => {
 
   if (checkRateLimit(req, res, 'rag')) return;
 
-  const { question, topK = 5, docId, provider = 'gemini', history = [] } = req.body;
+  const { question, topK = 5, docId, provider = 'gemini', history = [], llmOptions = {} } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
   }
@@ -118,7 +118,15 @@ ${historyText}
 --- 현재 질문 ---
 ${question.trim()}`;
 
-    const answer = await callLLM(prompt, { provider, temperature: 0.3, maxTokens: 2048 });
+    // llmOptions로 모델/온도/토큰 등 상세 설정 적용
+    const callOpts = {
+      provider,
+      temperature: llmOptions.temperature ?? 0.3,
+      maxTokens: llmOptions.maxTokens ?? 2048,
+    };
+    if (llmOptions.model) callOpts.model = llmOptions.model;
+    if (llmOptions.thinkingBudget) callOpts.thinkingBudget = llmOptions.thinkingBudget;
+    const answer = await callLLM(prompt, callOpts);
     console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자)`);
 
     // 4) 응답

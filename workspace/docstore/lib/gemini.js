@@ -41,11 +41,17 @@ function callGemini(prompt, options = {}) {
   if (!apiKey) return Promise.reject(new Error('GEMINI_API_KEY 미설정'));
 
   const { maxTokens = 1024, temperature = 0.2, timeout = 30000 } = options;
+  const model = options.model || GEMINI_MODEL;
 
-  const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+  const url = `${GEMINI_BASE_URL}/${model}:generateContent?key=${apiKey}`;
+  const genConfig = { temperature, maxOutputTokens: maxTokens };
+  // Gemini 2.5 thinking budget 지원
+  if (options.thinkingBudget && options.thinkingBudget > 0) {
+    genConfig.thinkingConfig = { thinkingBudget: options.thinkingBudget };
+  }
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature, maxOutputTokens: maxTokens },
+    generationConfig: genConfig,
   });
 
   return new Promise((resolve, reject) => {
@@ -83,7 +89,7 @@ function callOpenAI(prompt, options = {}) {
   if (!apiKey) return Promise.reject(new Error('OPENAI_API_KEY 미설정'));
 
   const { maxTokens = 1024, temperature = 0.2, timeout = 30000 } = options;
-  const model = LLM_PROVIDERS.openai.model;
+  const model = options.model || LLM_PROVIDERS.openai.model;
 
   const body = JSON.stringify({
     model,
@@ -130,7 +136,7 @@ function callClaude(prompt, options = {}) {
   if (!apiKey) return Promise.reject(new Error('ANTHROPIC_API_KEY 미설정'));
 
   const { maxTokens = 1024, temperature = 0.2, timeout = 30000 } = options;
-  const model = LLM_PROVIDERS.claude.model;
+  const model = options.model || LLM_PROVIDERS.claude.model;
 
   const body = JSON.stringify({
     model,
