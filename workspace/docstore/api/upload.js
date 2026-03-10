@@ -12,10 +12,10 @@ const multer = require('multer');
 const { extractFromPdf } = require('../lib/pdf-extractor');
 const { detectFileType, extractFromFile } = require('../lib/text-extractor');
 const { chunkText, generateEmbeddings } = require('../lib/embeddings');
-const { query } = require('./db');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
-const { checkRateLimit } = require('./rate-limit');
+const { query } = require('../lib/db');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
+const { checkRateLimit } = require('../lib/rate-limit');
 
 // multer: 메모리 스토리지 (Vercel 서버리스 호환)
 // 모든 파일 형식 허용

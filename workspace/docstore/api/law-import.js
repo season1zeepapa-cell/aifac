@@ -3,10 +3,10 @@
 // + 조문 간 참조 관계 파싱
 const { getLawDetail } = require('../lib/law-fetcher');
 const { chunkText, generateEmbeddings } = require('../lib/embeddings');
-const { query: dbQuery } = require('./db');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
-const { checkRateLimit } = require('./rate-limit');
+const { query: dbQuery } = require('../lib/db');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
+const { checkRateLimit } = require('../lib/rate-limit');
 
 /**
  * 조문 텍스트에서 다른 조문 참조를 추출

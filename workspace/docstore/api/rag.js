@@ -7,11 +7,11 @@
 // 2) 유사도 높은 조문/청크 topK개 검색
 // 3) 검색 결과를 컨텍스트로 Gemini에 전달
 // 4) 근거 조문과 함께 답변 생성
-const { query } = require('./db');
+const { query } = require('../lib/db');
 const { generateEmbedding } = require('../lib/embeddings');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
-const { checkRateLimit } = require('./rate-limit');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
+const { checkRateLimit } = require('../lib/rate-limit');
 const https = require('https');
 
 // Gemini API 호출 헬퍼

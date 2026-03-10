@@ -1,7 +1,7 @@
 // 문서 목록 조회 / 상세 조회 / 삭제 API
-const { query } = require('./db');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
+const { query } = require('../lib/db');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, POST, DELETE, OPTIONS' })) return;

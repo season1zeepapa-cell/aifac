@@ -1,9 +1,9 @@
 // DocStore 로그인 API
 // workspace/error의 users 테이블을 공유하며, 관리자(is_admin)만 로그인 허용
-const { query } = require('./db');
-const { verifyPassword, signToken, TOKEN_SECRET } = require('./auth');
+const { query } = require('../lib/db');
+const { verifyPassword, signToken, TOKEN_SECRET } = require('../lib/auth');
 
-const { setCors } = require('./cors');
+const { setCors } = require('../lib/cors');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;

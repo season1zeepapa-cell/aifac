@@ -1,10 +1,10 @@
 // 텍스트 검색 + 벡터 유사도 검색 API
 // GET /api/search?q=검색어&type=text|vector&limit=10&chapter=제1장&docId=5
-const { query } = require('./db');
+const { query } = require('../lib/db');
 const { generateEmbedding } = require('../lib/embeddings');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
-const { checkRateLimit } = require('./rate-limit');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
+const { checkRateLimit } = require('../lib/rate-limit');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, OPTIONS' })) return;

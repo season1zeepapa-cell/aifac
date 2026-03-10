@@ -4,10 +4,10 @@
 // { documentId: 5 }         → 문서 전체 섹션 일괄 요약
 //
 // 요약 결과는 document_sections.metadata.summary에 캐싱
-const { query } = require('./db');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
-const { checkRateLimit } = require('./rate-limit');
+const { query } = require('../lib/db');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
+const { checkRateLimit } = require('../lib/rate-limit');
 const https = require('https');
 
 // Gemini API 호출

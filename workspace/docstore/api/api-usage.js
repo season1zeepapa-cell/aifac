@@ -2,9 +2,9 @@
 // GET /api/api-usage — 사용량 통계 + 키 상태
 // GET /api/api-usage?type=ocr — OCR 엔진 설정 조회
 // POST /api/api-usage — 키/OCR 설정 변경
-const { query } = require('./db');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
+const { query } = require('../lib/db');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, POST, OPTIONS' })) return;

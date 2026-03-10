@@ -4,10 +4,10 @@
 const https = require('https');
 const http = require('http');
 const { chunkText, generateEmbeddings } = require('../lib/embeddings');
-const { query } = require('./db');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
-const { checkRateLimit } = require('./rate-limit');
+const { query } = require('../lib/db');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
+const { checkRateLimit } = require('../lib/rate-limit');
 
 /**
  * URL에서 HTML을 가져온 뒤 본문 텍스트를 추출

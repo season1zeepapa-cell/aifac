@@ -2,8 +2,8 @@
 // - action: 'search' → 법령명 검색
 // - action: 'detail' → 조문 상세 조회
 const { searchLaw, getLawDetail } = require('../lib/law-fetcher');
-const { requireAdmin } = require('./auth');
-const { setCors } = require('./cors');
+const { requireAdmin } = require('../lib/auth');
+const { setCors } = require('../lib/cors');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
