@@ -451,6 +451,70 @@
       );
     }
 
+    // 멀티 선택 드롭다운 (문서 범위 필터용)
+    function MultiSelect({ label, selectedIds, onChange, options, placeholder = '전체' }) {
+      const [open, setOpen] = useState(false);
+      const ref = useRef(null);
+
+      // 바깥 클릭 시 닫기
+      useEffect(() => {
+        const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+      }, []);
+
+      const toggle = (id) => {
+        const next = selectedIds.includes(id)
+          ? selectedIds.filter(v => v !== id)
+          : [...selectedIds, id];
+        onChange(next);
+      };
+
+      const displayText = selectedIds.length === 0
+        ? placeholder
+        : selectedIds.length <= 2
+          ? selectedIds.map(id => { const o = options.find(o => o.value === id); return o ? o.label : id; }).join(', ')
+          : `${selectedIds.length}개 문서 선택`;
+
+      return (
+        <div className="flex flex-col gap-1.5 relative" ref={ref}>
+          {label && <label className="text-sm text-text-secondary">{label}</label>}
+          <button
+            type="button"
+            onClick={() => setOpen(!open)}
+            className="w-full px-3 py-2 bg-white border border-border rounded-lg text-left text-sm text-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+          >
+            <span className={selectedIds.length === 0 ? 'text-text-secondary' : ''}>{displayText}</span>
+            <svg className="w-3 h-3 absolute right-3 top-1/2 mt-2 -translate-y-1/2 text-text-secondary" fill="currentColor" viewBox="0 0 12 12"><path d="M6 8L1 3h10z"/></svg>
+          </button>
+          {open && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-border rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+              {selectedIds.length > 0 && (
+                <button
+                  onClick={() => onChange([])}
+                  className="w-full px-3 py-1.5 text-left text-xs text-red-500 hover:bg-red-50 border-b border-border"
+                >선택 초기화</button>
+              )}
+              {options.map(opt => (
+                <label key={opt.value} className="flex items-center gap-2 px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(opt.value)}
+                    onChange={() => toggle(opt.value)}
+                    className="rounded border-border text-primary focus:ring-primary"
+                  />
+                  <span className="truncate">{opt.label}</span>
+                </label>
+              ))}
+              {options.length === 0 && (
+                <p className="px-3 py-2 text-xs text-text-secondary">문서가 없습니다</p>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // 카드
     function Card({ children, onClick, className = '', hoverable = false }) {
       return (
@@ -1648,12 +1712,15 @@
                         const colors = { gemini: 'blue', openai: 'emerald', claude: 'orange' };
                         const c = colors[p.id] || 'gray';
                         const active = summaryProvider === p.id;
+                        const modelId = llmSettings[p.id]?.model || '';
+                        const shortModel = modelId.replace(/^(gemini-|gpt-|claude-)/, '').replace(/-\d{8}$/, '');
                         return (
                           <button key={p.id} onClick={() => setSummaryProvider(p.id)}
                             className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${active
                               ? `bg-${c}-500 text-white shadow-sm`
                               : `bg-${c}-50 text-${c}-600 hover:bg-${c}-100`}`}>
                             {p.name}
+                            {active && shortModel && <span className="ml-1 opacity-80">({shortModel})</span>}
                           </button>
                         );
                       })}
@@ -2233,7 +2300,7 @@
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       // 필터
-      const [filterDocId, setFilterDocId] = useState('');
+      const [filterDocIds, setFilterDocIds] = useState([]);
       const [filterChapter, setFilterChapter] = useState('');
       const [docList, setDocList] = useState([]); // 문서 목록 (필터용)
       const [showFilters, setShowFilters] = useState(false);
@@ -2261,7 +2328,7 @@
             type: searchType,
             limit: '20',
           });
-          if (filterDocId) params.set('docId', filterDocId);
+          if (filterDocIds.length > 0) params.set('docIds', filterDocIds.join(','));
           if (filterChapter) params.set('chapter', filterChapter);
           const res = await authFetch(`${API_BASE_URL}/search?${params}`);
           if (!res.ok) {
@@ -2274,7 +2341,7 @@
         } finally {
           setLoading(false);
         }
-      }, [searchQuery, searchType, filterDocId, filterChapter]);
+      }, [searchQuery, searchType, filterDocIds, filterChapter]);
 
       const handleKeyDown = useCallback((e) => {
         if (e.key === 'Enter') handleSearch();
@@ -2348,26 +2415,24 @@
                 <button
                   onClick={() => setShowFilters(!showFilters)}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                    showFilters || filterDocId || filterChapter
+                    showFilters || filterDocIds.length > 0 || filterChapter
                       ? 'bg-yellow-500/20 text-yellow-400'
                       : 'bg-border text-text-secondary hover:text-text'
                   }`}
                 >
-                  필터 {(filterDocId || filterChapter) ? '(활성)' : ''}
+                  필터 {(filterDocIds.length > 0 || filterChapter) ? '(활성)' : ''}
                 </button>
               </div>
 
               {/* 필터 패널 */}
               {showFilters && (
                 <div className="space-y-2 p-3 bg-bg rounded-lg border border-border">
-                  <Select
-                    label="문서 범위"
-                    value={filterDocId}
-                    onChange={e => setFilterDocId(e.target.value)}
-                    options={[
-                      { value: '', label: '전체 문서' },
-                      ...docList.map(d => ({ value: String(d.id), label: d.title })),
-                    ]}
+                  <MultiSelect
+                    label="문서 범위 (복수 선택 가능)"
+                    selectedIds={filterDocIds}
+                    onChange={setFilterDocIds}
+                    options={docList.map(d => ({ value: String(d.id), label: d.title }))}
+                    placeholder="전체 문서"
                   />
                   <Input
                     label="장/절 필터"
@@ -2375,9 +2440,9 @@
                     onChange={e => setFilterChapter(e.target.value)}
                     placeholder="예: 제1장, 총칙"
                   />
-                  {(filterDocId || filterChapter) && (
+                  {(filterDocIds.length > 0 || filterChapter) && (
                     <button
-                      onClick={() => { setFilterDocId(''); setFilterChapter(''); }}
+                      onClick={() => { setFilterDocIds([]); setFilterChapter(''); }}
                       className="text-xs text-red-500 hover:text-red-300"
                     >필터 초기화</button>
                   )}
@@ -2699,8 +2764,8 @@
       // LLM 프로바이더
       const [llmProvider, setLlmProvider] = useState('gemini');
       const [llmProviders, setLlmProviders] = useState([]);
-      // 문서 범위 필터
-      const [filterDocId, setFilterDocId] = useState('');
+      // 문서 범위 필터 (복수 선택)
+      const [filterDocIds, setFilterDocIds] = useState([]);
       const [docList, setDocList] = useState([]);
       const [showSettings, setShowSettings] = useState(false);
       // 근거자료 접기/펼치기 (메시지 인덱스별)
@@ -2751,7 +2816,7 @@
               ...(llmProvider === 'gemini' && providerSettings.thinkingBudget ? { thinkingBudget: providerSettings.thinkingBudget } : {}),
             },
           };
-          if (filterDocId) body.docId = filterDocId;
+          if (filterDocIds.length > 0) body.docIds = filterDocIds.map(id => parseInt(id, 10));
 
           const res = await authFetch(`${API_BASE_URL}/rag`, {
             method: 'POST',
@@ -2776,7 +2841,7 @@
           setLoading(false);
           setTimeout(() => inputRef.current?.focus(), 100);
         }
-      }, [inputText, loading, chatMessages, llmProvider, filterDocId]);
+      }, [inputText, loading, chatMessages, llmProvider, filterDocIds]);
 
       const handleKeyDown = useCallback((e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -2836,33 +2901,37 @@
                 <div>
                   <p className="text-xs text-text-secondary mb-2">AI 모델</p>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {llmProviders.map(p => (
-                      <button key={p.id}
-                        onClick={() => setLlmProvider(p.id)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                          llmProvider === p.id
-                            ? `bg-${providerColor(p.id)}-500 text-white`
-                            : 'bg-border text-text-secondary hover:text-text'
-                        }`}
-                        style={llmProvider === p.id ? {
-                          backgroundColor: p.id === 'gemini' ? '#3b82f6' : p.id === 'openai' ? '#22c55e' : '#f97316'
-                        } : {}}
-                      >
-                        {p.name}
-                        {p.free && <span className="ml-1 opacity-70">(무료)</span>}
-                      </button>
-                    ))}
+                    {llmProviders.map(p => {
+                      const active = llmProvider === p.id;
+                      const modelId = llmSettings[p.id]?.model || '';
+                      const shortModel = modelId.replace(/^(gemini-|gpt-|claude-)/, '').replace(/-\d{8}$/, '');
+                      return (
+                        <button key={p.id}
+                          onClick={() => setLlmProvider(p.id)}
+                          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                            active
+                              ? `bg-${providerColor(p.id)}-500 text-white`
+                              : 'bg-border text-text-secondary hover:text-text'
+                          }`}
+                          style={active ? {
+                            backgroundColor: p.id === 'gemini' ? '#3b82f6' : p.id === 'openai' ? '#22c55e' : '#f97316'
+                          } : {}}
+                        >
+                          {p.name}
+                          {active && shortModel ? <span className="ml-1 opacity-80">({shortModel})</span>
+                            : p.free && <span className="ml-1 opacity-70">(무료)</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-                {/* 문서 범위 필터 */}
-                <Select
-                  label="문서 범위"
-                  value={filterDocId}
-                  onChange={e => setFilterDocId(e.target.value)}
-                  options={[
-                    { value: '', label: '전체 문서' },
-                    ...docList.map(d => ({ value: String(d.id), label: d.title })),
-                  ]}
+                {/* 문서 범위 필터 (복수 선택) */}
+                <MultiSelect
+                  label="문서 범위 (복수 선택 가능)"
+                  selectedIds={filterDocIds}
+                  onChange={setFilterDocIds}
+                  options={docList.map(d => ({ value: String(d.id), label: d.title }))}
+                  placeholder="전체 문서"
                 />
               </div>
             </Card>
@@ -3013,7 +3082,7 @@
             </div>
             <div className="flex items-center justify-between mt-1.5">
               <span className="text-[10px] text-text-secondary">
-                {providerName(llmProvider)} ({llmSettings[llmProvider]?.model || '기본'}) {filterDocId ? `| ${docList.find(d => String(d.id) === filterDocId)?.title || '문서 필터'}` : '| 전체 문서'}
+                {providerName(llmProvider)} ({llmSettings[llmProvider]?.model || '기본'}) {filterDocIds.length > 0 ? `| ${filterDocIds.length}개 문서 선택` : '| 전체 문서'}
               </span>
               <span className="text-[10px] text-text-secondary">Shift+Enter로 줄바꿈</span>
             </div>

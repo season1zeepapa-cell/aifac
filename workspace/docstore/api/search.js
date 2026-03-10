@@ -26,7 +26,8 @@ module.exports = async function handler(req, res) {
   const limit = Math.min(parseInt(req.query.limit) || 10, 50);
   // 필터 옵션
   const chapter = req.query.chapter || '';  // 장 필터 (예: "제1장")
-  const docId = req.query.docId || '';      // 특정 문서만 검색
+  const docId = req.query.docId || '';      // 특정 문서만 검색 (단일)
+  const docIds = req.query.docIds ? req.query.docIds.split(',').map(id => parseInt(id.trim(), 10)).filter(Boolean) : []; // 복수 문서
   const tag = req.query.tag || '';          // 태그 필터
 
   if (!q || q.trim().length === 0) {
@@ -44,9 +45,10 @@ module.exports = async function handler(req, res) {
       let params = [vecStr];
       let paramIdx = 2;
 
-      if (docId) {
-        filterClauses.push(`ds.document_id = $${paramIdx}`);
-        params.push(parseInt(docId));
+      const resolvedIds1 = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
+      if (resolvedIds1.length > 0) {
+        filterClauses.push(`ds.document_id = ANY($${paramIdx})`);
+        params.push(resolvedIds1);
         paramIdx++;
       }
       if (chapter) {
@@ -123,9 +125,10 @@ module.exports = async function handler(req, res) {
       let params = [`%${escapeIlike(q.trim())}%`];
       let paramIdx = 2;
 
-      if (docId) {
-        filterClauses.push(`ds.document_id = $${paramIdx}`);
-        params.push(parseInt(docId));
+      const resolvedIds2 = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
+      if (resolvedIds2.length > 0) {
+        filterClauses.push(`ds.document_id = ANY($${paramIdx})`);
+        params.push(resolvedIds2);
         paramIdx++;
       }
       if (chapter) {

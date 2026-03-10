@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
 
   if (checkRateLimit(req, res, 'rag')) return;
 
-  const { question, topK = 5, docId, provider = 'gemini', history = [], llmOptions = {} } = req.body;
+  const { question, topK = 5, docId, docIds, provider = 'gemini', history = [], llmOptions = {} } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
   }
@@ -41,9 +41,13 @@ module.exports = async (req, res) => {
     let params = [vecStr];
     let paramIdx = 2;
 
-    if (docId) {
-      filterClause += ` AND ds.document_id = $${paramIdx}`;
-      params.push(parseInt(docId, 10));
+    // 문서 필터: docIds(배열) 우선, docId(단일) 하위 호환
+    const resolvedDocIds = Array.isArray(docIds) && docIds.length > 0
+      ? docIds.map(id => parseInt(id, 10))
+      : docId ? [parseInt(docId, 10)] : [];
+    if (resolvedDocIds.length > 0) {
+      filterClause += ` AND ds.document_id = ANY($${paramIdx})`;
+      params.push(resolvedDocIds);
       paramIdx++;
     }
     params.push(Math.min(parseInt(topK, 10) || 5, 10));
