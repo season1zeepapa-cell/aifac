@@ -305,6 +305,9 @@ async function ensureOcrTable() {
       ['gemini-vision', 'Gemini Vision', 'gemini', true, 2],
       ['claude-vision', 'Claude Vision', 'anthropic', true, 3],
       ['openai-vision', 'OpenAI Vision', 'openai', true, 4],
+      ['naver-clova', '네이버 CLOVA OCR', 'naver', true, 5],
+      ['ocr-space', 'OCR.space', 'ocr-space', true, 6],
+      ['aws-textract', 'AWS Textract', 'aws', true, 7],
     ];
     for (const [id, name, provider, enabled, order] of defaults) {
       await query(

@@ -250,6 +250,123 @@ const ALL_ENGINES = {
       });
     },
   },
+
+  // ── OCR.space (무료 OCR API) ──
+  'ocr-space': {
+    name: 'OCR.space',
+    description: '무료 일 500건, 한국어 지원 (API 키 무료 발급)',
+    provider: 'ocr-space',
+    envKey: 'OCR_SPACE_API_KEY',
+    free: true,
+    isAvailable() { return !!process.env.OCR_SPACE_API_KEY; },
+    async execute(base64, mediaType, prompt) {
+      const body = JSON.stringify({
+        base64Image: `data:${mediaType};base64,${base64}`,
+        language: 'kor',
+        isOverlayRequired: false,
+        OCREngine: 2,
+      });
+      return new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: 'api.ocr.space',
+          path: '/parse/image',
+          method: 'POST',
+          headers: {
+            'apikey': process.env.OCR_SPACE_API_KEY,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(data);
+              if (json.IsErroredOnProcessing) {
+                reject(new Error(json.ErrorMessage?.[0] || 'OCR.space 처리 오류'));
+                return;
+              }
+              const text = json.ParsedResults?.map(r => r.ParsedText).join('\n') || '';
+              if (!text.trim()) reject(new Error('텍스트가 추출되지 않았습니다.'));
+              else resolve(text);
+            } catch (e) {
+              reject(new Error('OCR.space 응답 파싱 실패'));
+            }
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('OCR.space 시간 초과')); });
+        req.write(body);
+        req.end();
+      });
+    },
+  },
+
+  // ── AWS Textract (표/양식 특화) ──
+  'aws-textract': {
+    name: 'AWS Textract',
+    description: '표/양식 특화 OCR (AWS 계정 필요)',
+    provider: 'aws',
+    envKey: 'AWS_ACCESS_KEY_ID',
+    free: false,
+    isAvailable() { return !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY); },
+    async execute(base64, mediaType, prompt) {
+      // AWS SDK 필요 — 미설치 시 안내
+      throw new Error('AWS Textract는 aws-sdk 패키지 설치가 필요합니다. npm install @aws-sdk/client-textract');
+    },
+  },
+
+  // ── 네이버 CLOVA OCR (한국어 최강) ──
+  'naver-clova': {
+    name: '네이버 CLOVA OCR',
+    description: '한국어 인식 최강 (네이버 클라우드 API 키 필요)',
+    provider: 'naver',
+    envKey: 'NAVER_CLOVA_OCR_SECRET',
+    free: false,
+    isAvailable() { return !!(process.env.NAVER_CLOVA_OCR_SECRET && process.env.NAVER_CLOVA_OCR_URL); },
+    async execute(base64, mediaType, prompt) {
+      const body = JSON.stringify({
+        version: 'V2',
+        requestId: `ocr-${Date.now()}`,
+        timestamp: Date.now(),
+        images: [{ format: mediaType.split('/')[1] || 'png', data: base64, name: 'image' }],
+      });
+      const apiUrl = new URL(process.env.NAVER_CLOVA_OCR_URL);
+      return new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: apiUrl.hostname,
+          path: apiUrl.pathname,
+          method: 'POST',
+          headers: {
+            'X-OCR-SECRET': process.env.NAVER_CLOVA_OCR_SECRET,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(data);
+              if (res.statusCode !== 200) {
+                reject(new Error(json.message || `CLOVA OCR 오류: HTTP ${res.statusCode}`));
+                return;
+              }
+              const text = json.images?.[0]?.fields?.map(f => f.inferText).join(' ') || '';
+              if (!text.trim()) reject(new Error('텍스트가 추출되지 않았습니다.'));
+              else resolve(text);
+            } catch (e) {
+              reject(new Error('CLOVA OCR 응답 파싱 실패'));
+            }
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('CLOVA OCR 시간 초과')); });
+        req.write(body);
+        req.end();
+      });
+    },
+  },
 };
 
 // ════════════════════════════════════════
@@ -323,7 +440,7 @@ async function getEngineList() {
 
   // ALL_ENGINES 기준으로 전체 목록 생성 (DB에 없는 엔진도 항상 포함)
   const engineIds = Object.keys(ALL_ENGINES);
-  const defaultOrders = { 'upstage-ocr': 1, 'gemini-vision': 2, 'claude-vision': 3, 'openai-vision': 4 };
+  const defaultOrders = { 'upstage-ocr': 1, 'gemini-vision': 2, 'claude-vision': 3, 'openai-vision': 4, 'naver-clova': 5, 'ocr-space': 6, 'aws-textract': 7 };
 
   const result = engineIds.map(id => {
     const engine = ALL_ENGINES[id];
