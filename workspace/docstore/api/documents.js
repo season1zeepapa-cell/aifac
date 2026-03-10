@@ -2,6 +2,7 @@
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
+const { getSignedUrl, deleteDocumentFiles, isStorageAvailable } = require('../lib/storage');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, POST, DELETE, OPTIONS' })) return;
@@ -16,43 +17,37 @@ module.exports = async function handler(req, res) {
       const { id, category, download } = req.query;
 
       // 원본 파일 다운로드 — ?id=N&download=true
-      if (id && download === 'true') {
+      // 원본 파일 미리보기 — ?id=N&download=preview
+      if (id && (download === 'true' || download === 'preview')) {
         const doc = await query(
-          `SELECT original_file, original_filename, original_mimetype
+          `SELECT storage_path, original_file, original_filename, original_mimetype
            FROM documents WHERE id = $1`, [id]
         );
         if (doc.rows.length === 0) {
           return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
         }
         const row = doc.rows[0];
-        if (!row.original_file) {
-          return res.status(404).json({ error: '원본 파일이 저장되어 있지 않습니다.' });
-        }
-        // 바이너리 파일 응답
-        const filename = row.original_filename || 'download';
-        const mimetype = row.original_mimetype || 'application/octet-stream';
-        res.setHeader('Content-Type', mimetype);
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-        return res.send(row.original_file);
-      }
 
-      // 원본 파일 미리보기 (이미지) — ?id=N&download=preview
-      if (id && download === 'preview') {
-        const doc = await query(
-          `SELECT original_file, original_mimetype
-           FROM documents WHERE id = $1`, [id]
-        );
-        if (doc.rows.length === 0) {
-          return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
+        // 방법 1: Supabase Storage (Signed URL 리다이렉트)
+        if (row.storage_path && isStorageAvailable()) {
+          const signedUrl = await getSignedUrl(row.storage_path, 3600);
+          return res.redirect(signedUrl);
         }
-        const row = doc.rows[0];
-        if (!row.original_file) {
-          return res.status(404).json({ error: '원본 파일이 저장되어 있지 않습니다.' });
+
+        // 방법 2: 기존 BYTEA 폴백 (마이그레이션 전 데이터)
+        if (row.original_file) {
+          const mimetype = row.original_mimetype || 'application/octet-stream';
+          res.setHeader('Content-Type', mimetype);
+          if (download === 'true') {
+            const filename = row.original_filename || 'download';
+            res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+          } else {
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+          }
+          return res.send(row.original_file);
         }
-        const mimetype = row.original_mimetype || 'application/octet-stream';
-        res.setHeader('Content-Type', mimetype);
-        res.setHeader('Cache-Control', 'private, max-age=3600');
-        return res.send(row.original_file);
+
+        return res.status(404).json({ error: '원본 파일이 저장되어 있지 않습니다.' });
       }
 
       // 태그 목록 조회 — ?tags=all
@@ -68,7 +63,7 @@ module.exports = async function handler(req, res) {
         const doc = await query(
           `SELECT id, title, file_type, category, summary, keywords,
                   upload_date AS created_at, metadata, embedding_status,
-                  original_filename, original_mimetype, file_size
+                  original_filename, original_mimetype, file_size, storage_path
            FROM documents WHERE id = $1`, [id]
         );
         if (doc.rows.length === 0) {
@@ -102,7 +97,7 @@ module.exports = async function handler(req, res) {
       let sql = `
         SELECT d.id, d.title, d.file_type, d.category, d.summary,
                d.upload_date AS created_at, d.metadata,
-               d.embedding_status, d.original_filename, d.file_size,
+               d.embedding_status, d.original_filename, d.file_size, d.storage_path,
                COUNT(DISTINCT s.id) AS section_count
         FROM documents d
         LEFT JOIN document_sections s ON s.document_id = d.id
@@ -178,7 +173,12 @@ module.exports = async function handler(req, res) {
         // 3) 섹션 삭제
         await query('DELETE FROM document_sections WHERE document_id = $1', [id]);
 
-        // 4) 문서 삭제
+        // 4) Storage 파일 삭제
+        if (isStorageAvailable()) {
+          await deleteDocumentFiles(id);
+        }
+
+        // 5) 문서 삭제
         await query('DELETE FROM documents WHERE id = $1', [id]);
 
         return res.json({ success: true, message: '문서가 삭제되었습니다.' });

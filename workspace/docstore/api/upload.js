@@ -16,6 +16,7 @@ const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
+const { uploadFile, isStorageAvailable } = require('../lib/storage');
 
 // multer: 메모리 스토리지 (Vercel 서버리스 호환)
 // 모든 파일 형식 허용
@@ -115,30 +116,34 @@ module.exports = async function handler(req, res) {
     }
 
     // ── DB 저장 ──
-    // 1) documents 테이블 (원본 파일 포함)
+    // 1) documents 테이블 (메타 정보만, 원본 파일은 Storage에 저장)
+    const metadata = JSON.stringify({
+      originalFilename: filename,
+      totalPages: extracted.totalPages || null,
+      sectionType: extracted.sectionType || sectionType,
+      sectionCount: sections.length,
+      columns: extracted.columns || null,
+      fields: extracted.fields || null,
+    });
+
     const docResult = await query(
-      `INSERT INTO documents (title, file_type, category, metadata, original_file, original_filename, original_mimetype, file_size)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO documents (title, file_type, category, metadata, original_filename, original_mimetype, file_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [
-        title,
-        fileType,
-        category,
-        JSON.stringify({
-          originalFilename: filename,
-          totalPages: extracted.totalPages || null,
-          sectionType: extracted.sectionType || sectionType,
-          sectionCount: sections.length,
-          columns: extracted.columns || null,
-          fields: extracted.fields || null,
-        }),
-        fileBuffer,       // 원본 파일 바이너리 (BYTEA)
-        filename,         // 원본 파일명
-        mimetype,         // MIME 타입
-        fileBuffer.length, // 파일 크기 (bytes)
-      ]
+      [title, fileType, category, metadata, filename, mimetype, fileBuffer.length]
     );
     const documentId = docResult.rows[0].id;
+
+    // 원본 파일을 Supabase Storage에 업로드
+    if (isStorageAvailable()) {
+      try {
+        const storagePath = await uploadFile(fileBuffer, documentId, filename, mimetype);
+        await query('UPDATE documents SET storage_path = $1 WHERE id = $2', [storagePath, documentId]);
+      } catch (storageErr) {
+        // Storage 실패 시에도 텍스트 추출은 이미 완료 → 경고만 출력
+        console.warn(`[Upload] Storage 업로드 실패 (문서 ${documentId}):`, storageErr.message);
+      }
+    }
 
     // 2) document_sections 테이블
     for (const section of sections) {

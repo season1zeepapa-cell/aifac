@@ -8,6 +8,7 @@ const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
+const { uploadFile, isStorageAvailable } = require('../lib/storage');
 
 /**
  * URL에서 HTML을 가져온 뒤 본문 텍스트를 추출
@@ -124,11 +125,12 @@ module.exports = async (req, res) => {
     // 4) 섹션 분할
     const paragraphs = splitIntoParagraphs(extractedText);
 
-    // 5) DB 저장 (원본 HTML도 함께 저장)
+    // 5) DB 저장 (메타 정보만, 원본 HTML은 Storage에 저장)
     const htmlBuffer = Buffer.from(html, 'utf-8');
+    const htmlFilename = `${title}.html`;
     const docResult = await query(
-      `INSERT INTO documents (title, file_type, category, metadata, original_file, original_filename, original_mimetype, file_size)
-       VALUES ($1, 'url', $2, $3, $4, $5, $6, $7)
+      `INSERT INTO documents (title, file_type, category, metadata, original_filename, original_mimetype, file_size)
+       VALUES ($1, 'url', $2, $3, $4, $5, $6)
        RETURNING id`,
       [
         title,
@@ -138,13 +140,22 @@ module.exports = async (req, res) => {
           charCount: extractedText.length,
           sectionCount: paragraphs.length,
         }),
-        htmlBuffer,
-        `${title}.html`,
+        htmlFilename,
         'text/html',
         htmlBuffer.length,
       ]
     );
     const documentId = docResult.rows[0].id;
+
+    // 원본 HTML을 Supabase Storage에 업로드
+    if (isStorageAvailable()) {
+      try {
+        const storagePath = await uploadFile(htmlBuffer, documentId, htmlFilename, 'text/html');
+        await query('UPDATE documents SET storage_path = $1 WHERE id = $2', [storagePath, documentId]);
+      } catch (storageErr) {
+        console.warn(`[URL Import] Storage 업로드 실패 (문서 ${documentId}):`, storageErr.message);
+      }
+    }
 
     for (const para of paragraphs) {
       await query(
