@@ -1,5 +1,5 @@
 // API 호출 추적, 일일 한도 체크, 토큰 소진 감지 모듈
-const { query } = require('../api/db');
+const { query } = require('./db');
 
 // 비용 단가 ($ per 1M tokens)
 const COST_TABLE = {

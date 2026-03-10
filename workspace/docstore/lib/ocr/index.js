@@ -1,5 +1,5 @@
 // OCR 엔진 매니저 — 플러그인 레지스트리 + 우선순위 폴백
-const { query } = require('../../api/db');
+const { query } = require('../db');
 
 // ── 엔진 레지스트리 (모든 플러그인 로드) ──
 const ALL_ENGINES = {
