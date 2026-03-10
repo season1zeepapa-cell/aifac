@@ -4,6 +4,7 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { getSignedUrl, deleteDocumentFiles, isStorageAvailable } = require('../lib/storage');
 const { sendError } = require('../lib/error-handler');
+const { invalidateSummaryCache, invalidateSectionSummary } = require('../lib/summary-cache');
 
 // 단일 문서 영구 삭제 — chunks → sections → tags → Storage → documents 순서
 async function deleteDocumentPermanently(docId) {
@@ -302,6 +303,9 @@ module.exports = async function handler(req, res) {
       if (action === 'analyze' && id) {
         const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
         const { generateEnrichedEmbeddings } = require('../lib/embeddings');
+
+        // 기존 요약 캐시 무효화 (재분석이므로 이전 요약 제거)
+        await invalidateSummaryCache(query, id);
 
         // 문서 + 섹션 조회
         const doc = await query(
