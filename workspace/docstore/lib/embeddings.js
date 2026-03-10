@@ -169,44 +169,71 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
   let totalChunks = 0;
   const validSections = savedSections.rows.filter(s => s.raw_text && s.raw_text.trim().length > 0);
 
-  for (let si = 0; si < validSections.length; si++) {
-    const section = validSections[si];
-    const sectionMeta = section.metadata || {};
-    const sectionSummary = section.summary || '';
+  // 섹션을 CONCURRENCY개씩 병렬 처리 (API rate limit 고려)
+  const CONCURRENCY = 5;
 
-    // 2) 원문 청크 분할
-    const chunks = chunkText(section.raw_text);
-    if (chunks.length === 0) continue;
+  for (let batchStart = 0; batchStart < validSections.length; batchStart += CONCURRENCY) {
+    const batch = validSections.slice(batchStart, batchStart + CONCURRENCY);
 
-    // 3) 각 청크에 맥락 정보 추가 → enriched text 생성
-    const enrichedTexts = chunks.map(chunk => buildEnrichedText({
-      chunkText: chunk,
-      docTitle: title,
-      docSummary: summary,
-      category,
-      tags,
-      keywords,
-      sectionSummary,
-      sectionMeta,
+    // 배치 내 섹션들을 병렬로 임베딩 생성
+    const batchResults = await Promise.all(batch.map(async (section) => {
+      const sectionMeta = section.metadata || {};
+      const sectionSummary = section.summary || '';
+
+      // 2) 원문 청크 분할
+      const chunks = chunkText(section.raw_text);
+      if (chunks.length === 0) return [];
+
+      // 3) 각 청크에 맥락 정보 추가 → enriched text 생성
+      const enrichedTexts = chunks.map(chunk => buildEnrichedText({
+        chunkText: chunk,
+        docTitle: title,
+        docSummary: summary,
+        category,
+        tags,
+        keywords,
+        sectionSummary,
+        sectionMeta,
+      }));
+
+      // 4) enriched text로 임베딩 생성 (배치)
+      const embeddings = await generateEmbeddings(enrichedTexts);
+
+      return chunks.map((chunk, i) => ({
+        sectionId: section.id,
+        chunkText: chunk,
+        enrichedText: enrichedTexts[i],
+        embedding: embeddings[i],
+        chunkIndex: i,
+      }));
     }));
 
-    // 4) enriched text로 임베딩 생성 (배치)
-    const embeddings = await generateEmbeddings(enrichedTexts);
-
-    // 5) DB 저장
-    for (let i = 0; i < chunks.length; i++) {
-      const vecStr = `[${embeddings[i].join(',')}]`;
-      await db.query(
-        `INSERT INTO document_chunks (section_id, chunk_text, enriched_text, embedding, chunk_index)
-         VALUES ($1, $2, $3, $4::vector, $5)`,
-        [section.id, chunks[i], enrichedTexts[i], vecStr, i]
-      );
+    // 5) DB 배치 INSERT (한 배치의 모든 청크를 한 번에)
+    const allRows = batchResults.flat();
+    if (allRows.length > 0) {
+      // 10개씩 묶어서 다중 VALUES INSERT
+      const DB_BATCH = 10;
+      for (let di = 0; di < allRows.length; di += DB_BATCH) {
+        const dbBatch = allRows.slice(di, di + DB_BATCH);
+        const values = [];
+        const params = [];
+        dbBatch.forEach((row, idx) => {
+          const base = idx * 5;
+          values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}::vector, $${base + 5})`);
+          params.push(row.sectionId, row.chunkText, row.enrichedText, `[${row.embedding.join(',')}]`, row.chunkIndex);
+        });
+        await db.query(
+          `INSERT INTO document_chunks (section_id, chunk_text, enriched_text, embedding, chunk_index)
+           VALUES ${values.join(', ')}`,
+          params
+        );
+      }
+      totalChunks += allRows.length;
     }
-    totalChunks += chunks.length;
 
-    // 진행률 콜백 호출 (SSE 등에서 사용)
+    // 진행률 콜백 호출
     if (onProgress) {
-      onProgress(si + 1, validSections.length, totalChunks);
+      onProgress(Math.min(batchStart + CONCURRENCY, validSections.length), validSections.length, totalChunks);
     }
   }
 

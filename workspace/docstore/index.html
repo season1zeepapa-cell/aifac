@@ -1524,14 +1524,16 @@
         }
       }, [documentId]);
 
-      // AI 분석 진행 단계 시뮬레이션
+      // AI 분석 진행 단계 시뮬레이션 (대용량 문서 기준 총 ~120초)
       const analyzeSteps = useMemo(() => [
-        { message: 'AI 문서 분석 중 (요약/키워드)...', progress: 15, duration: 5000 },
-        { message: '태그 생성 중...', progress: 30, duration: 3000 },
-        { message: '섹션별 요약 생성 중...', progress: 45, duration: 5000 },
-        { message: '섹션 요약 처리 중...', progress: 60, duration: 5000 },
-        { message: 'Enriched 임베딩 생성 중...', progress: 75, duration: 6000 },
-        { message: '임베딩 마무리 중...', progress: 88, duration: 5000 },
+        { message: 'AI 문서 분석 중 (요약/키워드)...', progress: 10, duration: 8000 },
+        { message: '태그 생성 중...', progress: 20, duration: 5000 },
+        { message: '섹션별 요약 생성 중...', progress: 35, duration: 15000 },
+        { message: '섹션 요약 처리 중...', progress: 50, duration: 15000 },
+        { message: 'Enriched 임베딩 생성 중...', progress: 65, duration: 20000 },
+        { message: '임베딩 처리 중...', progress: 78, duration: 20000 },
+        { message: '임베딩 마무리 중...', progress: 88, duration: 20000 },
+        { message: '최종 저장 중...', progress: 95, duration: 15000 },
       ], []);
       const analyzeProgress2 = useSimulatedProgress(analyzeSteps);
 

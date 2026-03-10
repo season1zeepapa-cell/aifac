@@ -41,7 +41,7 @@ JSON만 반환하세요. 다른 텍스트는 포함하지 마세요:
 ${truncated}`;
 
   try {
-    const raw = await callGemini(prompt, { maxTokens: 512 });
+    const raw = await callGemini(prompt, { maxTokens: 2048, timeout: 60000 });
     // JSON 파싱 (마크다운 코드블록 제거)
     const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     const result = JSON.parse(cleaned);
@@ -65,25 +65,30 @@ async function analyzeSections(sections) {
   const summaries = new Map();
   if (!sections || sections.length === 0) return summaries;
 
-  // 섹션들을 묶어서 한 번에 요약 요청 (비용 절감)
-  // 최대 20개씩 배치 처리
+  // 섹션들을 20개씩 묶어 배치 생성
   const BATCH_SIZE = 20;
+  const batches = [];
 
   for (let i = 0; i < sections.length; i += BATCH_SIZE) {
     const batch = sections.slice(i, i + BATCH_SIZE);
     const validBatch = batch.filter(s => s.raw_text && s.raw_text.trim().length >= 30);
+    if (validBatch.length > 0) batches.push(validBatch);
+  }
 
-    if (validBatch.length === 0) continue;
+  // 2개 배치씩 병렬 처리 (Gemini rate limit 고려)
+  const PARALLEL = 2;
+  for (let bi = 0; bi < batches.length; bi += PARALLEL) {
+    const parallelBatches = batches.slice(bi, bi + PARALLEL);
 
-    // 섹션 목록을 프롬프트에 포함
-    const sectionList = validBatch.map((s, idx) => {
-      const meta = s.metadata || {};
-      const label = meta.label || `섹션 ${s.id}`;
-      const text = s.raw_text.substring(0, 500);
-      return `[${idx}] ${label}\n${text}`;
-    }).join('\n---\n');
+    const results = await Promise.all(parallelBatches.map(async (validBatch) => {
+      const sectionList = validBatch.map((s, idx) => {
+        const meta = s.metadata || {};
+        const label = meta.label || `섹션 ${s.id}`;
+        const text = s.raw_text.substring(0, 500);
+        return `[${idx}] ${label}\n${text}`;
+      }).join('\n---\n');
 
-    const prompt = `다음 문서 섹션들 각각을 1줄로 요약해주세요.
+      const prompt = `다음 문서 섹션들 각각을 1줄로 요약해주세요.
 
 규칙:
 - 각 섹션을 핵심만 1줄(30~80자)로 요약
@@ -93,20 +98,25 @@ async function analyzeSections(sections) {
 --- 섹션 목록 ---
 ${sectionList}`;
 
-    try {
-      const raw = await callGemini(prompt, { maxTokens: 1024 });
-      const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-      const results = JSON.parse(cleaned);
+      try {
+        const raw = await callGemini(prompt, { maxTokens: 4096, timeout: 60000 });
+        const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        return { validBatch, parsed };
+      } catch (err) {
+        console.error(`[DocAnalyzer] 섹션 배치 요약 실패:`, err.message);
+        return { validBatch, parsed: [] };
+      }
+    }));
 
-      if (Array.isArray(results)) {
-        for (const r of results) {
+    for (const { validBatch, parsed } of results) {
+      if (Array.isArray(parsed)) {
+        for (const r of parsed) {
           if (r.index !== undefined && r.summary && validBatch[r.index]) {
             summaries.set(validBatch[r.index].id, r.summary);
           }
         }
       }
-    } catch (err) {
-      console.error(`[DocAnalyzer] 섹션 배치 요약 실패 (${i}~${i + BATCH_SIZE}):`, err.message);
     }
   }
 
