@@ -1,7 +1,8 @@
 // 법제처 국가법령정보 API 프록시
-// - action: 'search' → 법령명 검색
+// - action: 'search' → 법령명 검색 (이미 임포트된 법령 정보 포함)
 // - action: 'detail' → 조문 상세 조회
 const { searchLaw, getLawDetail } = require('../lib/law-fetcher');
+const { query: dbQuery } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 
@@ -22,7 +23,27 @@ module.exports = async (req, res) => {
     if (action === 'search') {
       if (!query) return res.status(400).json({ error: '검색어(query)가 필요합니다.' });
       const result = await searchLaw(query, OC);
-      return res.json(result);
+
+      // 검색 결과의 lawId 목록으로 이미 임포트된 법령 조회
+      const lawIds = (result.results || []).map(r => String(r.id));
+      let importedMap = {};
+      if (lawIds.length > 0) {
+        const imported = await dbQuery(
+          `SELECT metadata->>'lawId' AS law_id, id, title, upload_date
+           FROM documents
+           WHERE metadata->>'lawId' = ANY($1) AND deleted_at IS NULL`,
+          [lawIds]
+        );
+        for (const row of imported.rows) {
+          importedMap[row.law_id] = {
+            documentId: row.id,
+            title: row.title,
+            importedAt: row.upload_date,
+          };
+        }
+      }
+
+      return res.json({ ...result, importedMap });
     }
 
     if (action === 'detail') {
