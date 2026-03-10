@@ -431,69 +431,55 @@ async function ocrWithGemini(base64, mimetype, prompt) {
  * 토큰 소진 감지 + API 사용량 추적 포함
  */
 async function extractImage(buffer, options = {}) {
-  const { trackedApiCall, isCreditError } = require('./api-tracker');
   const { mimetype = 'image/jpeg', contentType = 'general' } = options;
 
   const base64 = buffer.toString('base64');
   const mediaType = mimetype.startsWith('image/') ? mimetype : 'image/jpeg';
   const prompt = getOcrPrompt(contentType);
 
-  // 1차 시도: Claude Sonnet
+  // 1차 시도: Claude Sonnet (전체를 try/catch로 감싸 어떤 에러든 Gemini로 넘어감)
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
-    const { result, error, creditExhausted, limitExceeded } = await trackedApiCall(
-      { provider: 'anthropic', model: 'claude-sonnet-4-6', endpoint: 'image-ocr' },
-      async () => {
-        const Anthropic = require('@anthropic-ai/sdk').default;
-        const claude = new Anthropic({ apiKey: anthropicKey });
-        const response = await claude.messages.create({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 4096,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-              { type: 'text', text: prompt },
-            ],
-          }],
-        });
-        const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-        return { text, _tokensIn: response.usage?.input_tokens || 0, _tokensOut: response.usage?.output_tokens || 0 };
+    try {
+      const Anthropic = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk');
+      const claude = new Anthropic({ apiKey: anthropicKey });
+      const response = await claude.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4096,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+      });
+      const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      if (text) {
+        return {
+          sections: [{ sectionType: 'ocr', sectionIndex: 0, text, metadata: { method: 'claude-ocr', contentType } }],
+          totalItems: 1,
+        };
       }
-    );
+    } catch (claudeErr) {
+      console.warn('[OCR] Claude 실패 → Gemini 폴백:', claudeErr.message?.substring(0, 100));
+    }
+  }
 
-    if (result && result.text) {
+  // 2차 시도: Gemini 폴백 (직접 호출 — tracker 의존성 제거)
+  try {
+    const text = await ocrWithGemini(base64, mediaType, prompt);
+    if (text) {
       return {
-        sections: [{ sectionType: 'ocr', sectionIndex: 0, text: result.text, metadata: { method: 'claude-ocr', contentType } }],
+        sections: [{ sectionType: 'ocr', sectionIndex: 0, text, metadata: { method: 'gemini-ocr', contentType, fallback: true } }],
         totalItems: 1,
       };
     }
-
-    // 크레딧 소진 또는 한도 초과 → Gemini 폴백
-    if (creditExhausted || limitExceeded) {
-      console.warn(`[OCR] Anthropic ${creditExhausted ? '크레딧 소진' : '한도 초과'} → Gemini 폴백`);
-    } else if (error) {
-      console.error('[OCR] Anthropic 에러:', error.message, '→ Gemini 폴백');
-    }
+  } catch (geminiErr) {
+    console.error('[OCR] Gemini도 실패:', geminiErr.message);
   }
 
-  // 2차 시도: Gemini 폴백
-  const { result: geminiResult, error: geminiError } = await trackedApiCall(
-    { provider: 'gemini', model: 'gemini-2.0-flash', endpoint: 'image-ocr' },
-    async () => {
-      const text = await ocrWithGemini(base64, mediaType, prompt);
-      return { text };
-    }
-  );
-
-  if (geminiResult && geminiResult.text) {
-    return {
-      sections: [{ sectionType: 'ocr', sectionIndex: 0, text: geminiResult.text, metadata: { method: 'gemini-ocr', contentType, fallback: true } }],
-      totalItems: 1,
-    };
-  }
-
-  throw geminiError || new Error('이미지 OCR 실패: 사용 가능한 API가 없습니다.');
+  throw new Error('이미지 OCR 실패: Claude, Gemini 모두 사용할 수 없습니다.');
 }
 
 /**
