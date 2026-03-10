@@ -2167,7 +2167,7 @@
 
       const fetchEngines = useCallback(async () => {
         try {
-          const res = await authFetch(`${API_BASE_URL}/ocr-settings`);
+          const res = await authFetch(`${API_BASE_URL}/api-usage?type=ocr`);
           if (res.ok) {
             const data = await res.json();
             setEngines(data.engines || []);
@@ -2190,10 +2190,10 @@
         setEngines(newEngines);
 
         try {
-          await authFetch(`${API_BASE_URL}/ocr-settings`, {
+          await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'updatePriority', order: newEngines.map(e => e.engine_id) }),
+            body: JSON.stringify({ action: 'ocrUpdatePriority', order: newEngines.map(e => e.engine_id) }),
           });
         } catch (err) {
           fetchEngines(); // 실패 시 원복
@@ -2204,10 +2204,10 @@
       const handleToggle = useCallback(async (engineId, currentEnabled) => {
         setActionLoading(`toggle-${engineId}`);
         try {
-          await authFetch(`${API_BASE_URL}/ocr-settings`, {
+          await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'toggleEngine', engineId, enabled: !currentEnabled }),
+            body: JSON.stringify({ action: 'ocrToggleEngine', engineId, enabled: !currentEnabled }),
           });
           fetchEngines();
         } catch (err) {
@@ -2221,10 +2221,10 @@
       const handleTest = useCallback(async (engineId) => {
         setActionLoading(`test-${engineId}`);
         try {
-          const res = await authFetch(`${API_BASE_URL}/ocr-settings`, {
+          const res = await authFetch(`${API_BASE_URL}/api-usage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'testEngine', engineId }),
+            body: JSON.stringify({ action: 'ocrTestEngine', engineId }),
           });
           const result = await res.json();
           alert(result.message);

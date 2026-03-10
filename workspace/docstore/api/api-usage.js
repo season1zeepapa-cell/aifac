@@ -1,6 +1,7 @@
-// API 사용량 조회 및 키 관리 API
+// API 사용량 조회 및 키 관리 + OCR 설정 API
 // GET /api/api-usage — 사용량 통계 + 키 상태
-// POST /api/api-usage — 키 상태 변경 (활성/비활성, 한도 변경)
+// GET /api/api-usage?type=ocr — OCR 엔진 설정 조회
+// POST /api/api-usage — 키/OCR 설정 변경
 const { query } = require('./db');
 const { requireAdmin } = require('./auth');
 
@@ -18,6 +19,13 @@ module.exports = async function handler(req, res) {
   try {
     // ── GET: 대시보드 데이터 ──
     if (req.method === 'GET') {
+      // OCR 엔진 설정 조회
+      if (req.query.type === 'ocr') {
+        const { getEngineList } = require('../lib/ocr');
+        const engines = await getEngineList();
+        return res.json({ engines });
+      }
+
       const { range = 'today' } = req.query;
 
       // 1) 키 상태 조회
@@ -178,6 +186,57 @@ module.exports = async function handler(req, res) {
         }
       }
 
+      // ── OCR 설정 액션 ──
+
+      // OCR 테이블 자동 생성
+      if (['ocrUpdatePriority', 'ocrToggleEngine', 'ocrTestEngine'].includes(action)) {
+        await ensureOcrTable();
+      }
+
+      // OCR 우선순위 변경
+      if (action === 'ocrUpdatePriority') {
+        const { order } = req.body;
+        if (!Array.isArray(order)) return res.status(400).json({ error: 'order 배열이 필요합니다.' });
+        for (let i = 0; i < order.length; i++) {
+          await query(
+            'UPDATE ocr_engine_config SET priority_order = $1, updated_at = NOW() WHERE engine_id = $2',
+            [i + 1, order[i]]
+          );
+        }
+        const { invalidateCache } = require('../lib/ocr');
+        invalidateCache();
+        return res.json({ success: true, message: '우선순위가 변경되었습니다.' });
+      }
+
+      // OCR 엔진 활성/비활성
+      if (action === 'ocrToggleEngine') {
+        const { engineId, enabled } = req.body;
+        if (!engineId) return res.status(400).json({ error: 'engineId가 필요합니다.' });
+        await query(
+          'UPDATE ocr_engine_config SET is_enabled = $1, updated_at = NOW() WHERE engine_id = $2',
+          [!!enabled, engineId]
+        );
+        const { invalidateCache } = require('../lib/ocr');
+        invalidateCache();
+        return res.json({ success: true, enabled: !!enabled });
+      }
+
+      // OCR 엔진 테스트
+      if (action === 'ocrTestEngine') {
+        const { engineId } = req.body;
+        const { ALL_ENGINES } = require('../lib/ocr');
+        const engine = ALL_ENGINES[engineId];
+        if (!engine) return res.status(400).json({ error: '존재하지 않는 엔진입니다.' });
+        if (!engine.isAvailable()) return res.json({ success: false, message: `${engine.envKey} 환경변수가 설정되지 않았습니다.` });
+        try {
+          const testBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+          await engine.execute(testBase64, 'image/png', '이 이미지에 텍스트가 있으면 추출해주세요.');
+          return res.json({ success: true, message: `${engine.name} 연결 성공!` });
+        } catch (err) {
+          return res.json({ success: false, message: `${engine.name}: ${err.message?.substring(0, 100)}` });
+        }
+      }
+
       return res.status(400).json({ error: '잘못된 요청입니다.' });
     }
 
@@ -187,3 +246,38 @@ module.exports = async function handler(req, res) {
     res.status(500).json({ error: err.message });
   }
 };
+
+// OCR 설정 테이블 자동 생성
+async function ensureOcrTable() {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS ocr_engine_config (
+        id SERIAL PRIMARY KEY,
+        engine_id VARCHAR(50) NOT NULL UNIQUE,
+        display_name VARCHAR(100) NOT NULL,
+        provider VARCHAR(50) NOT NULL,
+        is_enabled BOOLEAN DEFAULT true,
+        priority_order INT DEFAULT 99,
+        config JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    const defaults = [
+      ['gemini-vision', 'Gemini Vision', 'gemini', true, 1],
+      ['naver-clova', 'Naver CLOVA OCR', 'naver', true, 2],
+      ['google-vision', 'Google Cloud Vision', 'google-vision', true, 3],
+      ['claude-vision', 'Claude Vision', 'anthropic', true, 4],
+      ['aws-textract', 'AWS Textract', 'aws', true, 5],
+    ];
+    for (const [id, name, provider, enabled, order] of defaults) {
+      await query(
+        `INSERT INTO ocr_engine_config (engine_id, display_name, provider, is_enabled, priority_order)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (engine_id) DO NOTHING`,
+        [id, name, provider, enabled, order]
+      );
+    }
+  } catch (err) {
+    console.error('[OCR] 테이블 생성 실패:', err.message);
+  }
+}
