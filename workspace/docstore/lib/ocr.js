@@ -92,7 +92,7 @@ const ALL_ENGINES = {
     free: false,
     isAvailable() { return !!process.env.GEMINI_API_KEY; },
     async execute(base64, mediaType, prompt) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${process.env.GEMINI_API_KEY}`;
       const body = JSON.stringify({
         contents: [{
           parts: [
@@ -260,12 +260,13 @@ const ALL_ENGINES = {
     free: true,
     isAvailable() { return !!process.env.OCR_SPACE_API_KEY; },
     async execute(base64, mediaType, prompt) {
-      const body = JSON.stringify({
-        base64Image: `data:${mediaType};base64,${base64}`,
-        language: 'kor',
-        isOverlayRequired: false,
-        OCREngine: 2,
-      });
+      // form-urlencoded 방식이 OCR.space에서 가장 안정적
+      const params = new URLSearchParams();
+      params.append('base64Image', `data:${mediaType};base64,${base64}`);
+      params.append('language', 'kor');
+      params.append('isOverlayRequired', 'false');
+      params.append('OCREngine', '1'); // Engine 1이 한국어 지원
+      const body = params.toString();
       return new Promise((resolve, reject) => {
         const req = https.request({
           hostname: 'api.ocr.space',
@@ -273,7 +274,7 @@ const ALL_ENGINES = {
           method: 'POST',
           headers: {
             'apikey': process.env.OCR_SPACE_API_KEY,
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
           },
           timeout: 30000,
         }, (res) => {

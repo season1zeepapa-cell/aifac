@@ -261,16 +261,24 @@ module.exports = async function handler(req, res) {
         if (!engine) return res.status(400).json({ error: '존재하지 않는 엔진입니다.' });
         if (!engine.isAvailable()) return res.json({ success: false, message: `${engine.envKey} 환경변수가 설정되지 않았습니다.` });
         try {
-          const testBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+          // 10x10 흰색 PNG (1x1은 일부 OCR에서 거부)
+          const testBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFklEQVQYV2P8z8BQz0BFwMgwasCoAgBGIAX/0sXJbgAAAABJRU5ErkJggg==';
           await engine.execute(testBase64, 'image/png', '이 이미지에 텍스트가 있으면 추출해주세요.');
           return res.json({ success: true, message: `${engine.name} 연결 성공!` });
         } catch (err) {
-          // 빈 이미지라 텍스트 없음 = API 연결은 성공
-          const msg = err.message || '';
-          if (msg.includes('텍스트가 추출되지 않았') || msg.includes('빈 결과')) {
+          // 빈/작은 이미지라 텍스트 없음 또는 파일 형식 에러 = API 연결 자체는 성공한 것
+          const msg = (err.message || '').toLowerCase();
+          const apiConnected = msg.includes('텍스트가 추출되지 않았') ||
+            msg.includes('빈 결과') ||
+            msg.includes('file type') ||
+            msg.includes('unable to recognize') ||
+            msg.includes('no text') ||
+            msg.includes('empty');
+          if (apiConnected) {
             return res.json({ success: true, message: `${engine.name} 연결 성공! (테스트 이미지에 텍스트 없음)` });
           }
-          return res.json({ success: false, message: `${engine.name}: ${msg.substring(0, 100)}` });
+          // 크레딧 부족 등 실제 에러
+          return res.json({ success: false, message: `${engine.name}: ${(err.message || '').substring(0, 150)}` });
         }
       }
 
