@@ -3,6 +3,7 @@
 // { url: "https://example.com/page", title: "제목" (선택), category: "기타" (선택) }
 const https = require('https');
 const http = require('http');
+const iconv = require('iconv-lite');
 const { createEmbeddingsForDocument } = require('../lib/embeddings');
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
@@ -13,7 +14,32 @@ const { validateUrl, sanitizeFilename } = require('../lib/input-sanitizer');
 const { sendError } = require('../lib/error-handler');
 
 /**
+ * HTTP 응답 헤더 또는 HTML meta 태그에서 charset 감지
+ * @param {Object} headers - HTTP 응답 헤더
+ * @param {Buffer} buffer - HTML 바이너리 데이터
+ * @returns {string} 감지된 charset (기본값: 'utf-8')
+ */
+function detectCharset(headers, buffer) {
+  // 1) Content-Type 헤더에서 charset 추출
+  const ct = (headers['content-type'] || '').toLowerCase();
+  const headerMatch = ct.match(/charset\s*=\s*([^\s;]+)/);
+  if (headerMatch) return headerMatch[1].replace(/['"]/g, '');
+
+  // 2) HTML 앞부분에서 meta charset 추출 (ASCII 범위로 안전하게 읽기)
+  const head = buffer.slice(0, 4096).toString('ascii');
+  // <meta charset="euc-kr">
+  const metaMatch = head.match(/<meta[^>]+charset\s*=\s*["']?\s*([^"'\s;>]+)/i);
+  if (metaMatch) return metaMatch[1];
+  // <meta http-equiv="Content-Type" content="text/html; charset=euc-kr">
+  const httpEquivMatch = head.match(/http-equiv\s*=\s*["']?Content-Type["']?[^>]+charset\s*=\s*([^"'\s;>]+)/i);
+  if (httpEquivMatch) return httpEquivMatch[1];
+
+  return 'utf-8';
+}
+
+/**
  * URL에서 HTML을 가져온 뒤 본문 텍스트를 추출
+ * EUC-KR 등 비-UTF-8 인코딩 자동 감지 및 변환 지원
  */
 function fetchUrl(url, maxRedirects = 5) {
   if (maxRedirects <= 0) {
@@ -41,10 +67,24 @@ function fetchUrl(url, maxRedirects = 5) {
       if (res.statusCode !== 200) {
         return reject(new Error(`HTTP ${res.statusCode}`));
       }
-      // Buffer.concat으로 수신 후 UTF-8 변환 (한글 깨짐 방지)
+      // Buffer로 수신 → charset 감지 → 올바른 인코딩으로 디코딩
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      res.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        const charset = detectCharset(res.headers, buffer);
+        const normalized = charset.toLowerCase().replace(/[-_]/g, '');
+        // UTF-8이면 그대로, 아니면 iconv-lite로 변환
+        if (normalized === 'utf8') {
+          resolve(buffer.toString('utf8'));
+        } else if (iconv.encodingExists(charset)) {
+          console.log(`[URL Import] 인코딩 감지: ${charset} → UTF-8 변환`);
+          resolve(iconv.decode(buffer, charset));
+        } else {
+          console.warn(`[URL Import] 알 수 없는 인코딩: ${charset}, UTF-8로 시도`);
+          resolve(buffer.toString('utf8'));
+        }
+      });
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('요청 시간 초과')); });
