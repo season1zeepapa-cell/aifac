@@ -2150,6 +2150,178 @@
               ))}
             </div>
           )}
+
+          {/* OCR 엔진 설정 */}
+          <OcrSettingsSection />
+        </div>
+      );
+    }
+
+    // ========================================
+    // OCR 엔진 설정 컴포넌트
+    // ========================================
+    function OcrSettingsSection() {
+      const [engines, setEngines] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [actionLoading, setActionLoading] = useState(null);
+
+      const fetchEngines = useCallback(async () => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/ocr-settings`);
+          if (res.ok) {
+            const data = await res.json();
+            setEngines(data.engines || []);
+          }
+        } catch (err) {
+          console.error('[OCR Settings]', err);
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => { fetchEngines(); }, [fetchEngines]);
+
+      // 우선순위 변경 (위/아래)
+      const handleMove = useCallback(async (index, direction) => {
+        const newEngines = [...engines];
+        const swapIdx = index + direction;
+        if (swapIdx < 0 || swapIdx >= newEngines.length) return;
+        [newEngines[index], newEngines[swapIdx]] = [newEngines[swapIdx], newEngines[index]];
+        setEngines(newEngines);
+
+        try {
+          await authFetch(`${API_BASE_URL}/ocr-settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'updatePriority', order: newEngines.map(e => e.engine_id) }),
+          });
+        } catch (err) {
+          fetchEngines(); // 실패 시 원복
+        }
+      }, [engines, fetchEngines]);
+
+      // 활성/비활성 토글
+      const handleToggle = useCallback(async (engineId, currentEnabled) => {
+        setActionLoading(`toggle-${engineId}`);
+        try {
+          await authFetch(`${API_BASE_URL}/ocr-settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'toggleEngine', engineId, enabled: !currentEnabled }),
+          });
+          fetchEngines();
+        } catch (err) {
+          alert('변경 실패');
+        } finally {
+          setActionLoading(null);
+        }
+      }, [fetchEngines]);
+
+      // 엔진 테스트
+      const handleTest = useCallback(async (engineId) => {
+        setActionLoading(`test-${engineId}`);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/ocr-settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'testEngine', engineId }),
+          });
+          const result = await res.json();
+          alert(result.message);
+        } catch (err) {
+          alert('테스트 실패');
+        } finally {
+          setActionLoading(null);
+        }
+      }, []);
+
+      // 상태 뱃지
+      const statusBadge = (engine) => {
+        if (!engine.is_available) return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-600/30 text-gray-400">미설정</span>;
+        if (!engine.is_enabled) return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-600/30 text-gray-500">비활성</span>;
+        return <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">활성</span>;
+      };
+
+      if (loading) return <div className="text-center py-4 text-text-secondary text-sm">로딩...</div>;
+
+      return (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-white mb-2">OCR 엔진 우선순위</h3>
+          <p className="text-xs text-text-secondary mb-3">이미지 업로드 시 위에서 아래 순서로 시도합니다. 실패하면 자동으로 다음 엔진으로 넘어갑니다.</p>
+
+          <div className="space-y-2">
+            {engines.map((engine, index) => (
+              <div
+                key={engine.engine_id}
+                className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
+                  engine.is_enabled && engine.is_available
+                    ? 'bg-card-bg border-border'
+                    : 'bg-card-bg/50 border-border/50 opacity-60'
+                }`}
+              >
+                {/* 순번 */}
+                <span className="text-xs font-bold text-primary w-5 text-center">{index + 1}</span>
+
+                {/* 엔진 정보 */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium text-white truncate">{engine.name}</span>
+                    {engine.free && <span className="text-[10px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-400">무료</span>}
+                    {statusBadge(engine)}
+                  </div>
+                  <p className="text-[11px] text-text-secondary truncate">{engine.description}</p>
+                </div>
+
+                {/* 버튼 그룹 */}
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* 위로/아래로 */}
+                  <button
+                    onClick={() => handleMove(index, -1)}
+                    disabled={index === 0}
+                    className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 disabled:cursor-default text-xs"
+                    title="위로"
+                  >&#9650;</button>
+                  <button
+                    onClick={() => handleMove(index, 1)}
+                    disabled={index === engines.length - 1}
+                    className="w-6 h-6 flex items-center justify-center rounded text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 disabled:cursor-default text-xs"
+                    title="아래로"
+                  >&#9660;</button>
+
+                  {/* 활성/비활성 토글 */}
+                  <button
+                    onClick={() => handleToggle(engine.engine_id, engine.is_enabled)}
+                    disabled={actionLoading === `toggle-${engine.engine_id}`}
+                    className={`w-8 h-5 rounded-full transition-colors relative ${engine.is_enabled ? 'bg-green-500' : 'bg-gray-600'}`}
+                  >
+                    <span className={`absolute w-3.5 h-3.5 rounded-full bg-white top-[3px] transition-transform ${engine.is_enabled ? 'right-[3px]' : 'left-[3px]'}`} />
+                  </button>
+
+                  {/* 테스트 */}
+                  {engine.is_available && (
+                    <button
+                      onClick={() => handleTest(engine.engine_id)}
+                      disabled={!!actionLoading}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-border text-text-secondary hover:text-white hover:border-primary transition-colors disabled:opacity-30"
+                    >
+                      {actionLoading === `test-${engine.engine_id}` ? '...' : '테스트'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 환경변수 안내 */}
+          <div className="mt-3 p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20">
+            <p className="text-[11px] text-blue-400 font-medium mb-1">환경변수 설정 필요</p>
+            <div className="text-[10px] text-text-secondary space-y-0.5">
+              {engines.filter(e => !e.is_available).map(e => (
+                <div key={e.engine_id}>{e.name}: <code className="text-blue-300">{e.envKey}</code></div>
+              ))}
+              {engines.every(e => e.is_available) && <div>모든 엔진의 API 키가 설정되어 있습니다.</div>}
+            </div>
+          </div>
         </div>
       );
     }

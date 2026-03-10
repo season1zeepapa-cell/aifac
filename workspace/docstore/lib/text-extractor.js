@@ -372,7 +372,7 @@ function extractJson(buffer, options = {}) {
 }
 
 /**
- * OCR 프롬프트 생성
+ * OCR 프롬프트 생성 (플러그인에서도 사용)
  */
 function getOcrPrompt(contentType) {
   if (contentType === 'table') {
@@ -384,102 +384,27 @@ function getOcrPrompt(contentType) {
 }
 
 /**
- * Gemini로 이미지 OCR (폴백용)
- */
-async function ocrWithGemini(base64, mimetype, prompt) {
-  const https = require('https');
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY가 설정되지 않았습니다.');
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-  const body = JSON.stringify({
-    contents: [{
-      parts: [
-        { inline_data: { mime_type: mimetype, data: base64 } },
-        { text: prompt },
-      ],
-    }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
-  });
-
-  return new Promise((resolve, reject) => {
-    const req = https.request(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 30000,
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          resolve(text.trim());
-        } catch {
-          reject(new Error('Gemini 응답 파싱 실패'));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-/**
- * 이미지 OCR — Claude 우선, 실패 시 Gemini 자동 폴백
- * 토큰 소진 감지 + API 사용량 추적 포함
+ * 이미지 OCR — OCR 엔진 매니저에 위임
+ * 우선순위대로 시도하고 실패 시 자동 폴백
  */
 async function extractImage(buffer, options = {}) {
   const { mimetype = 'image/jpeg', contentType = 'general' } = options;
-
   const base64 = buffer.toString('base64');
   const mediaType = mimetype.startsWith('image/') ? mimetype : 'image/jpeg';
   const prompt = getOcrPrompt(contentType);
 
-  // 1차 시도: Claude Sonnet (전체를 try/catch로 감싸 어떤 에러든 Gemini로 넘어감)
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    try {
-      const Anthropic = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk');
-      const claude = new Anthropic({ apiKey: anthropicKey });
-      const response = await claude.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-            { type: 'text', text: prompt },
-          ],
-        }],
-      });
-      const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-      if (text) {
-        return {
-          sections: [{ sectionType: 'ocr', sectionIndex: 0, text, metadata: { method: 'claude-ocr', contentType } }],
-          totalItems: 1,
-        };
-      }
-    } catch (claudeErr) {
-      console.warn('[OCR] Claude 실패 → Gemini 폴백:', claudeErr.message?.substring(0, 100));
-    }
-  }
+  const { runOcr } = require('./ocr');
+  const { text, engine, fallbackUsed } = await runOcr(base64, mediaType, prompt);
 
-  // 2차 시도: Gemini 폴백 (직접 호출 — tracker 의존성 제거)
-  try {
-    const text = await ocrWithGemini(base64, mediaType, prompt);
-    if (text) {
-      return {
-        sections: [{ sectionType: 'ocr', sectionIndex: 0, text, metadata: { method: 'gemini-ocr', contentType, fallback: true } }],
-        totalItems: 1,
-      };
-    }
-  } catch (geminiErr) {
-    console.error('[OCR] Gemini도 실패:', geminiErr.message);
-  }
-
-  throw new Error('이미지 OCR 실패: Claude, Gemini 모두 사용할 수 없습니다.');
+  return {
+    sections: [{
+      sectionType: 'ocr',
+      sectionIndex: 0,
+      text,
+      metadata: { method: `${engine}-ocr`, contentType, fallback: fallbackUsed },
+    }],
+    totalItems: 1,
+  };
 }
 
 /**
@@ -513,6 +438,7 @@ async function extractFromFile(buffer, fileType, options = {}) {
 module.exports = {
   detectFileType,
   extractFromFile,
+  getOcrPrompt,
   ACCEPTED_EXTENSIONS,
   EXTENSION_MAP,
   MIME_MAP,

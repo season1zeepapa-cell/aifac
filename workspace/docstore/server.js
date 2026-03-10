@@ -48,6 +48,11 @@ app.post('/api/summary', (req, res) => summaryHandler(req, res));
 const urlImportHandler = require('./api/url-import');
 app.post('/api/url-import', (req, res) => urlImportHandler(req, res));
 
+// ── /api/ocr-settings (GET, POST) ───────────────────
+const ocrSettingsHandler = require('./api/ocr-settings');
+app.get('/api/ocr-settings', (req, res) => ocrSettingsHandler(req, res));
+app.post('/api/ocr-settings', (req, res) => ocrSettingsHandler(req, res));
+
 // ── /api/api-usage (GET, POST) ──────────────────────
 const apiUsageHandler = require('./api/api-usage');
 app.get('/api/api-usage', (req, res) => apiUsageHandler(req, res));
