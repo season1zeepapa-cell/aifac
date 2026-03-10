@@ -1,18 +1,18 @@
 // RAG (Retrieval-Augmented Generation) 질의응답 API
 // POST /api/rag
-// { question: "개인정보 수집 동의는 어떻게 받아야 하나요?", topK: 5 }
+// { question: "...", topK: 5, provider: "gemini"|"openai"|"claude" }
 //
 // 처리 흐름:
 // 1) 질문을 벡터로 변환
 // 2) 유사도 높은 조문/청크 topK개 검색
-// 3) 검색 결과를 컨텍스트로 Gemini에 전달
+// 3) 검색 결과를 컨텍스트로 선택된 LLM에 전달
 // 4) 근거 조문과 함께 답변 생성
 const { query } = require('../lib/db');
 const { generateEmbedding } = require('../lib/embeddings');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
-const { callGemini } = require('../lib/gemini');
+const { callLLM, getAvailableProviders } = require('../lib/gemini');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
@@ -24,19 +24,14 @@ module.exports = async (req, res) => {
 
   if (checkRateLimit(req, res, 'rag')) return;
 
-  const { question, topK = 5, docId } = req.body;
+  const { question, topK = 5, docId, provider = 'gemini' } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
   }
 
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다.' });
-  }
-
   try {
     // 1) 질문을 벡터로 변환
-    console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..."`);
+    console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..." (${provider})`);
     const embedding = await generateEmbedding(question.trim());
     const vecStr = `[${embedding.join(',')}]`;
 
@@ -47,10 +42,10 @@ module.exports = async (req, res) => {
 
     if (docId) {
       filterClause += ` AND ds.document_id = $${paramIdx}`;
-      params.push(parseInt(docId));
+      params.push(parseInt(docId, 10));
       paramIdx++;
     }
-    params.push(Math.min(parseInt(topK) || 5, 10));
+    params.push(Math.min(parseInt(topK, 10) || 5, 10));
 
     const searchResult = await query(
       `SELECT
@@ -88,10 +83,11 @@ module.exports = async (req, res) => {
         question: question.trim(),
         answer: '관련된 문서를 찾을 수 없습니다. 먼저 관련 법령이나 문서를 임포트해주세요.',
         sources: [],
+        provider,
       });
     }
 
-    // 3) Gemini에 컨텍스트와 함께 질문
+    // 3) 선택된 LLM에 컨텍스트와 함께 질문
     const contextText = sources.map((s, i) => {
       const header = s.label || `${s.documentTitle} - ${s.category}`;
       return `[근거 ${i + 1}] ${header}\n${s.text}`;
@@ -112,13 +108,14 @@ ${contextText}
 --- 질문 ---
 ${question.trim()}`;
 
-    const answer = await callGemini(prompt, { apiKey, temperature: 0.3, maxTokens: 2048 });
-    console.log(`[RAG] 답변 생성 완료 (${answer.length}자)`);
+    const answer = await callLLM(prompt, { provider, temperature: 0.3, maxTokens: 2048 });
+    console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자)`);
 
     // 4) 응답
     res.json({
       question: question.trim(),
       answer,
+      provider,
       sources: sources.map(s => ({
         documentTitle: s.documentTitle,
         label: s.label,

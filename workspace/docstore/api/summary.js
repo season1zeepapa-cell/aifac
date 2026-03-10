@@ -1,17 +1,17 @@
 // 조문/섹션별 AI 요약 생성 API
 // POST /api/summary
-// { sectionId: 123 }        → 단일 섹션 요약
-// { documentId: 5 }         → 문서 전체 섹션 일괄 요약
+// { sectionId: 123, provider: "gemini" }  → 단일 섹션 요약
+// { documentId: 5, provider: "openai" }   → 문서 전체 섹션 일괄 요약
 //
 // 요약 결과는 document_sections.metadata.summary에 캐싱
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
-const { callGemini } = require('../lib/gemini');
+const { callLLM } = require('../lib/gemini');
 
 // 섹션 1개 요약 생성
-async function summarizeSection(section, apiKey) {
+async function summarizeSection(section, options = {}) {
   const text = section.raw_text || '';
   if (text.trim().length < 20) return '(내용이 짧아 요약 불필요)';
 
@@ -22,7 +22,7 @@ async function summarizeSection(section, apiKey) {
 
 ${label ? `[조문] ${label}\n` : ''}${text.substring(0, 2000)}`;
 
-  return callGemini(prompt, { apiKey, maxTokens: 256, timeout: 15000 });
+  return callLLM(prompt, { ...options, maxTokens: 256, timeout: 15000 });
 }
 
 module.exports = async (req, res) => {
@@ -35,9 +35,8 @@ module.exports = async (req, res) => {
 
   if (checkRateLimit(req, res, 'summary')) return;
 
-  const { sectionId, documentId } = req.body;
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다.' });
+  const { sectionId, documentId, provider = 'gemini' } = req.body;
+  const llmOptions = { provider };
 
   try {
     // ── 단일 섹션 요약 ──
@@ -55,11 +54,11 @@ module.exports = async (req, res) => {
 
       // 이미 요약이 있으면 캐시 반환
       if (meta.summary) {
-        return res.json({ sectionId, summary: meta.summary, cached: true });
+        return res.json({ sectionId, summary: meta.summary, cached: true, provider });
       }
 
       // 요약 생성
-      const summary = await summarizeSection(section, apiKey);
+      const summary = await summarizeSection(section, llmOptions);
 
       // metadata에 캐싱
       meta.summary = summary;
@@ -68,7 +67,7 @@ module.exports = async (req, res) => {
         [JSON.stringify(meta), sectionId]
       );
 
-      return res.json({ sectionId, summary, cached: false });
+      return res.json({ sectionId, summary, cached: false, provider });
     }
 
     // ── 문서 전체 일괄 요약 ──
@@ -93,7 +92,7 @@ module.exports = async (req, res) => {
         }
 
         try {
-          const summary = await summarizeSection(section, apiKey);
+          const summary = await summarizeSection(section, llmOptions);
           meta.summary = summary;
           await query(
             'UPDATE document_sections SET metadata = $1 WHERE id = $2',
@@ -101,17 +100,17 @@ module.exports = async (req, res) => {
           );
           generated++;
         } catch (err) {
-          console.error(`[Summary] 섹션 ${section.id} 요약 실패:`, err.message);
-          // 실패해도 계속 진행
+          console.error(`[Summary] 섹션 ${section.id} 요약 실패 (${provider}):`, err.message);
         }
       }
 
-      console.log(`[Summary] 문서 ${documentId}: ${generated}개 생성, ${skipped}개 캐시`);
+      console.log(`[Summary] 문서 ${documentId} (${provider}): ${generated}개 생성, ${skipped}개 캐시`);
       return res.json({
         documentId,
         total: sections.rows.length,
         generated,
         skipped,
+        provider,
       });
     }
 

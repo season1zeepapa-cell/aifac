@@ -1116,6 +1116,8 @@
       const [summaries, setSummaries] = useState({}); // sectionId → summary
       const [summarizing, setSummarizing] = useState({}); // sectionId → true (로딩)
       const [bulkSummarizing, setBulkSummarizing] = useState(false);
+      const [summaryProvider, setSummaryProvider] = useState('gemini');
+      const [summaryProviders, setSummaryProviders] = useState([]);
       // 태그 관리
       const [newTagName, setNewTagName] = useState('');
       const [tagLoading, setTagLoading] = useState(false);
@@ -1139,6 +1141,11 @@
           .then(setData)
           .catch(err => setError(err.message))
           .finally(() => setLoading(false));
+        // LLM 프로바이더 목록 로드
+        authFetch(`${API_BASE_URL}/api-usage?type=llm`)
+          .then(r => r.json())
+          .then(d => { if (d.providers) setSummaryProviders(d.providers); })
+          .catch(() => {});
       }, [isOpen, documentId]);
 
       // 이미지 미리보기 로드 (인증 헤더 포함)
@@ -1221,7 +1228,7 @@
           const res = await authFetch(`${API_BASE_URL}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sectionId }),
+            body: JSON.stringify({ sectionId, provider: summaryProvider }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || '요약 실패');
@@ -1241,7 +1248,7 @@
           const res = await authFetch(`${API_BASE_URL}/summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId }),
+            body: JSON.stringify({ documentId, provider: summaryProvider }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || '일괄 요약 실패');
@@ -1262,7 +1269,7 @@
         } finally {
           setBulkSummarizing(false);
         }
-      }, [documentId]);
+      }, [documentId, summaryProvider]);
 
       // 데이터 로드 시 기존 요약 캐시 반영
       useEffect(() => {
@@ -1478,7 +1485,25 @@
                   <span>{sections.length}개 섹션</span>
                   {doc.file_size > 0 && <span>{formatFileSize(doc.file_size)}</span>}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* LLM 프로바이더 선택 */}
+                  {summaryProviders.length > 0 && (
+                    <div className="flex items-center gap-1 mr-1">
+                      {summaryProviders.map(p => {
+                        const colors = { gemini: 'blue', openai: 'emerald', claude: 'orange' };
+                        const c = colors[p.id] || 'gray';
+                        const active = summaryProvider === p.id;
+                        return (
+                          <button key={p.id} onClick={() => setSummaryProvider(p.id)}
+                            className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${active
+                              ? `bg-${c}-500 text-white shadow-sm`
+                              : `bg-${c}-50 text-${c}-600 hover:bg-${c}-100`}`}>
+                            {p.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   {hasGroups && (
                     <Button variant="ghost" size="sm" onClick={toggleAll}>
                       {allExpanded ? '전체 접기' : '전체 펼치기'}
@@ -2030,6 +2055,9 @@
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       const [ragResult, setRagResult] = useState(null);
+      // LLM 프로바이더 선택
+      const [llmProvider, setLlmProvider] = useState('gemini');
+      const [llmProviders, setLlmProviders] = useState([]);
       // 필터
       const [filterDocId, setFilterDocId] = useState('');
       const [filterChapter, setFilterChapter] = useState('');
@@ -2038,11 +2066,15 @@
       // 검색 결과에서 문서 상세 이동
       const [selectedDocId, setSelectedDocId] = useState(null);
 
-      // 문서 목록 불러오기 (필터 드롭다운용)
+      // 문서 목록 + LLM 프로바이더 목록 불러오기
       useEffect(() => {
         authFetch(`${API_BASE_URL}/documents`)
           .then(r => r.json())
           .then(data => setDocList(Array.isArray(data) ? data : data.documents || []))
+          .catch(() => {});
+        authFetch(`${API_BASE_URL}/api-usage?type=llm`)
+          .then(r => r.json())
+          .then(data => { if (data.providers) setLlmProviders(data.providers); })
           .catch(() => {});
       }, []);
 
@@ -2056,7 +2088,7 @@
 
         try {
           if (searchType === 'rag') {
-            const body = { question: searchQuery.trim(), topK: 5 };
+            const body = { question: searchQuery.trim(), topK: 5, provider: llmProvider };
             if (filterDocId) body.docId = filterDocId;
             const res = await authFetch(`${API_BASE_URL}/rag`, {
               method: 'POST',
@@ -2199,12 +2231,36 @@
                 </div>
               )}
 
+              {/* AI 질의 모드: LLM 프로바이더 선택 */}
+              {searchType === 'rag' && llmProviders.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-text-secondary">AI 모델:</span>
+                  {llmProviders.map(p => (
+                    <button key={p.id}
+                      onClick={() => setLlmProvider(p.id)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        llmProvider === p.id
+                          ? p.id === 'gemini' ? 'bg-blue-500 text-white'
+                            : p.id === 'openai' ? 'bg-green-500 text-white'
+                            : 'bg-orange-500 text-white'
+                          : 'bg-border text-text-secondary hover:text-text'
+                      }`}
+                    >
+                      {p.name}
+                      {p.free && <span className="ml-1 opacity-70">(무료)</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <p className="text-xs text-text-secondary">
                 {searchType === 'text'
                   ? '입력한 단어가 포함된 문서를 검색합니다.'
                   : searchType === 'vector'
                   ? '입력한 내용과 의미가 유사한 문서를 검색합니다.'
-                  : '질문을 입력하면 관련 법령/문서를 찾아 AI가 답변합니다.'}
+                  : `질문을 입력하면 관련 법령/문서를 찾아 ${
+                      llmProviders.find(p => p.id === llmProvider)?.name || 'AI'
+                    }가 답변합니다.`}
               </p>
             </div>
           </Card>
@@ -2276,6 +2332,17 @@
                   <div className="flex items-center gap-2">
                     <span className="text-primary font-bold text-sm">AI 답변</span>
                     <Badge color="primary">RAG</Badge>
+                    {ragResult.provider && (
+                      <Badge color={
+                        ragResult.provider === 'gemini' ? 'blue'
+                        : ragResult.provider === 'openai' ? 'green'
+                        : 'yellow'
+                      }>
+                        {ragResult.provider === 'gemini' ? 'Gemini'
+                         : ragResult.provider === 'openai' ? 'OpenAI'
+                         : 'Claude'}
+                      </Badge>
+                    )}
                   </div>
                   <div
                     className="text-sm text-text leading-relaxed markdown-body"

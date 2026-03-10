@@ -24,6 +24,12 @@ module.exports = async function handler(req, res) {
         return res.json({ engines });
       }
 
+      // LLM 프로바이더 목록 조회
+      if (req.query.type === 'llm') {
+        const { getAvailableProviders } = require('../lib/gemini');
+        return res.json({ providers: getAvailableProviders() });
+      }
+
       const { range = 'today' } = req.query;
 
       // 1) 키 상태 조회 (upstage 행 자동 생성)
