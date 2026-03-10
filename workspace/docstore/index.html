@@ -2302,8 +2302,8 @@
         } finally { setActionLoading(null); }
       }, []);
 
-      const providerLabels = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini' };
-      const providerColors = { openai: 'green', anthropic: 'yellow', gemini: 'primary' };
+      const providerLabels = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini', upstage: 'Upstage' };
+      const providerColors = { openai: 'green', anthropic: 'yellow', gemini: 'primary', upstage: 'blue' };
 
       if (loading && !data) {
         return (

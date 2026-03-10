@@ -2,6 +2,7 @@
 // GET /api/api-usage — 사용량 통계 + 키 상태
 // GET /api/api-usage?type=ocr — OCR 엔진 설정 조회
 // POST /api/api-usage — 키/OCR 설정 변경
+const https = require('https');
 const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -25,7 +26,11 @@ module.exports = async function handler(req, res) {
 
       const { range = 'today' } = req.query;
 
-      // 1) 키 상태 조회
+      // 1) 키 상태 조회 (upstage 행 자동 생성)
+      await query(`
+        INSERT INTO api_key_status (provider, daily_limit) VALUES ('upstage', 100)
+        ON CONFLICT (provider) DO NOTHING
+      `);
       const keyStatus = await query('SELECT * FROM api_key_status ORDER BY provider');
 
       // 키 설정 여부 확인 (환경변수에 있는지)
@@ -33,6 +38,7 @@ module.exports = async function handler(req, res) {
         openai: !!process.env.OPENAI_API_KEY,
         anthropic: !!process.env.ANTHROPIC_API_KEY,
         gemini: !!process.env.GEMINI_API_KEY,
+        upstage: !!process.env.UPSTAGE_API_KEY,
       };
 
       // 2) 사용량 기간 설정
@@ -159,6 +165,35 @@ module.exports = async function handler(req, res) {
                 r.on('end', () => r.statusCode === 200 ? resolve() : reject(new Error(`HTTP ${r.statusCode}: ${d.substring(0, 200)}`)));
               }).on('error', reject);
             });
+          } else if (provider === 'upstage' && process.env.UPSTAGE_API_KEY) {
+            // Upstage OCR API 간단 테스트
+            await new Promise((resolve, reject) => {
+              const testReq = https.request({
+                hostname: 'api.upstage.ai',
+                path: '/v1/document-digitization',
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${process.env.UPSTAGE_API_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                timeout: 10000,
+              }, (r) => {
+                let d = '';
+                r.on('data', c => d += c);
+                r.on('end', () => {
+                  // 400 = 파일 없음 (키는 유효), 401 = 키 무효
+                  if (r.statusCode === 401 || r.statusCode === 403) {
+                    reject(new Error('API 키가 유효하지 않습니다.'));
+                  } else {
+                    resolve(); // 400도 키 자체는 유효
+                  }
+                });
+              });
+              testReq.on('error', reject);
+              testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
+              testReq.write('{}');
+              testReq.end();
+            });
           } else {
             return res.json({ success: false, message: `${provider} API 키가 설정되지 않았습니다.` });
           }
@@ -266,12 +301,10 @@ async function ensureOcrTable() {
       )
     `);
     const defaults = [
-      ['gemini-vision', 'Gemini Vision', 'gemini', true, 1],
-      ['naver-clova', 'Naver CLOVA OCR', 'naver', true, 2],
-      ['google-vision', 'Google Cloud Vision', 'google-vision', true, 3],
-      ['claude-vision', 'Claude Vision', 'anthropic', true, 4],
-      ['aws-textract', 'AWS Textract', 'aws', true, 5],
-      ['ocr-space', 'OCR.space (무료)', 'ocr-space', true, 6],
+      ['upstage-ocr', 'Upstage OCR', 'upstage', true, 1],
+      ['gemini-vision', 'Gemini Vision', 'gemini', true, 2],
+      ['claude-vision', 'Claude Vision', 'anthropic', true, 3],
+      ['openai-vision', 'OpenAI Vision', 'openai', true, 4],
     ];
     for (const [id, name, provider, enabled, order] of defaults) {
       await query(
