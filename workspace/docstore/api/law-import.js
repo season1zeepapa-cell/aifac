@@ -8,6 +8,7 @@ const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { sendError } = require('../lib/error-handler');
+const { buildExplicitCrossRefs, buildSemanticCrossRefs } = require('../lib/cross-reference');
 
 /**
  * 조문 텍스트에서 다른 조문 참조를 추출
@@ -159,6 +160,19 @@ module.exports = async (req, res) => {
     // 6) 임베딩 생성
     const embeddingResult = await createEmbeddingsForDocument({ query: dbQuery }, documentId, 'Law Import');
 
+    // 7) 교차 참조 매트릭스 구축 (비동기 — 응답 차단 없이 백그라운드 실행)
+    let crossRefResult = null;
+    try {
+      const explicit = await buildExplicitCrossRefs(dbQuery, documentId);
+      console.log(`[Law Import] 명시적 교차 참조: ${explicit.found}건 감지, ${explicit.saved}건 저장`);
+      // 시맨틱 교차 참조는 임베딩이 필요하므로 임베딩 생성 후 실행
+      const semantic = await buildSemanticCrossRefs(dbQuery, documentId, { threshold: 0.85 });
+      console.log(`[Law Import] 시맨틱 교차 참조: ${semantic.found}건 감지, ${semantic.saved}건 저장`);
+      crossRefResult = { explicit, semantic };
+    } catch (crErr) {
+      console.warn(`[Law Import] 교차 참조 구축 실패 (무시):`, crErr.message);
+    }
+
     res.json({
       success: true,
       documentId,
@@ -166,6 +180,7 @@ module.exports = async (req, res) => {
       articleCount: articles.length,
       info,
       embedding: embeddingResult,
+      crossReferences: crossRefResult,
     });
   } catch (err) {
     sendError(res, err, '[Law Import]');

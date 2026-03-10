@@ -58,7 +58,20 @@ async function multiHopSearch(dbQuery, question, options = {}) {
   // ── 참조 추출 ──
   const crossRefs = extractCrossReferences(hop1Chunks);
 
-  if (crossRefs.length === 0) {
+  // ── DB 교차 참조 테이블에서 관련 섹션 가져오기 ──
+  const hop1SectionIds = hop1Chunks
+    .map(c => c.chunk_id)
+    .filter(Boolean);
+  let dbCrossRefChunks = [];
+  if (hop1SectionIds.length > 0) {
+    try {
+      dbCrossRefChunks = await fetchCrossRefChunks(dbQuery, hop1Chunks);
+    } catch (err) {
+      console.warn('[RAG Agent] 교차 참조 테이블 조회 실패:', err.message);
+    }
+  }
+
+  if (crossRefs.length === 0 && dbCrossRefChunks.length === 0) {
     // 참조가 없으면 1차 결과만 반환
     return { sources: formatSources(hop1Chunks), hops: 1 };
   }
@@ -81,8 +94,8 @@ async function multiHopSearch(dbQuery, question, options = {}) {
     }
   }
 
-  // ── 병합 + 중복 제거 + 재순위화 ──
-  const merged = deduplicateAndRank([...hop1Chunks, ...hop2Chunks], topK + 3);
+  // ── 병합 + 중복 제거 + 재순위화 (DB 교차 참조 결과 포함) ──
+  const merged = deduplicateAndRank([...hop1Chunks, ...hop2Chunks, ...dbCrossRefChunks], topK + 3);
 
   return {
     sources: formatSources(merged),
@@ -166,6 +179,59 @@ function formatSources(chunks) {
       similarity: parseFloat(row.similarity).toFixed(4),
     };
   });
+}
+
+/**
+ * 교차 참조 테이블에서 관련 청크를 가져오기
+ * 1차 검색 결과의 섹션들과 교차 참조 관계에 있는 타 문서 섹션의 청크 반환
+ */
+async function fetchCrossRefChunks(dbQuery, hop1Chunks) {
+  // 1차 결과에서 섹션 ID 추출 (section_id가 없으면 document_id 기반으로 조회)
+  const docIds = [...new Set(hop1Chunks.map(c => c.document_id).filter(Boolean))];
+  if (docIds.length === 0) return [];
+
+  // 교차 참조 테이블에서 관련 타 문서 섹션 찾기
+  const crossRefResult = await dbQuery(
+    `SELECT DISTINCT
+       ts.id AS section_id,
+       cr.relation_type,
+       cr.confidence
+     FROM cross_references cr
+     JOIN document_sections ts ON cr.target_section_id = ts.id
+     WHERE cr.source_document_id = ANY($1)
+       AND cr.target_document_id != ALL($1)
+       AND cr.confidence >= 0.8
+     ORDER BY cr.confidence DESC
+     LIMIT 5`,
+    [docIds]
+  );
+
+  if (crossRefResult.rows.length === 0) return [];
+
+  const sectionIds = crossRefResult.rows.map(r => r.section_id);
+
+  // 해당 섹션들의 청크 가져오기
+  const chunkResult = await dbQuery(
+    `SELECT
+       dc.id AS chunk_id,
+       dc.chunk_text,
+       ds.section_type,
+       ds.metadata AS section_metadata,
+       ds.document_id,
+       d.title AS document_title,
+       d.category,
+       0.75 AS similarity
+     FROM document_chunks dc
+     JOIN document_sections ds ON dc.section_id = ds.id
+     JOIN documents d ON ds.document_id = d.id
+     WHERE ds.id = ANY($1)
+       AND dc.chunk_text IS NOT NULL
+     ORDER BY dc.chunk_index
+     LIMIT 5`,
+    [sectionIds]
+  );
+
+  return chunkResult.rows;
 }
 
 module.exports = { multiHopSearch, extractCrossReferences };

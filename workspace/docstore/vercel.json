@@ -14,7 +14,8 @@
     "api/ocr.js": { "maxDuration": 60 },
     "api/documents.js": { "maxDuration": 300 },
     "api/api-usage.js": { "maxDuration": 30 },
-    "api/login.js": { "maxDuration": 10 }
+    "api/login.js": { "maxDuration": 10 },
+    "api/cross-references.js": { "maxDuration": 120 }
   },
   "headers": [
     {

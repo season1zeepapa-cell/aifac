@@ -70,6 +70,11 @@ app.post('/api/api-usage', (req, res) => apiUsageHandler(req, res));
 const lawGraphHandler = require('./api/law-graph');
 app.get('/api/law-graph', (req, res) => lawGraphHandler(req, res));
 
+// ── /api/cross-references (GET, POST) — 교차 참조 매트릭스 ──
+const crossRefHandler = require('./api/cross-references');
+app.get('/api/cross-references', (req, res) => crossRefHandler(req, res));
+app.post('/api/cross-references', (req, res) => crossRefHandler(req, res));
+
 // ── /api/deidentify (GET, POST) — 비식별화 키워드 관리 ──
 const deidentifyHandler = require('./api/deidentify');
 app.get('/api/deidentify', (req, res) => deidentifyHandler(req, res));

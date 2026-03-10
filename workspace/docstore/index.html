@@ -2083,6 +2083,7 @@
                   {[
                     { id: 'sections', label: '조문 목록' },
                     { id: 'graph', label: '참조 그래프' },
+                    { id: 'crossref', label: '교차 참조' },
                   ].map(tab => (
                     <button
                       key={tab.id}
@@ -2100,6 +2101,11 @@
               {/* 참조 그래프 탭 */}
               {doc.file_type === 'law' && detailTab === 'graph' && (
                 <LawGraphView documentId={documentId} scrollToArticle={(ref) => { setDetailTab('sections'); scrollToArticle(ref); }} />
+              )}
+
+              {/* 교차 참조 탭 */}
+              {doc.file_type === 'law' && detailTab === 'crossref' && (
+                <CrossRefView documentId={documentId} docTitle={doc.title} />
               )}
 
               {/* 섹션 목록 */}
@@ -2484,6 +2490,140 @@
             </Card>
           )}
         </div>
+      );
+    }
+
+    // ========================================
+    // 교차 참조 뷰 (문서 간 참조 관계)
+    // ========================================
+    function CrossRefView({ documentId, docTitle }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [building, setBuilding] = useState(false);
+
+      // 교차 참조 데이터 로드
+      const fetchCrossRefs = useCallback(async () => {
+        setLoading(true);
+        try {
+          const resp = await fetch(`/api/cross-references?docId=${documentId}`, {
+            headers: { 'Authorization': `Bearer ${authToken}` },
+          });
+          if (!resp.ok) throw new Error('조회 실패');
+          setData(await resp.json());
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [documentId]);
+
+      useEffect(() => { fetchCrossRefs(); }, [fetchCrossRefs]);
+
+      // 교차 참조 구축 트리거
+      const handleBuild = useCallback(async (type) => {
+        setBuilding(true);
+        try {
+          const resp = await fetch('/api/cross-references', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+            body: JSON.stringify({ docId: documentId, type }),
+          });
+          if (!resp.ok) throw new Error('구축 실패');
+          const result = await resp.json();
+          alert(`교차 참조 구축 완료!\n${JSON.stringify(result.results, null, 2)}`);
+          fetchCrossRefs(); // 새로고침
+        } catch (e) {
+          alert('교차 참조 구축 실패: ' + e.message);
+        } finally {
+          setBuilding(false);
+        }
+      }, [documentId, fetchCrossRefs]);
+
+      // 관계 유형별 색상
+      const typeColors = {
+        explicit: 'primary', '준용': 'yellow', '적용': 'green', '예외': 'red',
+        '의거': 'blue', '위반': 'red', semantic: 'purple',
+      };
+
+      if (loading) return React.createElement('div', { className: 'flex justify-center py-8' },
+        React.createElement('div', { className: 'animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full' })
+      );
+
+      if (error) return React.createElement('div', { className: 'text-center py-8 text-red-500 text-sm' }, error);
+
+      const refs = data?.references || [];
+      const stats = data?.stats || {};
+
+      return React.createElement('div', { className: 'space-y-4 p-2' },
+        // 헤더 + 구축 버튼
+        React.createElement('div', { className: 'flex items-center justify-between' },
+          React.createElement('div', null,
+            React.createElement('h3', { className: 'text-sm font-semibold text-text' }, '문서 간 교차 참조'),
+            React.createElement('p', { className: 'text-xs text-text-secondary mt-0.5' },
+              `${stats.total || 0}건 (명시적 ${stats.explicit || 0} / 시맨틱 ${stats.semantic || 0})`
+            ),
+          ),
+          React.createElement('div', { className: 'flex gap-1' },
+            React.createElement('button', {
+              onClick: () => handleBuild('explicit'),
+              disabled: building,
+              className: 'px-2 py-1 text-[10px] font-medium bg-primary/10 text-primary rounded hover:bg-primary/20 disabled:opacity-50',
+            }, building ? '구축중...' : '명시적 구축'),
+            React.createElement('button', {
+              onClick: () => handleBuild('semantic'),
+              disabled: building,
+              className: 'px-2 py-1 text-[10px] font-medium bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50',
+            }, building ? '구축중...' : '시맨틱 구축'),
+          ),
+        ),
+
+        // 관련 문서 요약
+        stats.relatedDocs?.length > 0 && React.createElement('div', { className: 'flex flex-wrap gap-1' },
+          stats.relatedDocs.map((title, i) =>
+            React.createElement(Badge, { key: i, color: 'gray' }, title)
+          )
+        ),
+
+        // 교차 참조 목록
+        refs.length === 0
+          ? React.createElement(EmptyState, {
+              icon: '🔗',
+              title: '교차 참조가 없습니다',
+              description: '위 버튼을 클릭하여 다른 법령과의 참조 관계를 구축하세요.',
+            })
+          : React.createElement('div', { className: 'space-y-2 max-h-96 overflow-y-auto' },
+              refs.map((ref, i) => {
+                const isSource = ref.source_document_id === documentId;
+                const otherDoc = isSource ? ref.target_doc_title : ref.source_doc_title;
+                const sourceMeta = ref.source_meta || {};
+                const targetMeta = ref.target_meta || {};
+                const sourceLabel = sourceMeta.label || `섹션 ${ref.source_section_id}`;
+                const targetLabel = targetMeta.label || `섹션 ${ref.target_section_id}`;
+
+                return React.createElement('div', {
+                  key: i,
+                  className: 'p-3 bg-card-bg border border-border rounded-lg hover:bg-card-bg-hover transition-colors',
+                },
+                  React.createElement('div', { className: 'flex items-center gap-2 flex-wrap' },
+                    React.createElement(Badge, { color: typeColors[ref.relation_type] || 'gray' }, ref.relation_type),
+                    React.createElement('span', { className: 'text-xs font-medium text-text' },
+                      isSource
+                        ? `${sourceLabel} → ${otherDoc} ${targetLabel}`
+                        : `${otherDoc} ${sourceLabel} → ${targetLabel}`
+                    ),
+                    React.createElement('span', { className: `text-[10px] px-1.5 py-0.5 rounded-full ${
+                      ref.confidence >= 0.9 ? 'bg-green-100 text-green-700' :
+                      ref.confidence >= 0.8 ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-gray-100 text-gray-600'
+                    }` }, `${(ref.confidence * 100).toFixed(0)}%`),
+                  ),
+                  ref.context && React.createElement('p', {
+                    className: 'text-[11px] text-text-secondary mt-1 leading-relaxed',
+                  }, ref.context),
+                );
+              })
+            ),
       );
     }
 
