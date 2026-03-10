@@ -2623,51 +2623,45 @@
                     {engines.map((engine, index) => (
                       <div key={engine.engine_id}
                         className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
-                          engine.is_enabled && engine.is_available ? 'bg-white border-border shadow-sm' : 'bg-gray-50 border-border/50 opacity-60'
+                          engine.is_enabled && engine.is_available
+                            ? 'bg-white border-border shadow-sm'
+                            : !engine.is_available
+                              ? 'bg-gray-50 border-dashed border-gray-300'
+                              : 'bg-gray-50 border-border/50 opacity-70'
                         }`}
                       >
-                        <span className="text-sm font-bold text-primary w-6 text-center">{index + 1}</span>
+                        <span className={`text-sm font-bold w-6 text-center ${engine.is_available ? 'text-primary' : 'text-gray-300'}`}>{index + 1}</span>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-medium text-text truncate">{engine.name}</span>
-                            {engine.free && <span className="text-[10px] px-1 py-0.5 rounded bg-blue-50 text-blue-600">무료</span>}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-sm font-medium truncate ${engine.is_available ? 'text-text' : 'text-text-secondary'}`}>{engine.name}</span>
+                            {engine.free && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 font-medium">무료</span>}
                             {ocrStatusBadge(engine)}
                           </div>
                           <p className="text-[11px] text-text-secondary truncate">{engine.description}</p>
+                          {!engine.is_available && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">
+                              <code className="bg-amber-50 px-1 py-0.5 rounded">{engine.envKey}</code> 환경변수 설정이 필요합니다
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button onClick={() => handleOcrMove(index, -1)} disabled={index === 0}
-                            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 text-xs">&#9650;</button>
+                            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-primary hover:bg-gray-100 disabled:opacity-30 text-xs">&#9650;</button>
                           <button onClick={() => handleOcrMove(index, 1)} disabled={index === engines.length - 1}
-                            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-white hover:bg-border/50 disabled:opacity-30 text-xs">&#9660;</button>
+                            className="w-7 h-7 flex items-center justify-center rounded-md text-text-secondary hover:text-primary hover:bg-gray-100 disabled:opacity-30 text-xs">&#9660;</button>
                           <button onClick={() => handleOcrToggle(engine.engine_id, engine.is_enabled)}
                             disabled={actionLoading === `ocr-toggle-${engine.engine_id}`}
                             className={`w-9 h-5 rounded-full transition-colors relative ${engine.is_enabled ? 'bg-green-500' : 'bg-gray-300'}`}
                           ><span className={`absolute w-3.5 h-3.5 rounded-full bg-white top-[3px] transition-transform ${engine.is_enabled ? 'right-[3px]' : 'left-[3px]'}`} /></button>
                           {engine.is_available && (
                             <button onClick={() => handleOcrTest(engine.engine_id)} disabled={!!actionLoading}
-                              className="text-[10px] px-2 py-1 rounded-md border border-primary/30 text-primary hover:bg-primary/10 transition-colors disabled:opacity-30"
+                              className="text-[10px] px-2 py-1 rounded-md border border-primary/30 text-primary hover:bg-blue-50 transition-colors disabled:opacity-30"
                             >{actionLoading === `ocr-test-${engine.engine_id}` ? '...' : '테스트'}</button>
                           )}
                         </div>
                       </div>
                     ))}
                   </div>
-
-                  {/* 환경변수 안내 */}
-                  {engines.some(e => !e.is_available) && (
-                    <Card className="border-blue-200">
-                      <p className="text-xs text-blue-600 font-medium mb-2">환경변수 설정 필요</p>
-                      <div className="text-[11px] text-text-secondary space-y-1">
-                        {engines.filter(e => !e.is_available).map(e => (
-                          <div key={e.engine_id} className="flex items-center gap-2">
-                            <span className="text-text">{e.name}</span>
-                            <code className="text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">{e.envKey}</code>
-                          </div>
-                        ))}
-                      </div>
-                    </Card>
-                  )}
                 </>
               )}
             </div>

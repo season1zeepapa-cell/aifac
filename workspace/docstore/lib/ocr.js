@@ -19,7 +19,7 @@ const ALL_ENGINES = {
     description: '한국어 문서에 특화된 OCR 엔진 (표, 한글, 수식 인식 우수)',
     provider: 'upstage',
     envKey: 'UPSTAGE_API_KEY',
-    free: false,
+    free: true,
     isAvailable() { return !!process.env.UPSTAGE_API_KEY; },
     async execute(base64, mediaType, prompt) {
       // Upstage Document Digitization API 호출
@@ -301,20 +301,33 @@ async function getEngineConfig() {
 
 /**
  * 설정 UI용 엔진 목록 반환
+ * ALL_ENGINES에 정의된 모든 엔진을 항상 반환 (DB에 없어도 표시)
  * 각 엔진의 상태(사용 가능 여부, 활성/비활성, 우선순위)를 포함
  */
 async function getEngineList() {
-  const config = await getEngineConfig();
+  // DB에서 저장된 설정 조회
+  let dbConfig = [];
+  try {
+    const result = await query(
+      'SELECT engine_id, is_enabled, priority_order FROM ocr_engine_config ORDER BY priority_order'
+    );
+    dbConfig = result.rows || [];
+  } catch {
+    // 테이블 없음 — 무시
+  }
+
   const configMap = {};
-  for (const c of config) {
+  for (const c of dbConfig) {
     configMap[c.engine_id] = c;
   }
 
-  // 모든 엔진을 우선순위 순으로 정렬하여 반환
+  // ALL_ENGINES 기준으로 전체 목록 생성 (DB에 없는 엔진도 항상 포함)
   const engineIds = Object.keys(ALL_ENGINES);
+  const defaultOrders = { 'upstage-ocr': 1, 'gemini-vision': 2, 'claude-vision': 3, 'openai-vision': 4 };
+
   const result = engineIds.map(id => {
     const engine = ALL_ENGINES[id];
-    const conf = configMap[id] || { is_enabled: true, priority_order: 99 };
+    const conf = configMap[id] || { is_enabled: true, priority_order: defaultOrders[id] || 99 };
     return {
       engine_id: id,
       name: engine.name,
@@ -323,7 +336,7 @@ async function getEngineList() {
       envKey: engine.envKey,
       free: engine.free || false,
       is_available: engine.isAvailable(),
-      is_enabled: conf.is_enabled,
+      is_enabled: conf.is_enabled !== false,
       priority_order: conf.priority_order,
     };
   });
