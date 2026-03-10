@@ -1869,6 +1869,8 @@
       // 휴지통 모드 토글
       const [showTrash, setShowTrash] = useState(false);
       const [trashCount, setTrashCount] = useState(0);
+      // 페이징: 처음 5개만 보여주고 '더보기'로 추가 로드
+      const [visibleCount, setVisibleCount] = useState(5);
 
       // 문서 목록 불러오기
       const fetchDocuments = useCallback(async () => {
@@ -1902,6 +1904,7 @@
       }, []);
 
       useEffect(() => {
+        setVisibleCount(5); // 필터/모드 변경 시 페이징 초기화
         fetchDocuments();
       }, [fetchDocuments]);
 
@@ -2105,7 +2108,7 @@
           ) : (
             /* 문서 카드 목록 */
             <div className="space-y-3">
-              {documents.map(doc => (
+              {documents.slice(0, visibleCount).map(doc => (
                 <Card key={doc.id} hoverable={!showTrash} onClick={() => !showTrash && setSelectedDocId(doc.id)}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
@@ -2187,6 +2190,15 @@
                   </div>
                 </Card>
               ))}
+              {/* 더보기 버튼 */}
+              {documents.length > visibleCount && (
+                <button
+                  onClick={() => setVisibleCount(prev => prev + 5)}
+                  className="w-full py-2.5 text-sm text-primary hover:text-primary-hover bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                >
+                  더보기 ({visibleCount}/{documents.length}건)
+                </button>
+              )}
             </div>
           )}
 

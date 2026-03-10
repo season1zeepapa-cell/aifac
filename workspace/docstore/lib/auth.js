@@ -51,7 +51,10 @@ function verifyToken(token) {
     // 서명 검증
     const expectedSig = crypto.createHmac('sha256', TOKEN_SECRET).update(parts[0] + '.' + parts[1]).digest('base64')
       .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-    if (expectedSig !== parts[2]) return null;
+    // 타이밍 공격 방어: 일정 시간 비교 (길이가 다르면 즉시 거부)
+    const expectedBuf = Buffer.from(expectedSig);
+    const actualBuf = Buffer.from(parts[2]);
+    if (expectedBuf.length !== actualBuf.length || !crypto.timingSafeEqual(expectedBuf, actualBuf)) return null;
 
     const payload = JSON.parse(base64urlDecode(parts[1]));
 
@@ -71,14 +74,52 @@ function extractToken(req) {
   return null;
 }
 
-// 비밀번호 검증
+// ── 비밀번호 해싱 (scrypt — GPU brute-force 내성) ──
+// scrypt 파라미터: N=16384, r=8, p=1, keyLen=64
+const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, maxmem: 32 * 1024 * 1024 };
+const SCRYPT_KEYLEN = 64;
+
+/**
+ * 비밀번호를 scrypt로 해싱
+ * @returns {Promise<string>} "scrypt:salt:hash" 형식
+ */
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    crypto.scrypt(password, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS, (err, derived) => {
+      if (err) return reject(err);
+      resolve(`scrypt:${salt}:${derived.toString('hex')}`);
+    });
+  });
+}
+
+/**
+ * 비밀번호 검증 — 저장 형식에 따라 자동 분기
+ *   신규: "scrypt:salt:hash" → scrypt 검증
+ *   레거시: "salt:sha256hex" → SHA-256 검증 (하위 호환)
+ * @returns {Promise<boolean>}
+ */
 function verifyPassword(inputPassword, storedHash) {
+  // 신규 scrypt 형식
+  if (storedHash.startsWith('scrypt:')) {
+    const [, salt, hash] = storedHash.split(':');
+    return new Promise((resolve, reject) => {
+      crypto.scrypt(inputPassword, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS, (err, derived) => {
+        if (err) return reject(err);
+        const inputBuf = derived;
+        const storedBuf = Buffer.from(hash, 'hex');
+        if (inputBuf.length !== storedBuf.length) return resolve(false);
+        resolve(crypto.timingSafeEqual(inputBuf, storedBuf));
+      });
+    });
+  }
+  // 레거시 SHA-256 형식 (기존 사용자 하위 호환)
   const [salt, hash] = storedHash.split(':');
   const inputHash = crypto.createHash('sha256').update(salt + inputPassword).digest('hex');
   const inputBuf = Buffer.from(inputHash);
   const storedBuf = Buffer.from(hash);
-  if (inputBuf.length !== storedBuf.length) return false;
-  return crypto.timingSafeEqual(inputBuf, storedBuf);
+  if (inputBuf.length !== storedBuf.length) return Promise.resolve(false);
+  return Promise.resolve(crypto.timingSafeEqual(inputBuf, storedBuf));
 }
 
 /**
@@ -97,4 +138,4 @@ function requireAdmin(req) {
   return { user: payload, error: null };
 }
 
-module.exports = { signToken, verifyToken, extractToken, verifyPassword, requireAdmin, TOKEN_SECRET };
+module.exports = { signToken, verifyToken, extractToken, hashPassword, verifyPassword, requireAdmin, TOKEN_SECRET };

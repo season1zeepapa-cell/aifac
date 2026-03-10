@@ -2,8 +2,8 @@
 // workspace/error의 users 테이블을 공유하며, 관리자(is_admin)만 로그인 허용
 const { query } = require('../lib/db');
 const { verifyPassword, signToken, TOKEN_SECRET } = require('../lib/auth');
-
 const { setCors } = require('../lib/cors');
+const { checkRateLimit } = require('../lib/rate-limit');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
@@ -11,6 +11,9 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'POST 요청만 허용됩니다.' });
   }
+
+  // 브루트포스 방어: IP 기준 1분 5회 제한
+  if (checkRateLimit(req, res, 'login')) return;
 
   const { id, password } = req.body || {};
 
@@ -31,8 +34,8 @@ module.exports = async (req, res) => {
 
     const user = result.rows[0];
 
-    // 비밀번호 검증
-    if (!verifyPassword(password, user.password_hash)) {
+    // 비밀번호 검증 (scrypt 비동기)
+    if (!await verifyPassword(password, user.password_hash)) {
       return res.status(401).json({ error: '아이디 또는 비밀번호가 올바르지 않습니다.' });
     }
 

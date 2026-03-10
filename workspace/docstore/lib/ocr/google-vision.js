@@ -17,7 +17,7 @@ module.exports = {
 
   async execute(base64, mediaType, prompt) {
     const apiKey = process.env.GOOGLE_VISION_API_KEY;
-    const url = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
+    const url = 'https://vision.googleapis.com/v1/images:annotate';
 
     const body = JSON.stringify({
       requests: [{
@@ -30,7 +30,7 @@ module.exports = {
     return new Promise((resolve, reject) => {
       const req = https.request(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         timeout: 30000,
       }, (res) => {
         let data = '';

@@ -93,7 +93,8 @@ const ALL_ENGINES = {
     isAvailable() { return !!process.env.GEMINI_API_KEY; },
     async execute(base64, mediaType, prompt) {
       const { GEMINI_MODEL } = require('./gemini');
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+      const apiKey = process.env.GEMINI_API_KEY;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
       const body = JSON.stringify({
         contents: [{
           parts: [
@@ -107,9 +108,9 @@ const ALL_ENGINES = {
         const parsed = new URL(url);
         const req = https.request({
           hostname: parsed.hostname,
-          path: parsed.pathname + parsed.search,
+          path: parsed.pathname,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
           timeout: 30000,
         }, (res) => {
           let data = '';

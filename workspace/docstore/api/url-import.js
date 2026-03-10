@@ -15,7 +15,10 @@ const { sendError } = require('../lib/error-handler');
 /**
  * URL에서 HTML을 가져온 뒤 본문 텍스트를 추출
  */
-function fetchUrl(url) {
+function fetchUrl(url, maxRedirects = 5) {
+  if (maxRedirects <= 0) {
+    return Promise.reject(new Error('리다이렉트 횟수 초과 (최대 5회)'));
+  }
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
     const req = client.get(url, {
@@ -25,9 +28,15 @@ function fetchUrl(url) {
       },
       timeout: 15000,
     }, (res) => {
-      // 리다이렉트 처리
+      // 리다이렉트 처리 (횟수 차감 + SSRF 재검증)
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchUrl(res.headers.location).then(resolve).catch(reject);
+        const redirectUrl = res.headers.location;
+        return validateUrl(redirectUrl)
+          .then(check => {
+            if (!check.safe) return reject(new Error(`리다이렉트 차단 (SSRF): ${check.error}`));
+            return fetchUrl(redirectUrl, maxRedirects - 1);
+          })
+          .then(resolve).catch(reject);
       }
       if (res.statusCode !== 200) {
         return reject(new Error(`HTTP ${res.statusCode}`));

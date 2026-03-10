@@ -17,7 +17,7 @@ module.exports = {
 
   async execute(base64, mediaType, prompt) {
     const apiKey = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
     const body = JSON.stringify({
       contents: [{
         parts: [
@@ -31,7 +31,7 @@ module.exports = {
     return new Promise((resolve, reject) => {
       const req = https.request(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         timeout: 30000,
       }, (res) => {
         let data = '';

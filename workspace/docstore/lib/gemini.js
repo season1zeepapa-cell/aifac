@@ -43,7 +43,7 @@ function callGemini(prompt, options = {}) {
   const { maxTokens = 1024, temperature = 0.2, timeout = 30000 } = options;
   const model = options.model || GEMINI_MODEL;
 
-  const url = `${GEMINI_BASE_URL}/${model}:generateContent?key=${apiKey}`;
+  const url = `${GEMINI_BASE_URL}/${model}:generateContent`;
   const genConfig = { temperature, maxOutputTokens: maxTokens };
   // Gemini 2.5 thinking budget 지원
   if (options.thinkingBudget && options.thinkingBudget > 0) {
@@ -57,7 +57,7 @@ function callGemini(prompt, options = {}) {
   return new Promise((resolve, reject) => {
     const req = https.request(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       timeout,
     }, (res) => {
       let data = '';

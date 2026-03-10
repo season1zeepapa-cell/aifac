@@ -2,14 +2,20 @@
 const crypto = require('crypto');
 const { query } = require('./db');
 
-// 비밀번호 해싱 (SHA-256 + salt)
-function hashPassword(password, salt) {
-  return crypto.createHash('sha256').update(salt + password).digest('hex');
-}
+// scrypt 파라미터: N=16384, r=8, p=1, keyLen=64
+const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, maxmem: 32 * 1024 * 1024 };
+const SCRYPT_KEYLEN = 64;
 
-// 랜덤 salt 생성
-function generateSalt() {
-  return crypto.randomBytes(16).toString('hex');
+// 비밀번호 해싱 (scrypt — GPU brute-force 내성)
+// 저장 형식: "scrypt:salt:hash"
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    crypto.scrypt(password, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS, (err, derived) => {
+      if (err) return reject(err);
+      resolve(`scrypt:${salt}:${derived.toString('hex')}`);
+    });
+  });
 }
 
 module.exports = async (req, res) => {
@@ -52,9 +58,8 @@ module.exports = async (req, res) => {
       return res.status(409).json({ error: '이미 사용 중인 아이디입니다.' });
     }
 
-    // 비밀번호 해싱 (salt 포함)
-    const salt = generateSalt();
-    const passwordHash = salt + ':' + hashPassword(password, salt);
+    // 비밀번호 해싱 (scrypt)
+    const passwordHash = await hashPassword(password);
 
     // DB에 저장
     await query(

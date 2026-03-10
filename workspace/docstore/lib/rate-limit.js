@@ -8,6 +8,7 @@ const LIMITS = {
   rag:        { windowMs: 60000, max: 20 },   // 1분 20건
   summary:    { windowMs: 60000, max: 15 },   // 1분 15건
   search:     { windowMs: 60000, max: 60 },   // 1분 60건
+  login:      { windowMs: 60000, max: 5 },    // 1분 5회 (브루트포스 방어)
   lawImport:  { windowMs: 60000, max: 5 },    // 1분 5건
   urlImport:  { windowMs: 60000, max: 10 },   // 1분 10건
   ocr:        { windowMs: 60000, max: 10 },   // 1분 10건 (Upstage RPS=1 고려)

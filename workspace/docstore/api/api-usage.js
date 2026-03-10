@@ -196,9 +196,9 @@ module.exports = async function handler(req, res) {
             });
           } else if (provider === 'gemini' && process.env.GEMINI_API_KEY) {
             const https = require('https');
-            const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
+            const url = 'https://generativelanguage.googleapis.com/v1beta/models';
             await new Promise((resolve, reject) => {
-              https.get(url, { timeout: 10000 }, (r) => {
+              https.get(url, { headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY }, timeout: 10000 }, (r) => {
                 let d = '';
                 r.on('data', c => d += c);
                 r.on('end', () => r.statusCode === 200 ? resolve() : reject(new Error(`HTTP ${r.statusCode}: ${d.substring(0, 200)}`)));
