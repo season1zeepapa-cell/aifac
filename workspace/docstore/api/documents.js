@@ -5,6 +5,21 @@ const { setCors } = require('../lib/cors');
 const { getSignedUrl, deleteDocumentFiles, isStorageAvailable } = require('../lib/storage');
 const { sendError } = require('../lib/error-handler');
 
+// 문서 영구 삭제 — chunks → sections → tags → Storage → documents 순서로 제거
+async function deleteDocumentPermanently(docId) {
+  const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [docId]);
+  const sectionIds = sectionRows.rows.map(r => r.id);
+  if (sectionIds.length > 0) {
+    await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
+  }
+  await query('DELETE FROM document_sections WHERE document_id = $1', [docId]);
+  await query('DELETE FROM document_tags WHERE document_id = $1', [docId]);
+  if (isStorageAvailable()) {
+    await deleteDocumentFiles(docId);
+  }
+  await query('DELETE FROM documents WHERE id = $1', [docId]);
+}
+
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, POST, DELETE, OPTIONS' })) return;
 
@@ -178,24 +193,11 @@ module.exports = async function handler(req, res) {
 
       // 영구 삭제 — 실제 데이터 제거 (휴지통에서만 가능)
       if (action === 'permanentDelete' && id) {
-        // 삭제된 문서만 영구 삭제 가능
         const check = await query('SELECT id FROM documents WHERE id = $1 AND deleted_at IS NOT NULL', [id]);
         if (check.rows.length === 0) {
           return res.status(400).json({ error: '휴지통에 있는 문서만 영구 삭제할 수 있습니다.' });
         }
-
-        // 손자(chunks) → 자식(sections) → 태그 → Storage → 부모(documents)
-        const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [id]);
-        const sectionIds = sectionRows.rows.map(r => r.id);
-        if (sectionIds.length > 0) {
-          await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
-        }
-        await query('DELETE FROM document_sections WHERE document_id = $1', [id]);
-        await query('DELETE FROM document_tags WHERE document_id = $1', [id]);
-        if (isStorageAvailable()) {
-          await deleteDocumentFiles(id);
-        }
-        await query('DELETE FROM documents WHERE id = $1', [id]);
+        await deleteDocumentPermanently(id);
         return res.json({ success: true, message: '문서가 영구 삭제되었습니다.' });
       }
 
@@ -203,17 +205,7 @@ module.exports = async function handler(req, res) {
       if (action === 'emptyTrash') {
         const trashed = await query('SELECT id FROM documents WHERE deleted_at IS NOT NULL');
         for (const row of trashed.rows) {
-          const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [row.id]);
-          const sectionIds = sectionRows.rows.map(r => r.id);
-          if (sectionIds.length > 0) {
-            await query('DELETE FROM document_chunks WHERE section_id = ANY($1)', [sectionIds]);
-          }
-          await query('DELETE FROM document_sections WHERE document_id = $1', [row.id]);
-          await query('DELETE FROM document_tags WHERE document_id = $1', [row.id]);
-          if (isStorageAvailable()) {
-            await deleteDocumentFiles(row.id);
-          }
-          await query('DELETE FROM documents WHERE id = $1', [row.id]);
+          await deleteDocumentPermanently(row.id);
         }
         return res.json({ success: true, message: `${trashed.rows.length}개 문서가 영구 삭제되었습니다.`, count: trashed.rows.length });
       }
