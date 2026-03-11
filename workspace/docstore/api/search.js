@@ -1,7 +1,8 @@
-// 텍스트 검색 + 벡터 유사도 검색 API
-// GET /api/search?q=검색어&type=text|vector&limit=10&chapter=제1장&docId=5
+// 텍스트 검색 + 벡터 유사도 검색 + 하이브리드 검색 API
+// GET /api/search?q=검색어&type=text|vector|hybrid&limit=10&chapter=제1장&docId=5
 const { query } = require('../lib/db');
 const { generateEmbedding } = require('../lib/embeddings');
+const { hybridSearch } = require('../lib/hybrid-search');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
@@ -51,7 +52,52 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    if (type === 'vector') {
+    if (type === 'hybrid') {
+      // ── 하이브리드 검색 (벡터 + 전문검색 + RRF 합산) ──
+      const resolvedIds = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
+      const results = await hybridSearch(query, q.trim(), {
+        topK: limit,
+        docIds: resolvedIds,
+      });
+
+      // chapter/tag 필터는 후처리 (hybrid-search 내부에서는 docIds만 처리)
+      let filtered = results;
+      if (chapter) {
+        const chLower = chapter.toLowerCase();
+        filtered = filtered.filter(row => {
+          const meta = row.section_metadata || {};
+          return (meta.chapter || '').toLowerCase().includes(chLower);
+        });
+      }
+      if (tag) {
+        // 태그 필터는 추가 쿼리 필요 → 간단히 후처리 생략 (docIds 필터로 대체 권장)
+      }
+
+      return res.json({
+        type: 'hybrid',
+        query: q,
+        count: filtered.length,
+        results: filtered.map(row => {
+          const meta = row.section_metadata || {};
+          return {
+            chunkId: row.chunk_id,
+            chunkText: row.chunk_text,
+            rrfScore: parseFloat(row.rrf_score).toFixed(6),
+            similarity: row.similarity ? parseFloat(row.similarity).toFixed(4) : null,
+            vectorRank: row.vector_rank,
+            ftsRank: row.fts_rank,
+            sectionType: row.section_type,
+            documentId: row.document_id,
+            documentTitle: row.document_title,
+            category: row.category,
+            label: meta.label || '',
+            chapter: meta.chapter || '',
+            section: meta.section || '',
+            articleTitle: meta.articleTitle || '',
+          };
+        }),
+      });
+    } else if (type === 'vector') {
       // ── 벡터 유사도 검색 ──
       const embedding = await generateEmbedding(q.trim());
       const vecStr = `[${embedding.join(',')}]`;

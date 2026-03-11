@@ -1909,3 +1909,502 @@ EUC-KR 인코딩 사이트(보안뉴스 등)를 크롤링하면 한글이 깨지
 
 - `api/url-import.js` — `detectCharset()` 함수 + `iconv-lite` 연동
 - 프로젝트 전체 13개 파일 `data += chunk` → `Buffer.concat(chunks)` 패턴 통일
+
+---
+
+## 코드베이스 3차 정밀 분석 보고서 (2026-03-11)
+
+> 전체 코드베이스 정밀 분석: 보안 취약점, 리팩토링, 성능 개선, 기능 확장 제안
+> 이전 2차 분석(2026-03-10) 이후 해결/미해결 현황 반영
+
+---
+
+### 이전 분석 대비 추가 해결 현황
+
+| 이전 ID | 항목 | 상태 | 비고 |
+|---------|------|------|------|
+| S6 | emptyTrash 트랜잭션 미사용 | ✅ 해결 | `deleteDocumentsBatch()` + BEGIN/COMMIT 구현 |
+| S21 | 보안 헤더 미설정 | ✅ 해결 | `vercel.json`에 X-Content-Type-Options, X-Frame-Options, HSTS, Referrer-Policy, X-XSS-Protection 설정 |
+| R3 | 휴지통 삭제 로직 중복 | ✅ 해결 | `deleteDocumentPermanently()` + `deleteDocumentsBatch()` 추출 |
+| R7 | 휴지통 비우기 N+1 삭제 | ✅ 해결 | `WHERE id = ANY($1)` 배치 DELETE |
+| UX1 | 문서 메타 수정 | ✅ 해결 | `action: 'updateMeta'` API 구현 |
+| UX2 | 임베딩 재생성 | ✅ 해결 | `action: 'regenerateEmbeddings'` 버튼 구현 |
+| UX3 | 검색 결과 하이라이팅 | ✅ 해결 | `highlightText()` + `<mark>` 태그 |
+| F17 | 대화 히스토리 저장 | ✅ 해결 | `chat_sessions` 테이블 + API 구현 |
+| F18 | 문서 즐겨찾기 | ✅ 해결 | 태그 시스템으로 핀 고정 구현 |
+| F27 | 참조 관계 그래프 | ✅ 해결 | D3.js 네트워크 그래프 + `api/law-graph.js` |
+| F31 | RAG 에이전트 | ✅ 해결 | 멀티홉 검색 + 교차 참조 매트릭스 |
+
+---
+
+### Part 1: 보안 취약점 (미해결 + 신규)
+
+#### 🔴 CRITICAL — 즉시 조치 필요
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| S23 | AUTH_TOKEN_SECRET 빈 문자열 허용 | `lib/auth.js:6-10` | `process.env.AUTH_TOKEN_SECRET \|\| ''`로 처리 → 미설정 시 JWT 서명이 빈 키로 생성되어 예측 가능 | 빈 문자열 체크 추가: `if (!secret \|\| secret.length < 32) throw new Error()` |
+| S24 | DB SSL 인증서 미검증 | `lib/db.js:11` | `ssl: { rejectUnauthorized: false }` → MITM 공격으로 DB 자격증명 탈취 가능 | `rejectUnauthorized: true` + Supabase CA 인증서 설정 또는 `NODE_EXTRA_CA_CERTS` 환경변수 |
+| S25 | Rate Limiter 서버리스 무력화 | `lib/rate-limit.js` | 인메모리 Map 기반 → Vercel 콜드 스타트마다 초기화 → 로그인 5회 제한 실질 무효 | Upstash Redis 또는 DB 기반 카운터 전환 |
+
+#### 🟠 HIGH — 조기 개선 권장
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| S26 | RegExp ReDoS (pdf-extractor) | `lib/pdf-extractor.js:200` | 사용자 `customDelimiter`를 `new RegExp()`에 직접 전달 → 악의적 패턴으로 CPU 고갈 | `escapeRegExp()` 함수 적용 |
+| S27 | RegExp ReDoS (text-extractor) | `lib/text-extractor.js:89` | `text.split(new RegExp(options.customDelimiter))` 동일한 취약점 | `escapeRegExp()` 함수 적용 |
+| S28 | 24시간 누적 로그인 제한 없음 | `api/login.js` | 1분 5회 제한만 존재, 일일 한도 없음 → 1분 대기 후 무한 재시도 가능 | 24시간 IP당 50회 상한 추가 |
+| S29 | 요약 API 동시 호출 제한 없음 | `api/summary.js` | 전체 요약(bulk) 호출 시 Gemini 요청 무제한 → API 비용 폭주 | 동시 요청 5개 제한 (세마포어) |
+| S30 | 대용량 OCR 메모리 소진 | `lib/ocr/` 엔진들 | 50MB 이미지 → base64 인코딩 (1.33배) → 메모리 66MB+ → 서버리스 128MB 한계 초과 | 이미지 10MB 제한 사전 검증 추가 |
+
+#### 🟡 MEDIUM — 점진적 개선
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| S31 | CSP 헤더 미설정 | `vercel.json` | 기본 보안 헤더는 설정됨, 하지만 Content-Security-Policy 없음 → XSS 공격 취약 | `Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net` 추가 |
+| S32 | DNS Rebinding 공격 | `lib/input-sanitizer.js:97-112` | DNS 조회 → HTTP 요청 사이 DNS 변경 가능 (TOCTOU) | 커스텀 DNS resolver로 요청 시점 재검증 |
+| S33 | parseInt radix 미지정 | `api/search.js:26`, `api/rag.js:49` 등 | `parseInt(value)` → 8진수/16진수 해석 위험 | `parseInt(value, 10)` 명시 |
+| S34 | console.log 민감정보 | 다수 API | 에러 로그에 `err.stack` 포함 → API 키/쿼리 노출 가능 | 구조화된 로깅 + 민감정보 마스킹 (LOG_LEVEL 환경변수) |
+
+#### ✅ 양호한 부분 (이전 대비 개선)
+
+| 항목 | 근거 |
+|------|------|
+| SQL Injection | 모든 쿼리가 `$1` 파라미터 바인딩 |
+| 비밀번호 해싱 | scrypt (N=16384, r=8, p=1) + timingSafeEqual |
+| JWT 구현 | HMAC-SHA256 서명 + 7일 만료 검증 |
+| CORS 도메인 제한 | `lib/cors.js`에 화이트리스트 구현 |
+| 파일명 정화 | `sanitizeFilename()` — path traversal, null byte 방어 |
+| ILIKE 이스케이프 | `escapeIlike()` — 와일드카드 인젝션 방어 |
+| SSRF 방어 | DNS 확인 + 내부 IP 블럭리스트 + 리다이렉트 재검증 |
+| 에러 메시지 분리 | `error-handler.js` — 프로덕션/개발 에러 메시지 분기 |
+| 보안 헤더 | `vercel.json`에 HSTS, X-Frame-Options 등 5종 설정 |
+| 파일 업로드 검증 | MIME 화이트리스트 + 50MB 크기 제한 |
+| HTML 크롤링 정화 | script 태그 + 이벤트 핸들러 제거 |
+| URL 리다이렉트 제한 | maxRedirects=5 + 매 리다이렉트 validateUrl() 재검증 |
+
+---
+
+### Part 2: 리팩토링 필요 사항
+
+#### 🔴 우선 리팩토링
+
+| # | 항목 | 위치 | 현황 | 개선안 | 예상 효과 |
+|---|------|------|------|--------|-----------|
+| R13 | doc-analyzer callGemini 프로바이더 고정 | `lib/doc-analyzer.js:44, 102` | `callGemini()` 직접 호출 → OpenAI/Claude 선택 불가 | `callLLM()` 공통 래퍼로 마이그레이션 | 프로바이더 선택 가능, 비용 50% 절감 |
+| R14 | 기본 임베딩 청크별 순차 INSERT | `lib/embeddings.js:281-297` | `for` 루프 내 개별 INSERT (enriched 버전은 배치 처리 완료) | 10~20개씩 묶어서 다중 VALUES INSERT | 임베딩 저장 시간 30% 단축 |
+| R15 | 법령 임포트 N+1 INSERT | `api/law-import.js:96-124` | 조문별 개별 INSERT 반복 | 다중행 INSERT: `VALUES ($1,$2), ($3,$4)...` | 1000 쿼리 → 50쿼리 (20배 감소) |
+| R16 | 법령 임포트 N+1 UPDATE (역참조) | `api/law-import.js:144-156` | 역참조 metadata UPDATE 루프 | JSONB merge 배치 UPDATE | 200 UPDATE → 1 UPDATE |
+
+#### 🟡 개선 리팩토링
+
+| # | 항목 | 위치 | 현황 | 개선안 |
+|---|------|------|------|--------|
+| R17 | 쿼리 빌더 수동 paramIdx | `api/search.js`, `api/rag.js` | `$${paramIdx++}` 수동 관리 → 실수 위험 | 간단한 `QueryBuilder` 헬퍼 함수 도입 |
+| R18 | 태그 usage_count N+1 | `api/documents.js:273-276, 392-395` | 태그 추가/제거 시 매번 개별 UPDATE | 배치 UPDATE: `WHERE tag_id = ANY($1)` |
+| R19 | 시맨틱 교차참조 섹션별 순차 쿼리 | `lib/cross-reference.js:172-187` | `for` 루프로 섹션별 벡터 유사도 쿼리 반복 | 단일 JOIN 쿼리로 모든 유사 섹션 일괄 조회 |
+| R20 | 에러 처리 일관성 부족 | `api/summary.js:58, 71` 등 | 일부 API에서 `sendError()` 대신 직접 `res.json()` 사용 | 모든 API를 `sendError()` 통일 |
+
+#### 구현 우선순위
+
+```
+1순위: R13 — doc-analyzer callLLM 마이그레이션 (멀티프로바이더 통합)
+2순위: R15+R16 — 법령 임포트 배치 INSERT/UPDATE (성능 20배 향상)
+3순위: R14 — 기본 임베딩 배치 INSERT
+4순위: R18 — 태그 usage_count 배치화
+5순위: R17, R19, R20 — 사소한 코드 정리 (점진적 개선)
+```
+
+---
+
+### Part 3: 성능 개선
+
+| # | 항목 | 위치 | 현재 성능 | 개선 후 | 개선율 |
+|---|------|------|-----------|---------|--------|
+| P7 | 요약 순차 처리 → 병렬화 | `api/summary.js:88-106` | 100섹션 × 2초 = 200초 | 20묶음 × 2초 = 40초 | **80% 단축** |
+| P8 | 법령 배치 INSERT | `api/law-import.js:96-124` | 1000 쿼리 | 50 쿼리 | **20배** |
+| P9 | 역참조 배치 UPDATE | `api/law-import.js:144-156` | N × UPDATE | 1 UPDATE | **N배** |
+| P10 | 태그 usage_count 배치 | `api/documents.js:273-276` | N × UPDATE | 1 UPDATE | **N배** |
+| P11 | 시맨틱 교차참조 JOIN | `lib/cross-reference.js:172-187` | 200 쿼리 | 1~2 쿼리 | **구축 시간 70% 단축** |
+| P12 | 기본 임베딩 배치 INSERT | `lib/embeddings.js:281-297` | N × INSERT | N/20 × INSERT | **저장 시간 30% 단축** |
+| P13 | 교차참조 구축 비동기화 | `api/law-import.js:161-174` | 임포트 API 응답에 동기 포함 | 백그라운드 작업으로 분리 | **임포트 응답 10초 단축** |
+| P14 | chat-sessions 메시지 페이징 | `api/chat-sessions.js:57-59` | 전체 messages JSONB 로드 | 최근 50개만 로드 + 페이지네이션 | **응답 크기 5배 감소** |
+
+---
+
+### Part 4: 기능 개선 및 확장 제안
+
+#### 현재 구현 현황 요약
+
+| 카테고리 | 전체 | 완료 | 미구현 | 완료율 |
+|---------|------|------|--------|--------|
+| 핵심 RAG 기능 | 6 | 5 | 1 | 83% |
+| 문서 관리 (CRUD) | 8 | 6 | 2 | 75% |
+| 검색 기능 | 5 | 5 | 0 | 100% |
+| AI 기능 (요약/분석) | 4 | 4 | 0 | 100% |
+| 협업/공유 | 4 | 0 | 4 | 0% |
+| 운영/관리 | 8 | 7 | 1 | 88% |
+| UX 개선 | 10 | 6 | 4 | 60% |
+
+#### 🥇 단기 (1~2주) — 즉시 적용 가능
+
+| # | 항목 | 설명 | 난이도 | 예상 효과 |
+|---|------|------|--------|-----------|
+| F33 | 일괄 업로드 | 여러 파일 동시 드래그앤드롭 + 순차 처리 진행률 | 중 | 초기 구축 시간 대폭 단축 |
+| F34 | 다크모드 | CSS 변수 기반 테마 토글 (Tailwind dark: 클래스 활용) | 중 | 야간 사용 편의, UX 향상 |
+| F35 | 키보드 단축키 | `Ctrl+K` 검색, `Ctrl+N` 업로드, `Esc` 모달 닫기 | 하 | 파워 유저 효율 |
+| F36 | 북마크 / 하이라이트 | 섹션별 북마크 + 텍스트 하이라이트 저장 (DB 테이블 1개 추가) | 중 | 중요 조문 빠른 접근 |
+| F37 | 업로드 진행률 실시간 | 대용량 파일 업로드 시 바이트 기준 진행률 표시 | 중 | 대기 중 UX 개선 |
+
+#### 🥈 중기 (1~2개월) — 활용도 향상
+
+| # | 항목 | 설명 | 난이도 | 예상 효과 |
+|---|------|------|--------|-----------|
+| F38 | 문서 버전 관리 | 동일 문서 재업로드 시 버전 이력 보존 + diff 표시 | 고 | 법령 개정 추적 핵심 기능 |
+| F39 | 문서 비교 | 두 문서(또는 두 버전) 간 차이점 AI 분석 | 고 | 법령 신/구 조문 대조 |
+| F40 | 공유 링크 | 특정 문서/섹션을 외부에 읽기전용 공유 (토큰 기반) | 중 | 외부 협업 지원 |
+| F41 | 내보내기 | 문서를 PDF/DOCX/마크다운으로 변환 다운로드 | 중 | 보고서 작성 편의 |
+| F42 | 감사 로그 | `audit_log` 테이블로 모든 CRUD 기록 (action, user_id, resource, timestamp) | 중 | 보안 추적 + 규정 준수 |
+| F43 | 알림 시스템 | 임베딩/분석 완료 시 브라우저 알림 (Notification API) | 중 | 대기 시간 활용 |
+
+#### 🥉 장기 (3개월+) — 확장
+
+| # | 항목 | 설명 | 난이도 | 예상 효과 |
+|---|------|------|--------|-----------|
+| F44 | 법령 개정 알림 | 임포트된 법령을 법제처 API 주기적 체크 → 변경 시 알림 | 고 | 법령 관리 핵심 가치 |
+| F45 | 다중 사용자 권한 | viewer/editor/admin 역할 분리 + 문서별 접근 제어 | 고 | 팀 환경 지원 |
+| F46 | Webhook 연동 | 문서 업로드/분석 완료 시 외부 서비스 알림 (Slack 등) | 중 | 자동화 파이프라인 |
+| F47 | 모바일 앱 (PWA) | 오프라인 캐시 + 푸시 알림 + 홈 화면 설치 | 중 | 모바일 접근성 |
+| F48 | 원본 파일 Supabase Storage 완전 이전 | DB BYTEA → 오브젝트 스토리지 + signed URL | 고 | DB 크기 90% 감소, 성능 향상 |
+
+---
+
+### 종합 실행 로드맵
+
+```
+=== 즉시 (보안) ===
+1. S23 — AUTH_TOKEN_SECRET 빈 문자열 차단 (lib/auth.js 3줄 수정)
+2. S24 — DB SSL rejectUnauthorized: true (lib/db.js 1줄 수정)
+3. S26+S27 — RegExp escapeRegExp 적용 (pdf-extractor, text-extractor)
+4. S31 — CSP 보안 헤더 추가 (vercel.json)
+
+=== 1주차 (성능) ===
+5. P7 — 요약 병렬화 (Promise.allSettled + 세마포어 5개)
+6. P8+P9 — 법령 배치 INSERT + UPDATE
+7. R13 — doc-analyzer callLLM 마이그레이션
+
+=== 2주차 (리팩토링 + 기능) ===
+8. R14 — 기본 임베딩 배치 INSERT
+9. R18 — 태그 usage_count 배치화
+10. F33 — 일괄 업로드 UI
+
+=== 3주차 (기능 + UX) ===
+11. F34 — 다크모드
+12. F35 — 키보드 단축키
+13. F36 — 북마크 / 하이라이트
+
+=== 1개월+ (확장) ===
+14. F38 — 문서 버전 관리
+15. F42 — 감사 로그
+16. F48 — Supabase Storage 완전 이전
+```
+
+---
+
+### 종합 보안 등급 평가
+
+| 항목 | 등급 | 설명 |
+|------|------|------|
+| 인증 & 권한 | **B+** | JWT + requireAdmin 적용, 하지만 토큰 시크릿 초기화 필수 |
+| 입력 검증 | **A-** | 파일명/ILIKE/SSRF 안전, RegExp 입력 미검증 |
+| 데이터 보호 | **B** | 파라미터 바인딩 안전, SSL 검증 미활성화로 감점 |
+| 에러 처리 | **A-** | 프로덕션 메시지 필터링 적용, 로그 필터링 권장 |
+| 성능 보안 | **B** | Rate Limiting 적용, 서버리스 환경 우회 가능 |
+| 전체 평가 | **B+** | 양호하나 CRITICAL 3건 즉시 조치 필요 |
+
+---
+
+## RAG 아키텍처 수준 평가 (2026-03-11)
+
+> LangChain, Hybrid RAG, LangGraph, Graph RAG 4가지 업계 표준 기준으로 DocStore RAG 시스템 현재 수준 평가
+> 평가 대상 파일: `lib/rag-agent.js`, `lib/cross-reference.js`, `lib/embeddings.js`, `lib/gemini.js`, `api/rag.js`, `api/search.js`
+
+---
+
+### 1. LangChain 기준 비교
+
+> LangChain = LLM 호출 + 체인 조합 + 도구 통합을 위한 **오케스트레이션 프레임워크**
+
+| LangChain 핵심 개념 | DocStore 현재 | 구현 수준 | 비고 |
+|---|---|---|---|
+| **Document Loaders** (PDF, DOCX, CSV...) | `lib/pdf-extractor.js`, `lib/text-extractor.js` (PDF/DOCX/XLSX/CSV/JSON/이미지/URL) | **90%** | LangChain 수준과 동등. 7개 형식 지원 |
+| **Text Splitters** (청크 분할) | `lib/embeddings.js:chunkText()` — 문장 단위 분할 + overlap | **70%** | 기본 구현은 있으나, RecursiveCharacterTextSplitter 수준의 다양한 전략 부재 |
+| **Embeddings** (벡터화) | OpenAI `text-embedding-3-small` + **enriched embedding** | **95%** | LangChain보다 오히려 **우수**. 맥락 프리픽스(문서명/태그/요약)를 합성하는 enriched 전략은 LangChain 기본에 없는 고급 패턴 |
+| **Vector Stores** (벡터 DB) | pgvector (PostgreSQL) + cosine similarity | **85%** | HNSW 인덱스, 문서 필터링 지원. 다만 metadata filtering이 수동 SQL |
+| **Retrievers** (검색기) | 벡터 검색 + 텍스트 ILIKE 검색 | **75%** | 기본 retriever 수준. MMR(Maximal Marginal Relevance), self-query 등 고급 retriever 미구현 |
+| **Chains** (체인 조합) | `api/rag.js`에서 검색→프롬프트→LLM 직접 연결 | **60%** | 하드코딩된 파이프라인. LangChain의 LCEL(선언적 체인 조합) 같은 유연성 없음 |
+| **Memory** (대화 기억) | `chat_sessions` 테이블 + 최근 20메시지 | **70%** | BufferWindowMemory 수준. ConversationSummaryMemory 같은 요약 기반 압축 없음 |
+| **Tools / Agents** | 없음 | **0%** | LangChain Agent(도구 선택 → 실행 → 관찰 루프)에 해당하는 구현 없음 |
+| **Output Parsers** | 없음 (LLM 마크다운 출력을 그대로 사용) | **30%** | 구조화된 JSON 파싱 없음. 근거 체인을 프롬프트로 유도하지만 파싱/검증 안 함 |
+| **Callbacks / Tracing** | `api-tracker.js`로 API 호출 기록 | **40%** | 비용 추적은 있으나, LangSmith 같은 실행 트레이싱/디버깅 없음 |
+
+**LangChain 기준 종합: 약 60~65%**
+
+> 핵심 RAG 파이프라인(로더→청크→임베딩→검색→생성)은 충실히 구현됨.
+> 하지만 LangChain의 가치인 **"조합 가능한 추상화"** (체인, 에이전트, 도구, 파서)는 부재.
+> 모든 로직이 각 API 파일에 **하드코딩**되어 있어, 새로운 파이프라인을 만들려면 코드를 처음부터 작성해야 함.
+
+---
+
+### 2. Hybrid RAG 기준 비교
+
+> Hybrid RAG = **벡터 검색 + 키워드 검색**을 결합하여 검색 품질을 높이는 전략
+
+| Hybrid RAG 요소 | DocStore 현재 | 구현 수준 | 비고 |
+|---|---|---|---|
+| **Dense Retrieval** (벡터 검색) | pgvector cosine similarity (`1 - (embedding <=> query)`) | **85%** | 잘 구현됨 |
+| **Sparse Retrieval** (키워드 검색) | PostgreSQL `ILIKE` 텍스트 검색 | **50%** | 기본 패턴 매칭만. BM25, TF-IDF, Full-Text Search(tsvector) 미사용 |
+| **Score Fusion** (점수 결합) | 없음 | **0%** | 벡터/텍스트 검색이 **별도 모드**로 분리됨. Reciprocal Rank Fusion(RRF) 같은 점수 합산 전략 없음 |
+| **Re-ranking** (재순위화) | `deduplicateAndRank()`에서 유사도 정렬만 | **30%** | Cross-encoder 재랭킹 없음. Cohere Rerank, ColBERT 같은 고급 재랭커 미적용 |
+| **Query Expansion** (질의 확장) | 멀티홉에서 참조 키워드 추출 → 2차 검색 | **50%** | 법령 참조 패턴만. HyDE(가상 문서), Query Decomposition 같은 일반적 확장 미적용 |
+| **Enriched Embedding** (맥락 강화) | `buildEnrichedText()` — 문서명/태그/요약/장절 프리픽스 | **90%** | **강점**. 업계에서도 선진적인 패턴 |
+
+**Hybrid RAG 기준 종합: 약 45~50%**
+
+> 가장 큰 약점: **벡터와 키워드 검색이 분리**되어 있다는 점.
+> 진정한 Hybrid RAG는 두 검색 결과를 **하나로 합쳐서** 최종 순위를 매기는데,
+> DocStore는 UI에서 "텍스트 검색" / "벡터 검색" 탭을 사용자가 **수동 선택**하는 구조.
+
+```
+현재:     사용자 → [텍스트 검색] 또는 [벡터 검색] → 결과
+Hybrid:   사용자 → 질문 → [텍스트 + 벡터 동시] → RRF 점수 합산 → 통합 결과
+```
+
+---
+
+### 3. LangGraph 기준 비교
+
+> LangGraph = **상태 기계(State Machine) 기반 에이전트** 프레임워크. 노드(작업) + 엣지(분기) + 상태(누적 데이터)로 복잡한 AI 워크플로우를 그래프로 표현
+
+| LangGraph 핵심 개념 | DocStore 현재 | 구현 수준 | 비고 |
+|---|---|---|---|
+| **State** (상태 객체) | 없음 (각 API가 독립적) | **10%** | 상태가 함수 로컬 변수에만 존재. 스텝 간 상태 전파 구조 없음 |
+| **Nodes** (작업 노드) | 각 함수가 암묵적 노드 역할 (`multiHopSearch`, `callLLM` 등) | **30%** | 기능은 있지만 노드로 추상화되지 않음 |
+| **Edges** (조건 분기) | `if (crossRefs.length === 0)` 같은 하드코딩 분기 | **20%** | 조건 분기가 코드에 내장. 선언적 그래프 정의 불가 |
+| **Cycles** (루프/반복) | 2홉 고정 (1차→2차 검색) | **15%** | LangGraph는 "결과가 충분할 때까지 반복" 같은 동적 루프 지원. DocStore는 항상 정확히 2번 |
+| **Human-in-the-loop** | 없음 | **0%** | 중간에 사용자 확인/수정 후 계속하는 패턴 없음 |
+| **Checkpointing** (중간 저장) | 없음 | **0%** | 긴 작업 중간에 상태를 저장하고 재개하는 기능 없음 |
+| **Streaming** | 없음 (일괄 응답) | **0%** | LangGraph는 노드별 스트리밍 지원. DocStore는 전체 답변을 한 번에 반환 |
+| **Tool Calling** (도구 호출) | 없음 | **0%** | LLM이 "법령 검색해줘" → 도구 호출 → 결과 반영 같은 패턴 없음 |
+| **Multi-Agent** | 없음 | **0%** | 여러 에이전트가 협업하는 구조 없음 |
+
+**LangGraph 기준 종합: 약 10~15%**
+
+> DocStore의 멀티홉 검색은 **정해진 2단계 파이프라인**이고,
+> LangGraph가 추구하는 "LLM이 스스로 판단하여 도구를 선택하고, 결과를 보고, 다시 검색할지 답변할지 결정하는" **자율적 에이전트** 패턴과는 근본적으로 다름.
+
+```
+DocStore 현재 (고정 파이프라인):
+  질문 → 1차 검색 → 참조 추출 → 2차 검색 → LLM 답변
+
+LangGraph 수준 (동적 에이전트):
+  질문 → LLM 판단 → "검색 필요" → 벡터 검색 → 결과 평가
+       → "추가 검색 필요" → 법령 API 호출 → 결과 합산
+       → "충분함" → 답변 생성 → 자체 검증 → 최종 답변
+```
+
+---
+
+### 4. Graph RAG 기준 비교
+
+> Graph RAG (Microsoft) = **지식 그래프(Knowledge Graph)를 구축**하여, 단순 벡터 유사도를 넘어 **개체 관계 기반** 검색과 **커뮤니티 요약**으로 글로벌 질문에 답변하는 아키텍처
+
+| Graph RAG 핵심 개념 | DocStore 현재 | 구현 수준 | 비고 |
+|---|---|---|---|
+| **Entity Extraction** (개체 추출) | 법령명 + 조문번호 정규식 추출 | **40%** | 법률 도메인에 특화된 개체 추출은 됨. 하지만 범용 NER(인물/조직/개념) 없음 |
+| **Relationship Extraction** (관계 추출) | `cross-reference.js` — 준용/적용/예외/의거/위반 + 시맨틱 유사도 | **55%** | **강점**. 법률 특수 관계를 자동 분류하는 것은 상당히 고급. 하지만 LLM 기반 관계 추출이 아니라 정규식 기반 |
+| **Knowledge Graph** (지식 그래프) | `cross_references` 테이블 (source→target, relation_type, confidence) | **45%** | 관계형 DB에 저장된 **관계 테이블**. Neo4j 같은 그래프 DB가 아니라 SQL JOIN으로 탐색 |
+| **Community Detection** (커뮤니티 감지) | 없음 | **0%** | Leiden/Louvain 알고리즘으로 관련 문서 그룹을 자동 감지하는 기능 없음 |
+| **Community Summaries** (그룹 요약) | 없음 | **0%** | 문서 그룹별 계층적 요약을 생성하지 않음. 개별 섹션/문서 요약만 존재 |
+| **Global Search** (글로벌 검색) | 없음 | **0%** | "법률 시스템 전체에서 개인정보 보호의 트렌드는?" 같은 추상적 질문에 답변 불가 |
+| **Local Search** (로컬 검색) | 멀티홉 + 교차참조 병합 | **55%** | 특정 조문 → 관련 조문 탐색은 잘 됨. Graph RAG의 local search와 유사 |
+| **Graph Visualization** (그래프 시각화) | D3.js 네트워크 그래프 (`api/law-graph.js`) | **60%** | 법령 조문 간 참조를 시각화. 하지만 전체 지식 그래프가 아닌 단일 문서 내부 참조 |
+
+**Graph RAG 기준 종합: 약 30~35%**
+
+> DocStore의 `cross_references` 테이블은 Graph RAG의 **핵심 아이디어**(관계 기반 검색)를 **부분적으로** 구현하고 있음.
+> 특히 법률 도메인에서 "준용/적용/예외" 같은 관계를 자동 분류하는 것은 가치 있음.
+> 하지만 Graph RAG의 진정한 강점인 **커뮤니티 감지 → 계층적 요약 → 글로벌 질문 답변** 파이프라인은 전혀 없음.
+
+---
+
+### 종합 레이더 차트
+
+```
+                LangChain (60%)
+                    ▲
+                    │
+                    │
+  Graph RAG ◄───────┼────────► Hybrid RAG
+   (30%)            │            (45%)
+                    │
+                    │
+                    ▼
+               LangGraph (12%)
+```
+
+### 핵심 강점 (업계 수준 이상)
+
+| 강점 | 설명 |
+|------|------|
+| **Enriched Embedding** | 문서명/태그/요약/장절을 청크에 합성하여 벡터화 — LangChain 기본에 없는 고급 패턴 |
+| **법률 도메인 특화** | 조문 참조 패턴, 관계 유형 분류(준용/적용/예외), 법제처 API 연동 |
+| **멀티프로바이더 LLM** | Gemini/OpenAI/Claude 3사 동적 전환 — 비용/품질 균형 |
+| **교차 참조 매트릭스** | 명시적(정규식) + 시맨틱(임베딩 유사도) 이중 감지 |
+
+### 핵심 약점 (업계 대비 부족)
+
+| 약점 | 현재 | 업계 수준 | 격차 해소 방법 |
+|------|------|-----------|----------------|
+| **검색 융합 없음** | 벡터/텍스트 별도 | RRF 점수 합산 | `pgvector + ts_rank` 결합 + RRF 스코어링 |
+| **재랭킹 없음** | 유사도 정렬만 | Cross-encoder 재랭커 | Cohere Rerank API 또는 경량 모델 |
+| **에이전트 없음** | 고정 2홉 파이프라인 | LLM 자율 도구 선택 | ReAct 패턴 + 도구 정의 (검색/법령조회/계산) |
+| **스트리밍 없음** | 일괄 응답 | 토큰 단위 스트리밍 | SSE + LLM 스트리밍 API |
+| **글로벌 검색 없음** | 로컬 검색만 | 커뮤니티 요약 기반 | 문서 클러스터링 + 계층적 요약 생성 |
+
+### 한 줄 요약
+
+> **"프레임워크 없이 직접 구축한 것치고는 놀라운 수준. 특히 Enriched Embedding과 법률 교차 참조는 업계 선진 수준이나, 검색 융합(Hybrid)과 에이전트(LangGraph) 패턴이 없어서 '똑똑한 파이프라인'에 머물러 있고, '자율적 AI 에이전트'까지는 도달하지 못한 상태."**
+
+---
+
+### 수준 향상을 위한 단계별 로드맵
+
+#### Phase 1: Hybrid RAG 도입 (45% → 75%)
+
+> 가장 적은 노력으로 가장 큰 검색 품질 향상을 얻을 수 있는 단계
+
+```
+현재 검색 흐름:
+  사용자 → [텍스트] 또는 [벡터] → 단일 결과
+
+개선 후:
+  사용자 → 질문 → [tsvector 검색] + [벡터 검색] 동시 실행
+                → Reciprocal Rank Fusion (RRF) 점수 합산
+                → 통합 결과 상위 K개 반환
+```
+
+| 작업 | 파일 | 내용 | 난이도 |
+|------|------|------|--------|
+| PostgreSQL Full-Text Search 추가 | `scripts/add-fts.js` | `document_chunks`에 `tsvector` 컬럼 + GIN 인덱스 추가 | 중 |
+| 하이브리드 검색 함수 | `lib/hybrid-search.js` | 벡터 + FTS 동시 검색 → RRF 점수 합산 | 중 |
+| RAG에 하이브리드 검색 적용 | `lib/rag-agent.js` | `vectorSearch()` → `hybridSearch()` 교체 | 하 |
+| 검색 API 통합 | `api/search.js` | 텍스트/벡터 탭 대신 통합 검색 모드 추가 | 중 |
+
+```sql
+-- RRF (Reciprocal Rank Fusion) 스코어링 예시
+WITH vec AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
+  FROM document_chunks WHERE embedding IS NOT NULL
+),
+fts AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(fts_vector, to_tsquery($2)) DESC) AS rank
+  FROM document_chunks WHERE fts_vector @@ to_tsquery($2)
+)
+SELECT COALESCE(v.id, f.id) AS id,
+  COALESCE(1.0/(60+v.rank), 0) + COALESCE(1.0/(60+f.rank), 0) AS rrf_score
+FROM vec v FULL OUTER JOIN fts f ON v.id = f.id
+ORDER BY rrf_score DESC LIMIT $3;
+```
+
+#### Phase 2: ReAct 에이전트 도입 (LangGraph 12% → 45%)
+
+> LLM이 "어떤 도구를 쓸지" 스스로 판단하는 자율적 에이전트 패턴
+
+```
+현재:
+  질문 → 1차 검색 → 참조 추출(정규식) → 2차 검색 → 답변
+
+개선 후 (ReAct 패턴):
+  질문 → LLM 판단 → [도구 호출: 벡터검색] → 결과 평가
+       → LLM 판단 → [도구 호출: 법령API검색] → 추가 결과
+       → LLM 판단 → "충분함" → 답변 생성
+```
+
+| 작업 | 파일 | 내용 | 난이도 |
+|------|------|------|--------|
+| 도구 정의 | `lib/rag-tools.js` (신규) | `vectorSearch`, `lawSearch`, `crossRefLookup`, `calculator` 도구 스키마 정의 | 중 |
+| ReAct 실행 루프 | `lib/rag-agent.js` 확장 | LLM → 도구 선택 → 실행 → 관찰 → 반복 (최대 5회) | 고 |
+| SSE 스트리밍 | `api/rag.js` 확장 | 각 단계별 진행 상황 + 최종 답변 실시간 전송 | 중 |
+
+```javascript
+// ReAct 에이전트 의사 코드
+const tools = [vectorSearchTool, lawSearchTool, crossRefTool];
+
+for (let step = 0; step < MAX_STEPS; step++) {
+  const action = await llm.decide(question, observations, tools);
+
+  if (action.type === 'answer') {
+    return action.content;  // 최종 답변
+  }
+
+  const result = await executeTool(action.tool, action.input);
+  observations.push({ tool: action.tool, result });
+  stream.send({ step, tool: action.tool, status: 'done' });
+}
+```
+
+#### Phase 3: Graph RAG 확장 (30% → 60%)
+
+> 지식 그래프 기반 글로벌 검색 도입
+
+| 작업 | 파일 | 내용 | 난이도 |
+|------|------|------|--------|
+| 커뮤니티 감지 | `lib/community-detection.js` (신규) | cross_references 테이블 기반 연결 컴포넌트 탐색 (Louvain 경량 구현) | 고 |
+| 커뮤니티 요약 | `lib/community-summary.js` (신규) | 각 커뮤니티(관련 법령 그룹)의 계층적 요약 생성 | 고 |
+| 글로벌 검색 | `api/rag.js` 확장 | 추상적 질문 → 커뮤니티 요약 검색 → 종합 답변 | 고 |
+| 그래프 시각화 확장 | `api/law-graph.js` 확장 | 단일 문서 → 전체 문서 간 관계 그래프 | 중 |
+
+```
+글로벌 검색 예시:
+  질문: "한국 법률에서 개인정보 보호의 전체 체계는?"
+
+  → 커뮤니티 1 요약: "개인정보보호법 → 정보통신망법 → 신용정보법 삼각 구조"
+  → 커뮤니티 2 요약: "CCTV 관련 규제 체계: 개인정보보호법 + 주차장법 + 건축법"
+  → 종합 답변: 커뮤니티 요약들을 합성한 전체 그림
+```
+
+#### Phase 4: 고급 최적화 (종합 75%+)
+
+| 작업 | 효과 | 난이도 |
+|------|------|--------|
+| Cross-encoder Re-ranking (Cohere Rerank API) | 검색 정확도 +20% | 하 |
+| HyDE (가상 문서 생성 후 검색) | 질문↔문서 격차 해소 | 중 |
+| ConversationSummaryMemory | 긴 대화 히스토리 압축 | 중 |
+| LLM 구조화 출력 (JSON mode) | 근거 체인 파싱 정확도 | 하 |
+| LangSmith 호환 트레이싱 | 디버깅/평가 체계 | 중 |
+
+---
+
+### 추천 구현 순서
+
+```
+=== 1주차: Hybrid RAG (검색 품질 즉시 향상) ===
+1. tsvector 컬럼 + GIN 인덱스 마이그레이션
+2. lib/hybrid-search.js → RRF 점수 합산
+3. RAG + 검색 API에 하이브리드 모드 적용
+
+=== 2~3주차: SSE 스트리밍 + Re-ranking ===
+4. RAG 답변 SSE 스트리밍 (토큰 단위)
+5. Cohere Rerank API 연동 (선택적)
+
+=== 1개월: ReAct 에이전트 ===
+6. 도구 정의 (벡터검색, 법령검색, 교차참조)
+7. ReAct 실행 루프 구현
+8. 에이전트 실행 과정 UI 표시
+
+=== 2개월+: Graph RAG 확장 ===
+9. 커뮤니티 감지 (연결 컴포넌트)
+10. 커뮤니티 요약 생성
+11. 글로벌 검색 모드
+```

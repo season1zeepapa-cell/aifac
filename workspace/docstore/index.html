@@ -3149,7 +3149,7 @@
     // ========================================
     function SearchTab() {
       const [searchQuery, setSearchQuery] = useState('');
-      const [searchType, setSearchType] = useState('text');
+      const [searchType, setSearchType] = useState('hybrid');
       const [results, setResults] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
@@ -3309,6 +3309,7 @@
               {/* 검색 타입 선택 */}
               <div className="flex gap-2 flex-wrap">
                 {[
+                  { key: 'hybrid', label: '통합 검색' },
                   { key: 'text', label: '텍스트 검색' },
                   { key: 'vector', label: '의미 검색' },
                 ].map(t => (
@@ -3358,7 +3359,9 @@
               )}
 
               <p className="text-xs text-text-secondary">
-                {searchType === 'text'
+                {searchType === 'hybrid'
+                  ? '키워드 매칭과 의미 검색을 결합하여 최적의 결과를 보여줍니다.'
+                  : searchType === 'text'
                   ? '입력한 단어가 포함된 문서를 검색합니다.'
                   : '입력한 내용과 의미가 유사한 문서를 검색합니다.'}
               </p>
@@ -3389,6 +3392,37 @@
 
               {results.count === 0 ? (
                 <EmptyState icon="🔍" title="검색 결과가 없습니다" description="다른 검색어로 시도해보세요." />
+              ) : results.type === 'hybrid' ? (
+                <>
+                  {results.results.slice(0, visibleCount).map((r, idx) => (
+                    <ResultCard key={idx} r={r}>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-text text-sm">{highlightText(r.documentTitle, results.query)}</span>
+                          <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>{r.category}</Badge>
+                          {r.vectorRank && r.ftsRank
+                            ? <Badge color="green">양쪽 매칭</Badge>
+                            : r.vectorRank
+                            ? <Badge color="blue">의미 매칭</Badge>
+                            : <Badge color="yellow">키워드 매칭</Badge>}
+                          <span className="text-xs text-text-secondary">RRF {(r.rrfScore * 1000).toFixed(2)}</span>
+                          {r.label && <Badge color="gray">{r.label}</Badge>}
+                        </div>
+                        <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
+                          {highlightText(r.chunkText, results.query)}
+                        </p>
+                      </div>
+                    </ResultCard>
+                  ))}
+                  {visibleCount < results.results.length && (
+                    <button
+                      onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                      className="w-full py-3 text-sm font-medium text-primary bg-card-bg border border-border rounded-xl hover:bg-card-bg-hover transition-colors"
+                    >
+                      더보기 ({visibleCount}/{results.results.length}건)
+                    </button>
+                  )}
+                </>
               ) : results.type === 'text' ? (
                 <>
                   {results.results.slice(0, visibleCount).map((r, idx) => (

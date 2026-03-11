@@ -1,6 +1,7 @@
 // 멀티홉 RAG 검색 엔진
-// 1차 벡터 검색 → 참조 추출 → 2차 검색 → 병합/중복제거/재순위화
+// 1차 하이브리드 검색 → 참조 추출 → 2차 벡터 검색 → 병합/중복제거/재순위화
 const { generateEmbedding } = require('./embeddings');
+const { hybridSearch } = require('./hybrid-search');
 
 /**
  * 청크 텍스트에서 법령 교차 참조를 추출
@@ -47,9 +48,16 @@ function extractCrossReferences(chunks) {
 async function multiHopSearch(dbQuery, question, options = {}) {
   const { topK = 5, docIds = [] } = options;
 
-  // ── 1차 검색: 원본 질문으로 벡터 검색 ──
-  const embedding = await generateEmbedding(question.trim());
-  const hop1Chunks = await vectorSearch(dbQuery, embedding, { topK, docIds });
+  // ── 1차 검색: 하이브리드 검색 (벡터 + 전문검색 + RRF) ──
+  let hop1Chunks;
+  try {
+    hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds });
+  } catch (err) {
+    // FTS 컬럼 미생성 등의 경우 기존 벡터 검색으로 fallback
+    console.warn('[RAG Agent] 하이브리드 검색 실패, 벡터 검색으로 fallback:', err.message);
+    const embedding = await generateEmbedding(question.trim());
+    hop1Chunks = await vectorSearch(dbQuery, embedding, { topK, docIds });
+  }
 
   if (hop1Chunks.length === 0) {
     return { sources: [], hops: 1 };
