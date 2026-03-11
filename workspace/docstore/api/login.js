@@ -22,11 +22,21 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // public.users 테이블에서 사용자 조회 (org_id 포함 — 멀티테넌시)
-    const result = await query(
-      'SELECT u.id, u.username, u.password_hash, u.name, u.is_admin, u.org_id, o.name AS org_name, o.slug AS org_slug FROM public.users u LEFT JOIN organizations o ON u.org_id = o.id WHERE u.username = $1',
-      [id]
-    );
+    // public.users 테이블에서 사용자 조회
+    // organizations 테이블이 존재하면 JOIN, 없으면 단순 조회 (마이그레이션 전 호환)
+    let result;
+    try {
+      result = await query(
+        'SELECT u.id, u.username, u.password_hash, u.name, u.is_admin, u.org_id, o.name AS org_name, o.slug AS org_slug FROM public.users u LEFT JOIN organizations o ON u.org_id = o.id WHERE u.username = $1',
+        [id]
+      );
+    } catch (joinErr) {
+      // organizations 테이블 또는 org_id 컬럼이 없는 경우 fallback
+      result = await query(
+        'SELECT id, username, password_hash, name, is_admin FROM public.users WHERE username = $1',
+        [id]
+      );
+    }
 
     if (result.rows.length === 0) {
       return res.status(401).json({ error: '아이디 또는 비밀번호가 올바르지 않습니다.' });
