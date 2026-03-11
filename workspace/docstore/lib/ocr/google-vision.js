@@ -28,9 +28,12 @@ module.exports = {
     });
 
     return new Promise((resolve, reject) => {
-      const req = https.request(url, {
+      const parsed = new URL(`${url}?key=${apiKey}`);
+      const req = https.request({
+        hostname: parsed.hostname,
+        path: `${parsed.pathname}${parsed.search}`,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        headers: { 'Content-Type': 'application/json' },
         timeout: 30000,
       }, (res) => {
         const chunks = [];

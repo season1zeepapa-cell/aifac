@@ -310,6 +310,60 @@ const ALL_ENGINES = {
     },
   },
 
+  // ── Google Cloud Vision (최고 정확도, 필기체/다국어) ──
+  'google-vision': {
+    name: 'Google Cloud Vision',
+    description: '최고 정확도, 필기체/다국어 인식 (GCP Vision API)',
+    provider: 'google-vision',
+    envKey: 'GOOGLE_VISION_API_KEY',
+    free: false,
+    isAvailable() { return !!(process.env.GOOGLE_VISION_API_KEY || '').trim(); },
+    async execute(base64, mediaType, prompt) {
+      const apiKey = process.env.GOOGLE_VISION_API_KEY;
+      const body = JSON.stringify({
+        requests: [{
+          image: { content: base64 },
+          features: [{ type: 'DOCUMENT_TEXT_DETECTION', maxResults: 1 }],
+          imageContext: { languageHints: ['ko', 'en'] },
+        }],
+      });
+
+      return new Promise((resolve, reject) => {
+        const parsed = new URL(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`);
+        const req = https.request({
+          hostname: parsed.hostname,
+          path: `${parsed.pathname}${parsed.search}`,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000,
+        }, (res) => {
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
+          res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
+            try {
+              const json = JSON.parse(data);
+              if (res.statusCode !== 200) {
+                reject(new Error(json.error?.message || `Google Vision 오류: HTTP ${res.statusCode}`));
+                return;
+              }
+              const annotation = json.responses?.[0]?.fullTextAnnotation;
+              const text = annotation?.text || '';
+              if (!text.trim()) reject(new Error('텍스트가 추출되지 않았습니다.'));
+              else resolve(text.trim());
+            } catch (e) {
+              reject(new Error('Google Vision 응답 파싱 실패'));
+            }
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Google Vision 시간 초과 (30초)')); });
+        req.write(body);
+        req.end();
+      });
+    },
+  },
+
   // ── AWS Textract (표/양식 특화) ──
   'aws-textract': {
     name: 'AWS Textract',
@@ -416,9 +470,10 @@ async function getEngineConfig() {
   // 기본 우선순위 (DB 없을 때)
   const defaults = [
     { engine_id: 'upstage-ocr', is_enabled: true, priority_order: 1 },
-    { engine_id: 'gemini-vision', is_enabled: true, priority_order: 2 },
-    { engine_id: 'claude-vision', is_enabled: true, priority_order: 3 },
-    { engine_id: 'openai-vision', is_enabled: true, priority_order: 4 },
+    { engine_id: 'google-vision', is_enabled: true, priority_order: 2 },
+    { engine_id: 'gemini-vision', is_enabled: true, priority_order: 3 },
+    { engine_id: 'claude-vision', is_enabled: true, priority_order: 4 },
+    { engine_id: 'openai-vision', is_enabled: true, priority_order: 5 },
   ];
   engineCache = defaults;
   cacheTime = Date.now();
@@ -449,7 +504,7 @@ async function getEngineList() {
 
   // ALL_ENGINES 기준으로 전체 목록 생성 (DB에 없는 엔진도 항상 포함)
   const engineIds = Object.keys(ALL_ENGINES);
-  const defaultOrders = { 'upstage-ocr': 1, 'gemini-vision': 2, 'claude-vision': 3, 'openai-vision': 4, 'naver-clova': 5, 'ocr-space': 6, 'aws-textract': 7 };
+  const defaultOrders = { 'upstage-ocr': 1, 'google-vision': 2, 'gemini-vision': 3, 'claude-vision': 4, 'openai-vision': 5, 'naver-clova': 6, 'ocr-space': 7, 'aws-textract': 8 };
 
   const result = engineIds.map(id => {
     const engine = ALL_ENGINES[id];
