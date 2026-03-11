@@ -57,7 +57,7 @@ module.exports = async function handler(req, res) {
   if (authError) return res.status(401).json({ error: authError });
 
   // Rate Limit 체크
-  if (checkRateLimit(req, res, 'upload')) return;
+  if (await checkRateLimit(req, res, 'upload')) return;
 
   try {
     // multipart/form-data 처리 (multer)

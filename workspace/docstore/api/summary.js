@@ -34,7 +34,7 @@ module.exports = async (req, res) => {
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
 
-  if (checkRateLimit(req, res, 'summary')) return;
+  if (await checkRateLimit(req, res, 'summary')) return;
 
   const { sectionId, documentId, provider = 'gemini' } = req.body;
   const llmOptions = { provider };

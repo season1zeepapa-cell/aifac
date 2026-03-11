@@ -20,7 +20,7 @@ module.exports = async function handler(req, res) {
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
 
-  if (checkRateLimit(req, res, 'search')) return;
+  if (await checkRateLimit(req, res, 'search')) return;
 
   // 자동완성 서제스트 모드
   if (req.query.suggest !== undefined) {

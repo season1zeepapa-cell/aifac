@@ -162,7 +162,7 @@ module.exports = async (req, res) => {
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
 
-  if (checkRateLimit(req, res, 'urlImport')) return;
+  if (await checkRateLimit(req, res, 'urlImport')) return;
 
   const { url, title: inputTitle, category = '기타' } = req.body;
 

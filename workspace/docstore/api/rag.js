@@ -26,7 +26,7 @@ module.exports = async (req, res) => {
   if (authError) return res.status(401).json({ error: authError });
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
-  if (checkRateLimit(req, res, 'rag')) return;
+  if (await checkRateLimit(req, res, 'rag')) return;
 
   const { question, topK = 5, docId, docIds, provider = 'gemini', history = [], llmOptions = {}, stream = false } = req.body;
   if (!question || question.trim().length === 0) {

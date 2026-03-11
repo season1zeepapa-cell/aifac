@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
   }
 
   // 브루트포스 방어: IP 기준 1분 5회 제한
-  if (checkRateLimit(req, res, 'login')) return;
+  if (await checkRateLimit(req, res, 'login')) return;
 
   const { id, password } = req.body || {};
 

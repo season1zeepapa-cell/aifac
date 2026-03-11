@@ -2,11 +2,13 @@
 // workspace/error의 users 테이블을 공유하며, 관리자(is_admin)만 허용
 const crypto = require('crypto');
 
-// AUTH_TOKEN_SECRET 필수 — 미설정 시 서버 시작 거부
+// AUTH_TOKEN_SECRET 필수 — 32자 이상 필수 (예측 불가능한 서명 보장)
 const TOKEN_SECRET = (process.env.AUTH_TOKEN_SECRET || '').trim();
-if (!TOKEN_SECRET) {
-  console.error('[Auth] AUTH_TOKEN_SECRET 환경변수가 설정되지 않았습니다.');
-  // Vercel 서버리스에서는 즉시 중단하지 않고 런타임에 에러 반환
+const TOKEN_SECRET_VALID = TOKEN_SECRET.length >= 32;
+if (!TOKEN_SECRET_VALID) {
+  console.error('[Auth] AUTH_TOKEN_SECRET이 설정되지 않았거나 32자 미만입니다.');
+  console.error('[Auth] 최소 32자 이상의 랜덤 문자열을 환경변수로 설정해주세요.');
+  // Vercel 서버리스에서는 즉시 중단하지 않고, 토큰 생성/검증 시 거부
 }
 
 // JWT 구현 (jsonwebtoken 패키지 없이 직접 구현 — 의존성 최소화)
@@ -22,6 +24,10 @@ function base64urlDecode(str) {
 }
 
 function signToken(payload, secret, expiresIn = '7d') {
+  // 시크릿 유효성 검증 — 빈 문자열이나 짧은 키로 서명 방지
+  if (!secret || secret.length < 32) {
+    throw new Error('AUTH_TOKEN_SECRET이 32자 미만입니다. 토큰 서명을 거부합니다.');
+  }
   const header = { alg: 'HS256', typ: 'JWT' };
   // 만료 시간 계산
   const match = expiresIn.match(/^(\d+)([dhms])$/);
@@ -43,7 +49,7 @@ function signToken(payload, secret, expiresIn = '7d') {
 }
 
 function verifyToken(token) {
-  if (!token || !TOKEN_SECRET) return null;
+  if (!token || !TOKEN_SECRET_VALID) return null;
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;

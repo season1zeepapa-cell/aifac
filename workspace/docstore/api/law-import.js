@@ -37,7 +37,7 @@ module.exports = async (req, res) => {
   const { error: authError } = requireAdmin(req);
   if (authError) return res.status(401).json({ error: authError });
 
-  if (checkRateLimit(req, res, 'lawImport')) return;
+  if (await checkRateLimit(req, res, 'lawImport')) return;
 
   const { lawId, lawName } = req.body;
   if (!lawId) return res.status(400).json({ error: '법령ID(lawId)가 필요합니다.' });
