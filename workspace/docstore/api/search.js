@@ -8,6 +8,7 @@ const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { escapeIlike } = require('../lib/input-sanitizer');
 const { sendError } = require('../lib/error-handler');
+const { buildTsquery } = require('../lib/korean-tokenizer');
 
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, OPTIONS' })) return;
@@ -193,8 +194,12 @@ module.exports = async function handler(req, res) {
       const resolvedIds2 = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
 
       if (canUseFTS) {
-        // ── FTS 검색: tsvector + ts_rank + ts_headline ──
-        const tsqueryStr = words.map(w => `${w}:*`).join(' | ');
+        // ── FTS 검색: 한국어 토크나이저 + ts_rank_cd + ts_headline ──
+        const { tsquery: tsqueryStr, expandedTerms } = buildTsquery(trimmed, {
+          mode: 'or',
+          useNgrams: true,
+          useSynonyms: true,
+        });
         let filterClauses = ['ds.fts_vector IS NOT NULL', 'd.deleted_at IS NULL'];
         let params = [tsqueryStr];
         let paramIdx = 2;
@@ -232,7 +237,7 @@ module.exports = async function handler(req, res) {
              d.title AS document_title,
              d.category,
              d.summary AS document_summary,
-             ts_rank(ds.fts_vector, to_tsquery('simple', $1)) AS fts_score,
+             ts_rank_cd(ds.fts_vector, to_tsquery('simple', $1), 32) AS fts_score,
              ts_headline('simple', ds.raw_text, to_tsquery('simple', $1),
                'StartSel=<mark>, StopSel=</mark>, MaxWords=60, MinWords=20, MaxFragments=2'
              ) AS headline
@@ -249,6 +254,7 @@ module.exports = async function handler(req, res) {
           type: 'fts',
           query: q,
           count: result.rows.length,
+          expandedTerms: expandedTerms.length > 0 ? expandedTerms : undefined,
           results: result.rows.map(row => {
             const meta = row.section_metadata || {};
             return {

@@ -21,6 +21,7 @@
 
 const { generateEmbedding } = require('./embeddings');
 const { rerankResults } = require('./reranker');
+const { buildTsquery } = require('./korean-tokenizer');
 
 const RRF_K = 60; // RRF 상수 (값이 클수록 하위 순위의 영향이 커짐)
 
@@ -34,14 +35,17 @@ const RRF_K = 60; // RRF 상수 (값이 클수록 하위 순위의 영향이 커
  * @returns {Array} 검색 결과 (chunk 배열)
  */
 async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [] }) {
-  // 검색어를 tsquery로 변환
-  // 'simple' 설정은 한국어에 적합 (형태소 분석 없이 공백 기반 분리)
-  // 각 단어에 ':*'를 붙여서 접두사 매칭 (예: "개인" → "개인:*")
-  const words = queryText.trim().split(/\s+/).filter(w => w.length > 0);
-  if (words.length === 0) return [];
+  // 한국어 토크나이저로 검색어 확장 (n-gram + 동의어)
+  const { tsquery: tsqueryStr, expandedTerms } = buildTsquery(queryText, {
+    mode: 'or',
+    useNgrams: true,
+    useSynonyms: true,
+  });
+  if (!tsqueryStr) return [];
 
-  // 각 단어를 OR로 연결 (하나라도 매칭되면 결과에 포함)
-  const tsqueryStr = words.map(w => `${w}:*`).join(' | ');
+  if (expandedTerms.length > 0) {
+    console.log(`[FTS] 쿼리 확장: "${queryText}" → +${expandedTerms.length}개 동의어`);
+  }
 
   let filterClause = `dc.fts_vector IS NOT NULL`;
   const params = [tsqueryStr];
@@ -54,7 +58,9 @@ async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [] }) {
   }
   params.push(Math.min(topK, 30));
 
-  // ts_rank: tsvector와 tsquery의 관련도 점수 계산
+  // ts_rank_cd: Cover Density 점수화 (BM25와 유사)
+  // - 매칭된 단어들이 서로 가까이 있을수록 높은 점수
+  // - 32 플래그: 문서 길이로 정규화 (긴 문서가 불공정하게 유리하지 않도록)
   const result = await dbQuery(
     `SELECT
        dc.id AS chunk_id,
@@ -64,7 +70,7 @@ async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [] }) {
        ds.document_id,
        d.title AS document_title,
        d.category,
-       ts_rank(dc.fts_vector, to_tsquery('simple', $1)) AS fts_score
+       ts_rank_cd(dc.fts_vector, to_tsquery('simple', $1), 32) AS fts_score
      FROM document_chunks dc
      JOIN document_sections ds ON dc.section_id = ds.id
      JOIN documents d ON ds.document_id = d.id
