@@ -3408,10 +3408,10 @@
 
               <p className="text-xs text-text-secondary">
                 {searchType === 'hybrid'
-                  ? '키워드 매칭과 의미 검색을 결합하여 최적의 결과를 보여줍니다.'
+                  ? '키워드 + 의미 검색을 RRF 알고리즘으로 합산하고, Rerank로 정밀 재순위화합니다. 최고 품질의 검색 결과를 제공합니다.'
                   : searchType === 'text'
-                  ? '입력한 단어가 포함된 문서를 검색합니다.'
-                  : '입력한 내용과 의미가 유사한 문서를 검색합니다.'}
+                  ? '입력한 단어가 포함된 문서를 검색합니다. (FTS 전문검색 우선, 1글자는 ILIKE 폴백)'
+                  : '입력한 내용과 의미가 유사한 문서를 벡터 임베딩으로 검색합니다.'}
               </p>
             </div>
           </Card>
@@ -3460,9 +3460,14 @@
                 <EmptyState icon="🔍" title="검색 결과가 없습니다" description="다른 검색어로 시도해보세요." />
               ) : results.type === 'hybrid' ? (
                 <>
-                  {results.results.slice(0, visibleCount).map((r, idx) => (
+                  {results.results.slice(0, visibleCount).map((r, idx) => {
+                    /* 최고 점수 대비 상대 품질 계산 (0~100%) */
+                    const topScore = results.results[0]?.rrfScore || 1;
+                    const quality = Math.min(100, Math.round((r.rrfScore / topScore) * 100));
+                    return (
                     <ResultCard key={idx} r={r}>
                       <div className="space-y-2">
+                        {/* 상단: 제목 + 카테고리 + 매칭 방식 + 라벨 */}
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-text text-sm">{highlightText(r.documentTitle, results.query)}</span>
                           <Badge color={r.category === '법령' ? 'primary' : r.category === '기출' ? 'green' : r.category === '규정' ? 'yellow' : 'gray'}>{r.category}</Badge>
@@ -3471,15 +3476,29 @@
                             : r.vectorRank
                             ? <Badge color="blue">의미 매칭</Badge>
                             : <Badge color="yellow">키워드 매칭</Badge>}
-                          <span className="text-xs text-text-secondary">RRF {(r.rrfScore * 1000).toFixed(2)}</span>
                           {r.label && <Badge color="gray">{r.label}</Badge>}
                         </div>
+                        {/* 점수 바: RRF 품질 시각화 + 상세 점수 */}
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all"
+                              style={{ width: `${quality}%`, background: quality >= 80 ? 'var(--primary)' : quality >= 50 ? '#f59e0b' : 'var(--text-secondary)' }} />
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-text-secondary shrink-0">
+                            <span title="RRF 합산 점수">RRF {(r.rrfScore * 1000).toFixed(1)}</span>
+                            {r.similarity && <span title="벡터 유사도">| 유사도 {(r.similarity * 100).toFixed(0)}%</span>}
+                            {r.vectorRank && <span title="벡터 검색 순위">V{r.vectorRank}위</span>}
+                            {r.ftsRank && <span title="키워드 검색 순위">K{r.ftsRank}위</span>}
+                          </div>
+                        </div>
+                        {/* 본문 */}
                         <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
                           {highlightText(r.chunkText, results.query)}
                         </p>
                       </div>
                     </ResultCard>
-                  ))}
+                    );
+                  })}
                   {visibleCount < results.results.length && (
                     <button
                       onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
