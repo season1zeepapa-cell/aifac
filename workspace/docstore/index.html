@@ -125,7 +125,27 @@
     .markdown-body code { background: color-mix(in srgb, var(--primary) 10%, transparent); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
     .markdown-body blockquote { border-left: 3px solid var(--primary); padding-left: 1em; color: var(--text-secondary); margin: 0.5em 0; }
     /* FTS ts_headline <mark> 태그 하이라이팅 스타일 */
-    .fts-headline mark { background: color-mix(in srgb, var(--primary) 30%, transparent); color: var(--primary); padding: 0.1em 0.2em; border-radius: 2px; font-weight: 500; }
+    .fts-headline mark {
+      background: linear-gradient(120deg, color-mix(in srgb, var(--primary) 25%, transparent) 0%, color-mix(in srgb, var(--primary) 40%, transparent) 100%);
+      color: var(--primary);
+      padding: 0.1em 0.25em;
+      border-radius: 3px;
+      font-weight: 600;
+      border-bottom: 2px solid var(--primary);
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    /* 검색 결과 인라인 mark (highlightText) */
+    .search-mark {
+      background: linear-gradient(120deg, color-mix(in srgb, var(--primary) 25%, transparent) 0%, color-mix(in srgb, var(--primary) 40%, transparent) 100%);
+      color: var(--primary);
+      padding: 0.05em 0.2em;
+      border-radius: 3px;
+      font-weight: 600;
+      border-bottom: 2px solid var(--primary);
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
   </style>
   <script>
     tailwind.config = {
@@ -3830,27 +3850,38 @@
       }, [handleSearch, showSuggestions, suggestions, activeIdx, handleSelectSuggestion]);
 
       // 검색어 하이라이트
+      // 검색어 하이라이트 — 다중 단어 각각 매칭 + 첫 매칭 위치 중심 발췌
       const highlightText = useCallback((text, query) => {
         if (!query || !text) return text;
-        const maxLen = 300;
-        const lowerText = text.toLowerCase();
-        const lowerQuery = query.toLowerCase();
-        const idx = lowerText.indexOf(lowerQuery);
+        const maxLen = 350;
+
+        // 검색어를 공백 기준으로 분리하여 각 단어별 매칭 (2글자 이상만)
+        const terms = query.trim().split(/\s+/).filter(t => t.length >= 1);
+        if (terms.length === 0) return text.length > maxLen ? text.slice(0, maxLen) + '...' : text;
+
+        // 정규식 구성: 모든 검색 단어를 OR로 묶어서 하나의 패턴으로 생성
+        const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const pattern = new RegExp(`(${escaped.join('|')})`, 'gi');
+
+        // 첫 번째 매칭 위치를 기준으로 발췌문 생성
+        const firstMatch = text.search(pattern);
         let excerpt = text;
         if (text.length > maxLen) {
-          if (idx >= 0) {
-            const start = Math.max(0, idx - 80);
-            const end = Math.min(text.length, idx + query.length + 220);
+          if (firstMatch >= 0) {
+            const start = Math.max(0, firstMatch - 60);
+            const end = Math.min(text.length, start + maxLen);
             excerpt = (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '');
           } else {
             excerpt = text.slice(0, maxLen) + '...';
           }
         }
-        if (idx < 0) return excerpt;
-        const parts = excerpt.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+
+        // 매칭 부분을 mark 엘리먼트로 변환
+        const parts = excerpt.split(pattern);
+        const lowerTerms = terms.map(t => t.toLowerCase());
         return parts.map((part, i) =>
-          part.toLowerCase() === lowerQuery
-            ? React.createElement('mark', { key: i, className: 'bg-primary/30 text-primary px-0.5 rounded' }, part)
+          lowerTerms.includes(part.toLowerCase())
+            ? React.createElement('mark', { key: i, className: 'search-mark' }, part)
             : part
         );
       }, []);
@@ -4067,10 +4098,16 @@
                             {r.ftsRank && <span title="키워드 검색 순위">K{r.ftsRank}위</span>}
                           </div>
                         </div>
-                        {/* 본문 */}
-                        <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
-                          {highlightText(r.chunkText, results.query)}
-                        </p>
+                        {/* 본문 — headline(FTS 매칭)이 있으면 우선 표시 */}
+                        {r.headline ? (
+                          <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words fts-headline"
+                            dangerouslySetInnerHTML={{ __html: r.headline }}
+                          />
+                        ) : (
+                          <p className="text-sm text-text/80 leading-relaxed whitespace-pre-wrap break-words">
+                            {highlightText(r.chunkText, results.query)}
+                          </p>
+                        )}
                       </div>
                     </ResultCard>
                     );

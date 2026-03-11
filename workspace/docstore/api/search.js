@@ -107,6 +107,7 @@ module.exports = async function handler(req, res) {
           return {
             chunkId: row.chunk_id,
             chunkText: row.chunk_text,
+            headline: row.headline || '',
             rrfScore: parseFloat(row.rrf_score).toFixed(6),
             similarity: row.similarity ? parseFloat(row.similarity).toFixed(4) : null,
             vectorRank: row.vector_rank,

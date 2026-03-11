@@ -77,7 +77,10 @@ async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [], orgId = n
        ds.document_id,
        d.title AS document_title,
        d.category,
-       ts_rank_cd(dc.fts_vector, to_tsquery('simple', $1), 32) AS fts_score
+       ts_rank_cd(dc.fts_vector, to_tsquery('simple', $1), 32) AS fts_score,
+       ts_headline('simple', dc.chunk_text, to_tsquery('simple', $1),
+         'StartSel=<mark>, StopSel=</mark>, MaxWords=60, MinWords=20, MaxFragments=2'
+       ) AS headline
      FROM document_chunks dc
      JOIN document_sections ds ON dc.section_id = ds.id
      JOIN documents d ON ds.document_id = d.id
@@ -187,6 +190,8 @@ function rrfFusion(vectorResults, ftsResults, topK = 10) {
       const existing = scoreMap.get(key);
       existing.rrf_score += rrfScore;
       existing.fts_rank = rank;
+      // FTS 결과의 headline을 합침 (벡터 검색에는 없으므로)
+      if (row.headline) existing.headline = row.headline;
     } else {
       // FTS에서만 발견
       scoreMap.set(key, {
