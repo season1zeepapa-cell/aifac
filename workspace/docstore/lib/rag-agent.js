@@ -1,7 +1,8 @@
 // 멀티홉 RAG 검색 엔진
-// 1차 하이브리드 검색 → 참조 추출 → 2차 벡터 검색 → 병합/중복제거/재순위화
+// 1차 하이브리드 검색 → 참조 추출 → 2차 벡터 검색 → 병합/중복제거/재순위화(Cohere Rerank)
 const { generateEmbedding } = require('./embeddings');
 const { hybridSearch } = require('./hybrid-search');
+const { rerankResults } = require('./reranker');
 
 /**
  * 청크 텍스트에서 법령 교차 참조를 추출
@@ -80,8 +81,9 @@ async function multiHopSearch(dbQuery, question, options = {}) {
   }
 
   if (crossRefs.length === 0 && dbCrossRefChunks.length === 0) {
-    // 참조가 없으면 1차 결과만 반환
-    return { sources: formatSources(hop1Chunks), hops: 1 };
+    // 참조가 없어도 1차 결과에 Rerank 적용
+    const reranked = await deduplicateAndRerank(hop1Chunks, question, topK);
+    return { sources: formatSources(reranked), hops: 1 };
   }
 
   // ── 2차 검색: 추출된 참조를 쿼리로 추가 검색 ──
@@ -102,8 +104,12 @@ async function multiHopSearch(dbQuery, question, options = {}) {
     }
   }
 
-  // ── 병합 + 중복 제거 + 재순위화 (DB 교차 참조 결과 포함) ──
-  const merged = deduplicateAndRank([...hop1Chunks, ...hop2Chunks, ...dbCrossRefChunks], topK + 3);
+  // ── 병합 + 중복 제거 + Cohere Rerank 재순위화 ──
+  const merged = await deduplicateAndRerank(
+    [...hop1Chunks, ...hop2Chunks, ...dbCrossRefChunks],
+    question,
+    topK + 3
+  );
 
   return {
     sources: formatSources(merged),
@@ -151,9 +157,17 @@ async function vectorSearch(dbQuery, embedding, { topK = 5, docIds = [] }) {
 }
 
 /**
- * 중복 제거 + 유사도 재순위화
+ * 중복 제거 + Cohere Rerank 재순위화
+ * - Cohere API 키가 있으면: 중복 제거 → Rerank (질문-청크 관련도 기반)
+ * - Cohere API 키가 없으면: 중복 제거 → 기존 유사도 정렬 (fallback)
+ *
+ * @param {Array} chunks - 검색된 청크 배열 (1차 + 2차 + 교차참조 병합)
+ * @param {string} question - 사용자 질문 (Rerank에 사용)
+ * @param {number} limit - 최종 반환 개수
+ * @returns {Promise<Array>} 재순위화된 청크 배열
  */
-function deduplicateAndRank(chunks, limit) {
+async function deduplicateAndRerank(chunks, question, limit) {
+  // 1단계: 중복 제거
   const seen = new Set();
   const unique = [];
 
@@ -164,7 +178,21 @@ function deduplicateAndRank(chunks, limit) {
     unique.push(chunk);
   }
 
-  // 유사도 내림차순 정렬
+  // 2단계: Cohere Rerank 시도 (질문-청크 관련도 기반 재순위화)
+  try {
+    const reranked = await rerankResults(question, unique, limit);
+
+    // rerankResults는 Cohere 키가 없으면 원본 순서 유지 (slice만 수행)
+    // relevance_score가 있으면 Rerank 성공
+    if (reranked.length > 0 && reranked[0].relevance_score !== undefined) {
+      console.log(`[RAG Agent] Cohere Rerank 적용: ${unique.length}개 → ${reranked.length}개`);
+      return reranked;
+    }
+  } catch (err) {
+    console.warn('[RAG Agent] Rerank 실패, 유사도 정렬로 fallback:', err.message);
+  }
+
+  // 3단계: Fallback — 기존 유사도 내림차순 정렬
   unique.sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity));
   return unique.slice(0, limit);
 }
@@ -216,6 +244,11 @@ async function fetchCrossRefChunks(dbQuery, hop1Chunks) {
 
   if (crossRefResult.rows.length === 0) return [];
 
+  // 섹션 ID → confidence 맵 (동적 유사도 할당에 사용)
+  const confidenceMap = new Map();
+  crossRefResult.rows.forEach(r => {
+    confidenceMap.set(r.section_id, parseFloat(r.confidence));
+  });
   const sectionIds = crossRefResult.rows.map(r => r.section_id);
 
   // 해당 섹션들의 청크 가져오기
@@ -223,12 +256,12 @@ async function fetchCrossRefChunks(dbQuery, hop1Chunks) {
     `SELECT
        dc.id AS chunk_id,
        dc.chunk_text,
+       ds.id AS section_id,
        ds.section_type,
        ds.metadata AS section_metadata,
        ds.document_id,
        d.title AS document_title,
-       d.category,
-       0.75 AS similarity
+       d.category
      FROM document_chunks dc
      JOIN document_sections ds ON dc.section_id = ds.id
      JOIN documents d ON ds.document_id = d.id
@@ -239,7 +272,11 @@ async function fetchCrossRefChunks(dbQuery, hop1Chunks) {
     [sectionIds]
   );
 
-  return chunkResult.rows;
+  // 교차참조 confidence를 similarity로 사용 (고정 0.75 대신 동적 값)
+  return chunkResult.rows.map(row => ({
+    ...row,
+    similarity: confidenceMap.get(row.section_id) || 0.75,
+  }));
 }
 
 module.exports = { multiHopSearch, extractCrossReferences };
