@@ -39,11 +39,9 @@ test.describe('크롤링 탭 UI 기본 요소', () => {
     await goToCrawlMode(page);
   });
 
-  test('등록 탭에 4개 모드 버튼이 표시된다 (파일, 법령, URL, 크롤링)', async ({ page }) => {
-    // 4개 모드 버튼 확인
-    await expect(page.getByRole('button', { name: '파일' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '법령' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'URL' })).toBeVisible();
+  test('등록 탭에 3개 모드 버튼이 표시된다 (파일 업로드, 법령 검색, 크롤링)', async ({ page }) => {
+    await expect(page.getByRole('button', { name: '파일 업로드' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '법령 검색' })).toBeVisible();
     await expect(page.getByRole('button', { name: '크롤링', exact: true })).toBeVisible();
   });
 
@@ -416,7 +414,7 @@ test.describe('모드 토글', () => {
     await expect(page.getByText('새 소스 추가')).toBeVisible({ timeout: 5000 });
 
     // 파일 모드로 전환
-    await page.getByRole('button', { name: '파일' }).click();
+    await page.getByRole('button', { name: '파일 업로드' }).click();
 
     // 다시 크롤링 모드로 돌아옴
     await page.getByRole('button', { name: '크롤링' }).click();

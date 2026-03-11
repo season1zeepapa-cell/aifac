@@ -1338,29 +1338,23 @@
 
       return (
         <div className="space-y-5 fade-in">
-          {/* 모드 토글 — 4개 균등 배분 */}
-          <div className="grid grid-cols-4 gap-1 bg-gray-100 p-1 rounded-xl">
+          {/* 모드 토글 — 3개 균등 배분 */}
+          <div className="grid grid-cols-3 gap-2 bg-gray-100 p-1 rounded-xl">
             <button
               onClick={() => setUploadMode('file')}
-              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
                 uploadMode === 'file' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
-            >파일</button>
+            >파일 업로드</button>
             <button
               onClick={() => setUploadMode('law')}
-              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
                 uploadMode === 'law' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
-            >법령</button>
-            <button
-              onClick={() => setUploadMode('url')}
-              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                uploadMode === 'url' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
-              }`}
-            >URL</button>
+            >법령 검색</button>
             <button
               onClick={() => setUploadMode('crawl')}
-              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
                 uploadMode === 'crawl' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
             >크롤링</button>
@@ -1714,63 +1708,6 @@
           )}
 
           {/* ── URL 크롤링 모드 ── */}
-          {uploadMode === 'url' && (
-            <>
-              <Card>
-                <div className="space-y-4">
-                  <Input
-                    label="웹 페이지 URL"
-                    value={urlInput}
-                    onChange={e => setUrlInput(e.target.value)}
-                    placeholder="https://example.com/page"
-                  />
-                  <Input
-                    label="제목 (비워두면 자동 추출)"
-                    value={urlTitle}
-                    onChange={e => setUrlTitle(e.target.value)}
-                    placeholder="페이지 제목"
-                  />
-                  <Select
-                    label="카테고리"
-                    value={urlCategory}
-                    onChange={e => setUrlCategory(e.target.value)}
-                    options={CATEGORIES.filter(c => c.value !== '')}
-                  />
-                  <p className="text-xs text-text-secondary">
-                    웹 페이지의 텍스트를 크롤링하여 지식 DB에 저장합니다.
-                  </p>
-                </div>
-              </Card>
-
-              {urlError && (
-                <Card className="border-red-200 bg-red-50">
-                  <p className="text-sm text-red-500">{urlError}</p>
-                </Card>
-              )}
-
-              {urlResult && (
-                <Card className="border-green-200 bg-green-50">
-                  <div className="space-y-1">
-                    <p className="text-sm text-green-600 font-medium">크롤링 완료!</p>
-                    <p className="text-xs text-text-secondary">
-                      "{urlResult.title}" - {urlResult.sectionCount}개 섹션, {urlResult.charCount.toLocaleString()}자 추출
-                    </p>
-                  </div>
-                </Card>
-              )}
-
-              <Button
-                variant="primary"
-                size="lg"
-                className="w-full"
-                disabled={!urlInput.trim() || urlImporting}
-                onClick={handleUrlImport}
-              >
-                {urlImporting ? '크롤링 중...' : 'URL 크롤링'}
-              </Button>
-            </>
-          )}
-
           {/* ── 크롤링 수집 모드 ── */}
           {uploadMode === 'crawl' && (
             <>
