@@ -2963,3 +2963,293 @@ if (idx < 1 || idx > sources.length) {
 // SSE 스트리밍 이벤트 (신규)
 data: { type: "parsed", parsed: { conclusion, evidenceChain, ... } }
 ```
+
+---
+
+## 코드베이스 3차 종합 분석 (2026-03-11)
+
+> 전체 코드베이스(15개 API, 27개 lib 파일, SPA 프론트엔드)를 최신 상태 기준으로 정밀 분석
+> 이전 분석 이후 구현된 보안 패치, 검색 파이프라인 업그레이드를 반영
+
+---
+
+### 이전 분석 대비 해결 현황 (2차 → 3차)
+
+| 이전 ID | 항목 | 상태 |
+|---------|------|------|
+| S5 | Rate Limiter 서버리스 무력화 | ✅ 해결 — DB 기반(`rate_limits` 테이블) + 인메모리 폴백 |
+| S6 | emptyTrash 트랜잭션 미사용 | ✅ 해결 — `deleteDocumentsBatch()` 배치 트랜잭션 구현 |
+| S12 | Rate Limiter 서버리스 무력화 (중복) | ✅ 해결 — 위와 동일 |
+| S13 | emptyTrash 트랜잭션 미사용 (중복) | ✅ 해결 — 위와 동일 |
+| S21 | 보안 헤더 미설정 | ✅ 해결 — `vercel.json` headers 섹션 추가 (HSTS, X-Frame-Options, CSP 등) |
+| R5 | 요약 순차 처리 | 미확인 — 코드 확인 필요 |
+| R6 | 법령 N+1 INSERT | 미확인 — 코드 확인 필요 |
+| R8 | 태그 조회 N+1 | 미확인 — 코드 확인 필요 |
+| — | FTS 전문 검색 | ✅ 신규 — `tsvector` + `ts_rank_cd` + 가중 인덱스 구현 |
+| — | 한국어 토크나이저 | ✅ 신규 — n-gram + 동의어 사전 (`lib/korean-tokenizer.js`) |
+| — | Cohere Rerank + MMR | ✅ 신규 — RAG 파이프라인에 Cross-encoder 재랭킹 + 다양성 보장 |
+| — | Output Parser | ✅ 신규 — LLM JSON 파싱 + 환각 감지 (`lib/output-parser.js`) |
+
+---
+
+### Part 1: 보안 취약점
+
+#### 🔴 CRITICAL — 즉시 조치 필요
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| S22 | XSS — `dangerouslySetInnerHTML` | `index.html` (4곳) | `marked.parse()` 출력을 직접 `dangerouslySetInnerHTML`에 주입 → DOMPurify 없이 LLM 출력에 포함된 `<script>`, `onerror` 등 실행 가능 | DOMPurify CDN 추가 + `marked.parse()` 결과를 `DOMPurify.sanitize()` 처리 |
+| S23 | 바이너리 다운로드 Content-Type 미설정 | `api/documents.js:113` | BYTEA 폴백 `res.send(row.original_file)` 시 Content-Type 미지정 → SVG/HTML 파일이면 브라우저가 실행 | `res.setHeader('Content-Type', 'application/octet-stream')` 명시 |
+| S24 | Rate Limit SQL 문자열 보간 | `lib/rate-limit.js:67,72` | `INTERVAL '${windowSec} seconds'` — LIMITS 객체가 하드코딩이라 현재 안전하지만 위험 패턴 | `INTERVAL '1 second' * $N` 파라미터화 |
+
+#### 🟠 HIGH — 조기 개선 권장
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| S25 | Signed URL 1시간 만료 | `lib/storage.js` | Supabase Storage signed URL이 1시간 유효 → 유출 시 누구나 다운로드 | 5~10분으로 축소 |
+| S26 | Base64 업로드 MIME 미검증 | `api/upload.js:100-111` | JSON `fileBase64` 방식은 multer MIME 체크 우회 → 실행 가능 파일 위장 가능 | magic bytes 검증 추가 (Buffer 첫 4바이트 확인) |
+| S27 | 24시간 누적 로그인 제한 없음 | `api/login.js` | 1분 5회 제한만 존재, 하루에 수천 회 가능 | IP당 24시간 50회 상한 추가 |
+| S28 | RegExp 인젝션 (기존 S14) | `lib/pdf-extractor.js` | 사용자 `customDelimiter` → `new RegExp()` 직접 전달 → ReDoS | `escapeRegExp()` 적용 |
+
+#### 🟡 MEDIUM — 점진적 개선
+
+| # | 항목 | 위치 | 설명 | 조치 방안 |
+|---|------|------|------|-----------|
+| S29 | DNS Rebinding TOCTOU | `lib/input-sanitizer.js:97-112` | DNS 조회 → HTTP 요청 사이 DNS 변경 가능 | 커스텀 DNS resolver + DNS 캐시(1시간 TTL) |
+| S30 | 비식별화 Regex DoS | `lib/deidentify.js:36-42` | 사용자 키워드로 정규식 생성 — 100+자 키워드 × 100개 → O(n²) 매칭 | 키워드 50개·20자 제한 + `string.indexOf()` 대안 |
+| S31 | LLM 응답 JSON 스키마 미검증 | `lib/output-parser.js` | `JSON.parse()` 성공해도 필드 존재 여부/타입 미검증 → 예기치 않은 값 | Zod/Joi 스키마 검증 또는 수동 필드 체크 |
+| S32 | console.log 민감정보 | 다수 API | `err.stack`에 API 키, DB URL 등 포함 가능 | 구조화된 로거 + 민감정보 마스킹 |
+| S33 | CSP 헤더 미설정 | `vercel.json` | Content-Security-Policy 없음 → CDN 스크립트 변조 시 방어 불가 | `script-src 'self' cdn.jsdelivr.net unpkg.com` 등 설정 |
+
+#### ✅ 양호한 부분
+
+| 항목 | 근거 |
+|------|------|
+| SQL Injection | 모든 쿼리가 `$1` 파라미터 바인딩 |
+| JWT 서명 검증 | `crypto.timingSafeEqual` 적용 |
+| 비밀번호 해싱 | scrypt (GPU brute-force 내성) + 레거시 하위호환 |
+| 토큰 시크릿 | 32자 이상 강제, 미설정 시 토큰 발급 거부 |
+| CORS 도메인 제한 | 화이트리스트 기반 (`lib/cors.js`) |
+| 파일명 정화 | `sanitizeFilename()` — path traversal, null byte 방어 |
+| ILIKE 이스케이프 | `escapeIlike()` — 와일드카드 인젝션 방어 |
+| SSRF 방어 | DNS 확인 + 내부 IP 블럭리스트 + 호스트 블럭리스트 + 리다이렉트 재검증 |
+| 에러 메시지 분리 | `error-handler.js` — 프로덕션/개발 에러 메시지 분기 |
+| 보안 헤더 | `vercel.json` + `cors.js`에 HSTS, X-Frame-Options 등 설정 |
+| 파일 업로드 검증 | MIME 화이트리스트 + 50MB 크기 제한 (multer 경로) |
+| Rate Limiting | DB 기반 — 서버리스 인스턴스 간 공유, 인메모리 폴백 |
+| URL Import | 리다이렉트 5회 제한 + 매 리다이렉트 SSRF 재검증 |
+| 토큰 추출 | Authorization 헤더만 허용 (URL 파라미터 제거) |
+| API 키 전달 | `x-goog-api-key` 헤더 방식 (URL 노출 방지) |
+
+---
+
+### Part 2: 리팩토링 필요 사항
+
+#### 🔴 우선 리팩토링
+
+| # | 항목 | 위치 | 현황 | 개선안 |
+|---|------|------|------|--------|
+| R13 | `callGemini` 4곳 중복 (기존 R1/R10) | `rag.js`, `summary.js`, `doc-analyzer.js`, OCR 등 | 각 파일에서 개별 LLM 호출 옵션 구성 | `lib/gemini.js` 공통 래퍼 1개로 통합 — 모델명 변경 시 1곳만 수정 |
+| R14 | 휴지통 비우기 N+1 잔존 | `api/documents.js:emptyTrash` | `deleteDocumentsBatch()` 존재하지만 사용 여부 확인 필요 | `emptyTrash` 핸들러에서 확실히 배치 함수 호출 확인 |
+| R15 | 요약 병렬화 미적용 | `api/summary.js` bulk | 100 섹션 순차 처리 → 300초 타임아웃 | `Promise.allSettled()` + 동시 5개 세마포어 |
+| R16 | 법령 임포트 N+1 INSERT | `api/law-import.js` | 1000 조문 → 1000 개별 INSERT | multi-row INSERT (`VALUES ($1,$2), ($3,$4)...`) |
+
+#### 🟡 개선 리팩토링
+
+| # | 항목 | 위치 | 현황 | 개선안 |
+|---|------|------|------|--------|
+| R17 | `paramIdx` 수동 관리 | `search.js`, `rag.js`, `api-usage.js` | `$${paramIdx}` 수동 증가 → 실수 위험 | 간단한 `QueryBuilder` 헬퍼 `{ add(val): '$N', build(): { text, params } }` |
+| R18 | `parseInt` radix 미지정 (기존 S19) | `search.js:25`, `rag.js:49` 등 | `parseInt(value)` | `parseInt(value, 10)` 명시 |
+| R19 | 프론트엔드 단일 파일 5000줄+ | `index.html` | 모든 컴포넌트가 한 파일 → IDE 검색/리팩토링 어려움 | 논리적 주석 분리 유지 (현재도 양호), 장기적으로 `<script src>` 분리 검토 |
+| R20 | 동의어 사전 하드코딩 | `lib/korean-tokenizer.js` | `SYNONYM_DICT` 20+ 항목 소스코드 내 하드코딩 | DB 테이블(`search_synonyms`)로 분리 → UI에서 관리 가능 |
+
+---
+
+### Part 3: 성능 개선
+
+| # | 항목 | 위치 | 현재 성능 | 개선 후 | 개선율 |
+|---|------|------|-----------|---------|--------|
+| P7 | 요약 병렬화 | `api/summary.js` | 100섹션 × 2초 = 200초 | 20묶음 × 2초 = 40초 | **80% 단축** |
+| P8 | 법령 배치 INSERT | `api/law-import.js` | 1000 쿼리 | 1~10 쿼리 | **100~1000배** |
+| P9 | 태그 조회 JOIN 통합 | `api/documents.js` | 1 + N 쿼리 | 1 쿼리 (`jsonb_agg` 서브쿼리) | **N+1 제거** |
+| P10 | 검색 결과 캐싱 | `api/search.js` | 매번 벡터/FTS 계산 | 동일 쿼리 1분 인메모리 캐시 | **반복 검색 즉시 응답** |
+| P11 | DNS 조회 캐싱 | `lib/input-sanitizer.js` | URL 임포트마다 DNS 조회 | 1시간 TTL 캐시 | **반복 호스트 즉시 통과** |
+| P12 | 문서 목록 페이징 | `api/documents.js` | 전체 목록 1회 반환 | `LIMIT/OFFSET` 서버 페이징 | **대량 문서 초기 로드 시간 단축** |
+| P13 | FTS GIN 인덱스 확인 | `document_chunks.fts_vector` | GIN 인덱스 존재 여부 미확인 | `CREATE INDEX IF NOT EXISTS` 스크립트 추가 | **FTS 쿼리 10~100배 향상** |
+| P14 | Rerank API 호출 최적화 | `lib/reranker.js` | 매 RAG 질의마다 Cohere API 호출 | 결과 수 < 5개면 rerank 생략 | **불필요한 API 호출 방지** |
+
+---
+
+### Part 4: 기능 및 UI 개선
+
+#### UI 개선
+
+| # | 항목 | 설명 | 효과 |
+|---|------|------|------|
+| UI1 | DOMPurify 적용 후 마크다운 안전 렌더링 | `marked.parse()` + `DOMPurify.sanitize()` 조합 | XSS 방어 + 보안 강화 |
+| UI2 | 검색 결과 하이라이팅 강화 | FTS `ts_headline` 결과의 `<mark>` 태그를 프론트엔드에서 스타일링 | 검색어 위치 시각적 강조 |
+| UI3 | 검색 자동완성 UI | `/api/search?suggest=접두사` API 활용 → 드롭다운 자동완성 | 검색 UX 향상 (API는 이미 구현됨) |
+| UI4 | 태그 관리 UI | 문서 상세에서 태그 추가/삭제 + 태그별 필터 | 백엔드 완료, 프론트엔드 미반영 |
+| UI5 | 문서 메타 인라인 편집 | 제목/카테고리 클릭 → 인라인 input 전환 → 저장 | 삭제 후 재업로드 불필요 |
+| UI6 | 동의어 사전 관리 UI | 검색 설정에서 동의어 추가/삭제/수정 | 법률 용어 사전 확장 편의 |
+| UI7 | 환각 경고 시각화 개선 | `verified: false` 근거에 툴팁 설명 추가 | 사용자가 AI 답변 신뢰도 판단 가능 |
+
+#### 기능 개선
+
+| # | 항목 | 설명 | 효과 |
+|---|------|------|------|
+| FN1 | 검색 확장 용어 표시 | FTS 응답의 `expandedTerms`를 UI에 "확장 검색어: CCTV → 영상정보처리기기, 폐쇄회로" 표시 | 검색 투명성 향상 |
+| FN2 | 하이브리드 검색 UI 모드 | 검색 타입에 "하이브리드" 옵션 추가 (RRF + Rerank 적용) | 최고 검색 품질 제공 |
+| FN3 | 임베딩 재생성 버튼 | 문서 상세에서 실패한 임베딩 수동 재시도 | 검색 누락 방지 |
+| FN4 | 일괄 업로드 | 여러 파일 동시 드래그앤드롭 + 진행 표시 | 초기 구축 시간 단축 |
+| FN5 | 검색 히스토리 | 최근 검색어 localStorage 저장 + 자동완성에 반영 | 반복 검색 편의 |
+| FN6 | 대화 세션 관리 | 채팅 히스토리 목록 표시 + 세션 전환/삭제 | RAG 채팅 활용도 향상 |
+
+---
+
+### Part 5: 기능 확장 제안
+
+#### 🥇 높은 우선순위 — 기존 인프라 활용 가능
+
+| # | 기능 | 설명 | 근거 |
+|---|------|------|------|
+| EX1 | 문서 버전 관리 | 동일 문서 재업로드 시 이전 버전 보관 + diff 표시 | 법령 개정이 잦아 버전 추적 필수, `documents` 테이블에 `version` 컬럼 추가 |
+| EX2 | 법령 개정 감지 | 임포트된 법령을 법제처 API 주기 체크 → 변경 시 알림/재임포트 | `law-fetcher.js` 이미 존재, 비교 로직만 추가 |
+| EX3 | 문서 비교 | 두 문서(또는 버전) 간 텍스트 diff + AI 변경 분석 | 법령 신/구 조문 대조에 핵심 가치 |
+| EX4 | 북마크 / 하이라이트 | 섹션별 북마크 + 텍스트 하이라이트 저장 | DB 테이블 1개 추가로 구현 가능 |
+
+#### 🥈 중간 우선순위
+
+| # | 기능 | 설명 | 근거 |
+|---|------|------|------|
+| EX5 | 공유 링크 | 특정 문서/섹션을 외부에 읽기전용 공유 (시간 제한 토큰) | 협업 시 유용, 별도 인증 없이 접근 |
+| EX6 | 내보내기 | 문서를 PDF/DOCX/마크다운으로 변환 다운로드 | 보고서 작성 지원 |
+| EX7 | RBAC 권한 분리 | admin/editor/viewer 역할 + 문서별 접근 제어 | 다중 사용자 환경 대비 |
+| EX8 | 감사 로그 | `audit_log` 테이블 — 누가 언제 어떤 문서를 조회/수정/삭제했는지 기록 | 보안 추적 + 규정 준수 |
+| EX9 | 검색 분석 대시보드 | 검색어 통계 — 어떤 검색어가 많이 사용되는지, 결과 0건인 검색어 | 동의어 사전 확장 근거 |
+
+#### 🥉 장기 과제
+
+| # | 기능 | 설명 |
+|---|------|------|
+| EX10 | 참조 관계 그래프 시각화 | 법령 조문 간 참조를 D3.js 네트워크 그래프로 표시 (`cross_references` 데이터 이미 존재) |
+| EX11 | Webhook 연동 | 문서 업로드/분석 완료 시 외부 서비스(Slack, Teams) 알림 |
+| EX12 | PWA 오프라인 캐시 | 자주 참조하는 문서를 오프라인에서도 열람 가능 + 홈 화면 설치 |
+| EX13 | 멀티테넌시 | 조직별 문서 격리 + 독립 관리자 — SaaS 확장 기반 |
+| EX14 | RAG 평가 프레임워크 | 답변 정확도 측정 — 사용자 피드백(👍/👎) + 자동 근거 검증률 집계 |
+
+---
+
+### 종합 실행 로드맵
+
+```
+=== 즉시 (보안 — 1~2일) ===
+1. S22 — DOMPurify CDN 추가 + 마크다운 렌더링 정화 (XSS 방어)
+2. S23 — 바이너리 다운로드 Content-Type 명시
+3. S24 — Rate Limit INTERVAL 파라미터화
+4. S28 — RegExp escapeRegExp 적용
+
+=== 1주차 (성능 + 리팩토링) ===
+5. R15 — 요약 병렬화 (Promise.allSettled + 세마포어)
+6. R16 — 법령 배치 INSERT
+7. P9  — 태그 조회 JOIN 통합
+8. P13 — FTS GIN 인덱스 확인/추가
+
+=== 2주차 (기능/UI) ===
+9. UI2 — 검색 결과 하이라이팅 (ts_headline 활용)
+10. UI3 — 검색 자동완성 UI (API 이미 존재)
+11. FN1 — 검색 확장 용어 표시
+12. UI4 — 태그 관리 UI
+
+=== 3주차 (보안 + 리팩토링) ===
+13. S25 — Signed URL 만료 시간 축소
+14. S33 — CSP 헤더 추가
+15. R13 — callGemini 공통 모듈화
+16. R20 — 동의어 사전 DB 분리
+
+=== 1개월+ (확장) ===
+17. EX1 — 문서 버전 관리
+18. EX3 — 문서 비교
+19. EX8 — 감사 로그
+20. EX10 — 참조 관계 그래프 시각화
+```
+
+---
+
+### 검색 파이프라인 현황 (2026-03-11 최신)
+
+> 이전 분석에서 지적된 검색 파이프라인 한계점이 대폭 개선됨
+
+| 항목 | 이전 상태 | 현재 상태 | 개선율 |
+|------|-----------|-----------|--------|
+| 텍스트 검색 | ILIKE 패턴 매칭 | tsvector FTS + ts_rank_cd (BM25 유사) | **정확도 대폭 향상** |
+| 가중치 | 없음 | setweight A(조항명)/B(장절)/D(본문) | **관련성 순위 개선** |
+| 한국어 처리 | 공백 분리만 | n-gram(2~3) + 동의어 사전 확장 | **부분 매칭 + 약어 검색** |
+| 하이라이팅 | 없음 | ts_headline `<mark>` 태그 | **검색어 위치 시각화** |
+| 재랭킹 | 단순 유사도 정렬 | Cohere Rerank v3.5 Cross-encoder | **의미적 관련성 재평가** |
+| 점수 정규화 | 없음 | Min-Max 정규화 + 가중 평균 | **이종 점수 통합 비교** |
+| 다양성 | 없음 | MMR (λ=0.7, 3-gram Jaccard) | **중복 결과 제거** |
+| 하이브리드 검색 | 벡터 or 텍스트 | 벡터 + FTS + RRF 합산 | **두 방식 장점 결합** |
+| Output Parser | 없음 | JSON 파싱 + 마크다운 폴백 + 환각 감지 | **구조화된 답변 + 신뢰도** |
+
+### 파일 구조 (최신)
+
+```
+workspace/docstore/
+├── server.js                    # Express 메인 서버
+├── index.html                   # SPA 프론트엔드 (React + Tailwind CDN)
+├── vercel.json                  # Vercel 배포 + 보안 헤더
+├── package.json                 # 의존성
+├── api/
+│   ├── login.js                 # 관리자 로그인 (scrypt)
+│   ├── documents.js             # 문서 CRUD + 배치 삭제 + 태그 + 다운로드
+│   ├── upload.js                # 멀티포맷 업로드 + OCR + 비식별화
+│   ├── search.js                # FTS/벡터/하이브리드 검색 + 자동완성
+│   ├── rag.js                   # RAG 멀티홉 + 스트리밍 + Output Parser
+│   ├── summary.js               # AI 요약 (Gemini)
+│   ├── law.js                   # 법령 검색 프록시
+│   ├── law-import.js            # 법령 임포트 (참조 관계)
+│   ├── law-graph.js             # 법령 참조 그래프 데이터
+│   ├── url-import.js            # 웹 URL 크롤링 (EUC-KR 감지)
+│   ├── cross-references.js      # 교차 참조 매트릭스
+│   ├── ocr.js                   # OCR 프록시 (6개 엔진)
+│   ├── deidentify.js            # 비식별화 키워드 CRUD
+│   ├── chat-sessions.js         # 대화 히스토리 저장
+│   └── api-usage.js             # API 사용량 + OCR 설정
+├── lib/
+│   ├── auth.js                  # JWT (HMAC-SHA256) + scrypt 해싱
+│   ├── cors.js                  # CORS 화이트리스트 + 보안 헤더
+│   ├── db.js                    # PostgreSQL 커넥션 풀 (SSL 옵션)
+│   ├── rate-limit.js            # DB 기반 Rate Limiting
+│   ├── input-sanitizer.js       # 파일명/ILIKE/URL 정화 (SSRF 방어)
+│   ├── error-handler.js         # 에러 메시지 분리 (프로덕션/개발)
+│   ├── storage.js               # Supabase Storage 파일 관리
+│   ├── embeddings.js            # OpenAI 임베딩 + 청크 분할
+│   ├── text-splitters.js        # 4가지 청크 분할 전략
+│   ├── gemini.js                # 멀티 LLM 프로바이더 (Gemini/OpenAI/Claude)
+│   ├── rag-agent.js             # 멀티홉 RAG + Rerank + MMR
+│   ├── hybrid-search.js         # 하이브리드 검색 (벡터+FTS+RRF)
+│   ├── korean-tokenizer.js      # 한국어 n-gram + 동의어 사전
+│   ├── reranker.js              # Cohere Rerank v3.5
+│   ├── output-parser.js         # LLM JSON 파싱 + 환각 감지
+│   ├── cross-reference.js       # 교차 참조 감지 (명시적+시맨틱)
+│   ├── pdf-extractor.js         # PDF 추출 (텍스트 + OCR + 퀴즈 파싱)
+│   ├── text-extractor.js        # 멀티포맷 텍스트 추출
+│   ├── law-fetcher.js           # 법제처 API 클라이언트
+│   ├── deidentify.js            # 키워드 매칭/치환
+│   ├── doc-analyzer.js          # AI 문서 분석 (요약/키워드/태그)
+│   ├── summary-cache.js         # 요약 캐시 관리
+│   ├── api-tracker.js           # API 호출 추적 + 비용 계산
+│   └── ocr/                     # OCR 엔진 (6개 플러그인)
+├── scripts/
+│   ├── create-tables.js         # DB 스키마 생성
+│   ├── add-fts-column.js        # FTS tsvector 컬럼 + GIN 인덱스
+│   ├── upgrade-fts-weighted.js  # 가중 tsvector v2 마이그레이션
+│   ├── reindex-enriched.js      # enriched 임베딩 재처리
+│   ├── generate-embeddings.js   # 기존 문서 임베딩 생성
+│   └── ... (기타 마이그레이션)
+└── tests/
+    ├── playwright.config.js     # E2E 테스트 설정
+    ├── global-setup.js          # 전역 로그인
+    └── *.spec.js                # 테스트 스펙 (21개)
+```

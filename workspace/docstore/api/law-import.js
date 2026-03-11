@@ -85,7 +85,10 @@ module.exports = async (req, res) => {
     const documentId = docResult.rows[0].id;
     console.log(`  문서 저장: ID ${documentId}, "${title}"`);
 
-    // 4) 조문별로 document_sections에 저장 (계층 라벨 + 참조 관계 포함)
+    // 4) 조문별로 document_sections에 배치 저장 (계층 라벨 + 참조 관계 포함)
+    // ── 성능 최적화: multi-row INSERT로 N개 조문을 소수의 쿼리로 일괄 저장 ──
+    // 예) 1000개 조문 → 기존 1000회 INSERT → 개선 후 20회 INSERT (50개씩 배치)
+
     // 각 조문의 식별자를 먼저 모아서 자기 자신 참조를 제외하기 위해 사용
     const articleIds = articles.map(a => {
       let id = `제${a.number}조`;
@@ -93,38 +96,9 @@ module.exports = async (req, res) => {
       return id;
     });
 
-    for (let i = 0; i < articles.length; i++) {
-      const art = articles[i];
-      const rawText = `${art.label}\n${art.content}`;
-
-      // 참조 관계 파싱 (자기 자신은 제외)
-      const selfId = articleIds[i];
-      const references = parseReferences(art.content).filter(ref => ref !== selfId);
-
-      await dbQuery(
-        `INSERT INTO document_sections (document_id, section_type, section_index, raw_text, metadata)
-         VALUES ($1, 'article', $2, $3, $4)`,
-        [
-          documentId,
-          i,
-          rawText,
-          JSON.stringify({
-            articleNumber: art.number,
-            branchNumber: art.branchNumber,
-            articleTitle: art.title,
-            part: art.part,
-            chapter: art.chapter,
-            section: art.section,
-            subsection: art.subsection,
-            label: art.label,
-            references, // 이 조문이 참조하는 다른 조문들
-          }),
-        ]
-      );
-    }
-
-    // 5) 역참조 계산: 각 조문을 누가 참조하는지
+    // 5) 역참조 계산 (INSERT 전에 미리 계산하여 metadata에 포함)
     // referencedBy[조문ID] = [참조하는 조문 목록]
+    // → 이렇게 하면 INSERT 1회로 참조 + 역참조 모두 저장 가능 (UPDATE 쿼리 불필요)
     const referencedBy = {};
     for (let i = 0; i < articles.length; i++) {
       const selfId = articleIds[i];
@@ -135,24 +109,52 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 역참조가 있는 조문들의 metadata 업데이트
-    if (Object.keys(referencedBy).length > 0) {
-      const savedSections = await dbQuery(
-        'SELECT id, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
-        [documentId]
-      );
-      for (let i = 0; i < savedSections.rows.length; i++) {
-        const row = savedSections.rows[i];
-        const artId = articleIds[i];
-        if (referencedBy[artId]) {
-          const meta = row.metadata || {};
-          meta.referencedBy = referencedBy[artId];
-          await dbQuery(
-            'UPDATE document_sections SET metadata = $1 WHERE id = $2',
-            [JSON.stringify(meta), row.id]
-          );
+    // 조문 데이터를 배치 INSERT용으로 준비
+    // 각 행은 파라미터 4개: document_id, section_index, raw_text, metadata
+    // (section_type은 항상 'article'이므로 SQL 리터럴로 직접 삽입)
+    const BATCH_SIZE = 50; // PostgreSQL 파라미터 제한 고려 (50 × 4 = 200 파라미터/배치)
+    const COLS_PER_ROW = 4;
+
+    for (let batchStart = 0; batchStart < articles.length; batchStart += BATCH_SIZE) {
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, articles.length);
+      const params = [];
+      const valuePlaceholders = [];
+
+      for (let i = batchStart; i < batchEnd; i++) {
+        const art = articles[i];
+        const rawText = `${art.label}\n${art.content}`;
+        const selfId = articleIds[i];
+        const references = parseReferences(art.content).filter(ref => ref !== selfId);
+
+        // metadata에 역참조(referencedBy)도 함께 포함 → UPDATE 쿼리 불필요
+        const meta = {
+          articleNumber: art.number,
+          branchNumber: art.branchNumber,
+          articleTitle: art.title,
+          part: art.part,
+          chapter: art.chapter,
+          section: art.section,
+          subsection: art.subsection,
+          label: art.label,
+          references,
+        };
+        if (referencedBy[selfId]) {
+          meta.referencedBy = referencedBy[selfId];
         }
+
+        // 파라미터 인덱스 계산: 배치 내 상대 위치 × 컬럼 수
+        const offset = (i - batchStart) * COLS_PER_ROW;
+        valuePlaceholders.push(
+          `($${offset + 1}, 'article', $${offset + 2}, $${offset + 3}, $${offset + 4})`
+        );
+        params.push(documentId, i, rawText, JSON.stringify(meta));
       }
+
+      await dbQuery(
+        `INSERT INTO document_sections (document_id, section_type, section_index, raw_text, metadata)
+         VALUES ${valuePlaceholders.join(', ')}`,
+        params
+      );
     }
 
     console.log(`  ${articles.length}개 조문 저장 완료 (참조 관계 포함)`);
