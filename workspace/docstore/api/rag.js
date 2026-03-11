@@ -10,9 +10,14 @@ const { query } = require('../lib/db');
 const { requireAdmin } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
-const { callLLM } = require('../lib/gemini');
+const { callLLM, callLLMStream } = require('../lib/gemini');
 const { sendError } = require('../lib/error-handler');
 const { multiHopSearch } = require('../lib/rag-agent');
+
+// SSE 헬퍼: 이벤트 데이터를 SSE 형식으로 전송
+function sseWrite(res, data) {
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
@@ -23,7 +28,7 @@ module.exports = async (req, res) => {
 
   if (checkRateLimit(req, res, 'rag')) return;
 
-  const { question, topK = 5, docId, docIds, provider = 'gemini', history = [], llmOptions = {} } = req.body;
+  const { question, topK = 5, docId, docIds, provider = 'gemini', history = [], llmOptions = {}, stream = false } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
   }
@@ -105,7 +110,7 @@ ${historyText}
 --- 현재 질문 ---
 ${question.trim()}`;
 
-    // 3) LLM 호출
+    // 3) LLM 호출 옵션
     const callOpts = {
       provider,
       temperature: llmOptions.temperature ?? 0.3,
@@ -113,27 +118,68 @@ ${question.trim()}`;
     };
     if (llmOptions.model) callOpts.model = llmOptions.model;
     if (llmOptions.thinkingBudget) callOpts.thinkingBudget = llmOptions.thinkingBudget;
-    const answer = await callLLM(prompt, callOpts);
-    console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자, ${searchResult.hops}홉)`);
 
-    // 4) 응답 — 근거 체인 구조 포함
-    res.json({
-      question: question.trim(),
-      answer,
-      provider,
-      hops: searchResult.hops,
-      crossRefs: searchResult.crossRefs || [],
-      sources: sources.map(s => ({
-        documentTitle: s.documentTitle,
-        documentId: s.documentId,
-        label: s.label,
-        chapter: s.chapter,
-        articleNumber: s.articleNumber,
-        articleTitle: s.articleTitle,
-        similarity: s.similarity,
-        excerpt: s.text.substring(0, 300) + (s.text.length > 300 ? '...' : ''),
-      })),
-    });
+    // 소스 정보 (스트리밍/비스트리밍 공통)
+    const sourcesData = sources.map(s => ({
+      documentTitle: s.documentTitle,
+      documentId: s.documentId,
+      label: s.label,
+      chapter: s.chapter,
+      articleNumber: s.articleNumber,
+      articleTitle: s.articleTitle,
+      similarity: s.similarity,
+      excerpt: s.text.substring(0, 300) + (s.text.length > 300 ? '...' : ''),
+    }));
+
+    if (stream) {
+      // ── SSE 스트리밍 모드 ──
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no'); // nginx 버퍼링 방지
+      res.flushHeaders();
+
+      // 먼저 검색 결과(sources) 전송
+      sseWrite(res, {
+        type: 'sources',
+        sources: sourcesData,
+        hops: searchResult.hops,
+        crossRefs: searchResult.crossRefs || [],
+        provider,
+      });
+
+      // LLM 스트리밍 시작 — 토큰 도착마다 전송
+      try {
+        await callLLMStream(prompt, callOpts, (token) => {
+          sseWrite(res, { type: 'token', token });
+        });
+        sseWrite(res, { type: 'done' });
+      } catch (streamErr) {
+        console.warn(`[RAG] 스트리밍 실패, 일반 모드로 fallback:`, streamErr.message);
+        // 스트리밍 실패 시 일반 호출로 fallback
+        try {
+          const answer = await callLLM(prompt, callOpts);
+          sseWrite(res, { type: 'token', token: answer });
+          sseWrite(res, { type: 'done' });
+        } catch (fallbackErr) {
+          sseWrite(res, { type: 'error', error: fallbackErr.message });
+        }
+      }
+      res.end();
+    } else {
+      // ── 기존 JSON 응답 모드 ──
+      const answer = await callLLM(prompt, callOpts);
+      console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자, ${searchResult.hops}홉)`);
+
+      res.json({
+        question: question.trim(),
+        answer,
+        provider,
+        hops: searchResult.hops,
+        crossRefs: searchResult.crossRefs || [],
+        sources: sourcesData,
+      });
+    }
   } catch (err) {
     sendError(res, err, '[RAG]');
   }

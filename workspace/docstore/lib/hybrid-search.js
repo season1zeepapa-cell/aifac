@@ -20,6 +20,7 @@
 //   rank_i = 각 검색 방식에서의 순위 (1부터 시작)
 
 const { generateEmbedding } = require('./embeddings');
+const { rerankResults } = require('./reranker');
 
 const RRF_K = 60; // RRF 상수 (값이 클수록 하위 순위의 영향이 커짐)
 
@@ -208,9 +209,13 @@ async function hybridSearch(dbQuery, question, options = {}) {
   ]);
 
   // RRF로 두 결과를 합산하여 최종 순위 결정
-  const fused = rrfFusion(vecResults, ftsResults, topK);
+  // rerank용 후보는 넉넉하게 확보 (topK * 2)
+  const fused = rrfFusion(vecResults, ftsResults, topK * 2);
 
-  return fused;
+  // Cohere Rerank 적용 (COHERE_API_KEY 있을 때만, 없으면 RRF 순서 유지)
+  const reranked = await rerankResults(question, fused, topK);
+
+  return reranked;
 }
 
 module.exports = {

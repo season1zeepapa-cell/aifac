@@ -45,6 +45,7 @@ module.exports = async function handler(req, res) {
         openai: !!process.env.OPENAI_API_KEY,
         anthropic: !!process.env.ANTHROPIC_API_KEY,
         gemini: !!process.env.GEMINI_API_KEY,
+        cohere: !!process.env.COHERE_API_KEY,
         upstage: !!process.env.UPSTAGE_API_KEY,
       };
 

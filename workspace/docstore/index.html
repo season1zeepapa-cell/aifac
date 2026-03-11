@@ -3762,7 +3762,25 @@
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, [chatMessages, loading]);
 
-      // 메시지 전송
+      // SSE 스트리밍 파서: fetch 응답에서 SSE 이벤트를 추출
+      const parseSSE = useCallback(async function* (response) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try { yield JSON.parse(line.slice(6)); } catch {}
+          }
+        }
+      }, []);
+
+      // 메시지 전송 (SSE 스트리밍)
       const handleSend = useCallback(async () => {
         const text = inputText.trim();
         if (!text || loading) return;
@@ -3780,6 +3798,7 @@
           const providerSettings = llmSettings[llmProvider] || {};
           const body = {
             question: text, topK: 5, provider: llmProvider, history,
+            stream: true,
             llmOptions: {
               model: providerSettings.model,
               temperature: providerSettings.temperature,
@@ -3794,27 +3813,67 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
+
           if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
             throw new Error(errData.error || `질의 실패 (${res.status})`);
           }
-          const data = await res.json();
-          const assistantMsg = {
-            role: 'assistant',
-            content: data.answer,
-            sources: data.sources || [],
-            provider: data.provider,
-            hops: data.hops || 1,
-            crossRefs: data.crossRefs || [],
+
+          // SSE 스트리밍 응답 처리
+          let streamSources = [];
+          let streamProvider = llmProvider;
+          let streamHops = 1;
+          let streamCrossRefs = [];
+          let accumulated = '';
+
+          // 스트리밍 중인 assistant 메시지를 먼저 추가
+          const placeholderMsg = {
+            role: 'assistant', content: '', sources: [],
+            provider: llmProvider, hops: 1, crossRefs: [],
           };
-          setChatMessages(prev => [...prev, assistantMsg]);
+          setChatMessages(prev => [...prev, placeholderMsg]);
+
+          for await (const event of parseSSE(res)) {
+            if (event.type === 'sources') {
+              // 검색 결과 수신
+              streamSources = event.sources || [];
+              streamProvider = event.provider || llmProvider;
+              streamHops = event.hops || 1;
+              streamCrossRefs = event.crossRefs || [];
+              // sources 정보 업데이트
+              setChatMessages(prev => {
+                const updated = [...prev];
+                const last = { ...updated[updated.length - 1] };
+                last.sources = streamSources;
+                last.provider = streamProvider;
+                last.hops = streamHops;
+                last.crossRefs = streamCrossRefs;
+                updated[updated.length - 1] = last;
+                return updated;
+              });
+            } else if (event.type === 'token') {
+              // 토큰 도착 → 마지막 assistant 메시지에 추가
+              accumulated += event.token;
+              const currentText = accumulated;
+              setChatMessages(prev => {
+                const updated = [...prev];
+                const last = { ...updated[updated.length - 1] };
+                last.content = currentText;
+                updated[updated.length - 1] = last;
+                return updated;
+              });
+            } else if (event.type === 'error') {
+              throw new Error(event.error || '스트리밍 오류');
+            }
+            // type === 'done' → 루프 종료
+          }
         } catch (err) {
           setError(err.message);
         } finally {
           setLoading(false);
           setTimeout(() => inputRef.current?.focus(), 100);
         }
-      }, [inputText, loading, chatMessages, llmProvider, filterDocIds]);
+      }, [inputText, loading, chatMessages, llmProvider, filterDocIds, parseSSE]);
 
       const handleKeyDown = useCallback((e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -4663,6 +4722,7 @@
                           openai: { env: 'OPENAI_API_KEY', desc: '임베딩 + GPT-4o 퀴즈 파싱' },
                           anthropic: { env: 'ANTHROPIC_API_KEY', desc: 'Claude OCR (폴백)' },
                           gemini: { env: 'GEMINI_API_KEY', desc: 'RAG 질의응답 + AI 요약 + OCR' },
+                          cohere: { env: 'COHERE_API_KEY', desc: '검색 Rerank (선택, 무료 1000회/월)' },
                           upstage: { env: 'UPSTAGE_API_KEY', desc: 'Upstage OCR (무료)' },
                         };
                         const g = envGuide[key.provider];

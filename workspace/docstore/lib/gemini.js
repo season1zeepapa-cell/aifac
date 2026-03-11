@@ -194,4 +194,215 @@ function callLLM(prompt, options = {}) {
   }
 }
 
-module.exports = { callGemini, callLLM, getAvailableProviders, GEMINI_MODEL, LLM_PROVIDERS };
+// ══════════════════════════════════════════════════════
+// SSE 스트리밍 호출 함수들
+// onToken(textChunk) 콜백을 토큰 도착마다 호출
+// ══════════════════════════════════════════════════════
+
+// ── Gemini 스트리밍 ──
+// 엔드포인트: streamGenerateContent?alt=sse
+// SSE 형식: data: { "candidates": [{ "content": { "parts": [{ "text": "..." }] } }] }
+function callGeminiStream(prompt, options = {}, onToken) {
+  const apiKey = options.apiKey || (process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey) return Promise.reject(new Error('GEMINI_API_KEY 미설정'));
+
+  const { maxTokens = 1024, temperature = 0.2, timeout = 60000 } = options;
+  const model = options.model || GEMINI_MODEL;
+
+  const url = `${GEMINI_BASE_URL}/${model}:streamGenerateContent?alt=sse`;
+  const genConfig = { temperature, maxOutputTokens: maxTokens };
+  if (options.thinkingBudget && options.thinkingBudget > 0) {
+    genConfig.thinkingConfig = { thinkingBudget: options.thinkingBudget };
+  }
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: genConfig,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      timeout,
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          const errText = Buffer.concat(chunks).toString('utf8');
+          try { reject(new Error(JSON.parse(errText).error?.message || `Gemini ${res.statusCode}`)); }
+          catch { reject(new Error(`Gemini 스트리밍 오류 ${res.statusCode}`)); }
+        });
+        return;
+      }
+
+      let buffer = '';
+      res.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        // SSE 이벤트 파싱: "data: {...}\n\n" 형식
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 마지막 미완성 줄 보존
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const jsonStr = line.slice(6);
+          if (!jsonStr.trim()) continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (text && onToken) onToken(text);
+          } catch { /* 파싱 불가 청크 무시 */ }
+        }
+      });
+      res.on('end', () => resolve());
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Gemini 스트리밍 타임아웃')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// ── OpenAI 스트리밍 ──
+// stream: true → SSE 형식
+// data: { "choices": [{ "delta": { "content": "..." } }] }
+// 종료: data: [DONE]
+function callOpenAIStream(prompt, options = {}, onToken) {
+  const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return Promise.reject(new Error('OPENAI_API_KEY 미설정'));
+
+  const { maxTokens = 1024, temperature = 0.2, timeout = 60000 } = options;
+  const model = options.model || LLM_PROVIDERS.openai.model;
+
+  const body = JSON.stringify({
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    temperature,
+    max_tokens: maxTokens,
+    stream: true,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      timeout,
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          const errText = Buffer.concat(chunks).toString('utf8');
+          try { reject(new Error(JSON.parse(errText).error?.message || `OpenAI ${res.statusCode}`)); }
+          catch { reject(new Error(`OpenAI 스트리밍 오류 ${res.statusCode}`)); }
+        });
+        return;
+      }
+
+      let buffer = '';
+      res.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === '[DONE]') continue;
+          if (!jsonStr) continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const text = parsed.choices?.[0]?.delta?.content || '';
+            if (text && onToken) onToken(text);
+          } catch { /* 무시 */ }
+        }
+      });
+      res.on('end', () => resolve());
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('OpenAI 스트리밍 타임아웃')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// ── Claude 스트리밍 ──
+// stream: true → SSE 형식
+// event: content_block_delta → data: { "delta": { "text": "..." } }
+// event: message_stop → 종료
+function callClaudeStream(prompt, options = {}, onToken) {
+  const apiKey = (process.env.ANTHROPIC_API_KEY || '').trim();
+  if (!apiKey) return Promise.reject(new Error('ANTHROPIC_API_KEY 미설정'));
+
+  const { maxTokens = 1024, temperature = 0.2, timeout = 60000 } = options;
+  const model = options.model || LLM_PROVIDERS.claude.model;
+
+  const body = JSON.stringify({
+    model,
+    max_tokens: maxTokens,
+    messages: [{ role: 'user', content: prompt }],
+    temperature,
+    stream: true,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      timeout,
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          const errText = Buffer.concat(chunks).toString('utf8');
+          try { reject(new Error(JSON.parse(errText).error?.message || `Claude ${res.statusCode}`)); }
+          catch { reject(new Error(`Claude 스트리밍 오류 ${res.statusCode}`)); }
+        });
+        return;
+      }
+
+      let buffer = '';
+      let currentEvent = '';
+      res.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && currentEvent === 'content_block_delta') {
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              const text = parsed.delta?.text || '';
+              if (text && onToken) onToken(text);
+            } catch { /* 무시 */ }
+          }
+        }
+      });
+      res.on('end', () => resolve());
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Claude 스트리밍 타임아웃')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// ── 통합 스트리밍 호출 ──
+function callLLMStream(prompt, options = {}, onToken) {
+  const provider = options.provider || 'gemini';
+  switch (provider) {
+    case 'openai': return callOpenAIStream(prompt, options, onToken);
+    case 'claude': return callClaudeStream(prompt, options, onToken);
+    case 'gemini':
+    default: return callGeminiStream(prompt, options, onToken);
+  }
+}
+
+module.exports = { callGemini, callLLM, callLLMStream, getAvailableProviders, GEMINI_MODEL, LLM_PROVIDERS };
