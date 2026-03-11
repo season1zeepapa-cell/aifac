@@ -182,7 +182,13 @@ module.exports = async function handler(req, res) {
                d.embedding_status, d.original_filename, d.file_size, d.storage_path,
                COALESCE(d.is_favorited, false) AS is_favorited,
                ${isTrash ? 'd.deleted_at,' : ''}
-               COUNT(DISTINCT s.id) AS section_count
+               COUNT(DISTINCT s.id) AS section_count,
+               COALESCE(
+                 (SELECT jsonb_agg(jsonb_build_object('id', tg.id, 'name', tg.name, 'color', tg.color) ORDER BY tg.name)
+                  FROM document_tags dtg JOIN tags tg ON tg.id = dtg.tag_id
+                  WHERE dtg.document_id = d.id),
+                 '[]'::jsonb
+               ) AS tags
         FROM documents d
         LEFT JOIN document_sections s ON s.document_id = d.id
       `;
@@ -215,28 +221,7 @@ module.exports = async function handler(req, res) {
 
       const docs = await query(sql, params);
 
-      // 각 문서의 태그도 함께 조회
-      const docIds = docs.rows.map(d => d.id);
-      let docTagsMap = {};
-      if (docIds.length > 0) {
-        const allTags = await query(
-          `SELECT dt.document_id, t.id, t.name, t.color
-           FROM document_tags dt
-           JOIN tags t ON t.id = dt.tag_id
-           WHERE dt.document_id = ANY($1)`, [docIds]
-        );
-        for (const row of allTags.rows) {
-          if (!docTagsMap[row.document_id]) docTagsMap[row.document_id] = [];
-          docTagsMap[row.document_id].push({ id: row.id, name: row.name, color: row.color });
-        }
-      }
-
-      const docsWithTags = docs.rows.map(d => ({
-        ...d,
-        tags: docTagsMap[d.id] || [],
-      }));
-
-      return res.json({ documents: docsWithTags });
+      return res.json({ documents: docs.rows });
     }
 
     // POST: 문서 삭제
