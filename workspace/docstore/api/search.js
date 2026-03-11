@@ -182,76 +182,165 @@ module.exports = async function handler(req, res) {
         }),
       });
     } else {
-      // ── 텍스트 ILIKE 검색 (와일드카드 이스케이프) ──
-      let filterClauses = [`ds.raw_text ILIKE $1 ESCAPE '\\'`, 'd.deleted_at IS NULL'];
-      let params = [`%${escapeIlike(q.trim())}%`];
-      let paramIdx = 2;
+      // ── 텍스트 검색 (FTS tsvector 기반 + ILIKE fallback) ──
+      const trimmed = q.trim();
 
+      // 검색어를 tsquery로 변환 (공백 분리 → 접두사 매칭 OR 연결)
+      const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+      const canUseFTS = words.length > 0 && words.some(w => w.length >= 2);
+
+      // 공통 필터 조건
       const resolvedIds2 = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
-      if (resolvedIds2.length > 0) {
-        filterClauses.push(`ds.document_id = ANY($${paramIdx})`);
-        params.push(resolvedIds2);
-        paramIdx++;
-      }
-      if (chapter) {
-        filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx} ESCAPE '\\'`);
-        params.push(`%${escapeIlike(chapter)}%`);
-        paramIdx++;
-      }
-      if (tag) {
-        filterClauses.push(`EXISTS (
-          SELECT 1 FROM document_tags dt
-          JOIN tags t ON t.id = dt.tag_id
-          WHERE dt.document_id = ds.document_id AND t.name = $${paramIdx}
-        )`);
-        params.push(tag);
-        paramIdx++;
-      }
-      params.push(limit);
 
-      const result = await query(
-        `SELECT
-           ds.id AS section_id,
-           ds.section_type,
-           ds.section_index,
-           ds.raw_text,
-           ds.summary AS section_summary,
-           ds.metadata AS section_metadata,
-           ds.document_id,
-           d.title AS document_title,
-           d.category,
-           d.summary AS document_summary
-         FROM document_sections ds
-         JOIN documents d ON ds.document_id = d.id
-         WHERE ${filterClauses.join(' AND ')}
-         ORDER BY ds.document_id, ds.section_index
-         LIMIT $${paramIdx}`,
-        params
-      );
+      if (canUseFTS) {
+        // ── FTS 검색: tsvector + ts_rank + ts_headline ──
+        const tsqueryStr = words.map(w => `${w}:*`).join(' | ');
+        let filterClauses = ['ds.fts_vector IS NOT NULL', 'd.deleted_at IS NULL'];
+        let params = [tsqueryStr];
+        let paramIdx = 2;
 
-      res.json({
-        type: 'text',
-        query: q,
-        count: result.rows.length,
-        results: result.rows.map(row => {
-          const meta = row.section_metadata || {};
-          return {
-            sectionId: row.section_id,
-            sectionType: row.section_type,
-            sectionIndex: row.section_index,
-            rawText: row.raw_text,
-            sectionSummary: row.section_summary || '',
-            documentId: row.document_id,
-            documentTitle: row.document_title,
-            documentSummary: row.document_summary || '',
-            category: row.category,
-            label: meta.label || '',
-            chapter: meta.chapter || '',
-            section: meta.section || '',
-            articleTitle: meta.articleTitle || '',
-          };
-        }),
-      });
+        if (resolvedIds2.length > 0) {
+          filterClauses.push(`ds.document_id = ANY($${paramIdx})`);
+          params.push(resolvedIds2);
+          paramIdx++;
+        }
+        if (chapter) {
+          filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx} ESCAPE '\\'`);
+          params.push(`%${escapeIlike(chapter)}%`);
+          paramIdx++;
+        }
+        if (tag) {
+          filterClauses.push(`EXISTS (
+            SELECT 1 FROM document_tags dt
+            JOIN tags t ON t.id = dt.tag_id
+            WHERE dt.document_id = ds.document_id AND t.name = $${paramIdx}
+          )`);
+          params.push(tag);
+          paramIdx++;
+        }
+        params.push(limit);
+
+        const result = await query(
+          `SELECT
+             ds.id AS section_id,
+             ds.section_type,
+             ds.section_index,
+             ds.raw_text,
+             ds.summary AS section_summary,
+             ds.metadata AS section_metadata,
+             ds.document_id,
+             d.title AS document_title,
+             d.category,
+             d.summary AS document_summary,
+             ts_rank(ds.fts_vector, to_tsquery('simple', $1)) AS fts_score,
+             ts_headline('simple', ds.raw_text, to_tsquery('simple', $1),
+               'StartSel=<mark>, StopSel=</mark>, MaxWords=60, MinWords=20, MaxFragments=2'
+             ) AS headline
+           FROM document_sections ds
+           JOIN documents d ON ds.document_id = d.id
+           WHERE ${filterClauses.join(' AND ')}
+             AND ds.fts_vector @@ to_tsquery('simple', $1)
+           ORDER BY fts_score DESC, ds.document_id, ds.section_index
+           LIMIT $${paramIdx}`,
+          params
+        );
+
+        res.json({
+          type: 'fts',
+          query: q,
+          count: result.rows.length,
+          results: result.rows.map(row => {
+            const meta = row.section_metadata || {};
+            return {
+              sectionId: row.section_id,
+              sectionType: row.section_type,
+              sectionIndex: row.section_index,
+              rawText: row.raw_text,
+              headline: row.headline || '',
+              ftsScore: parseFloat(row.fts_score).toFixed(6),
+              sectionSummary: row.section_summary || '',
+              documentId: row.document_id,
+              documentTitle: row.document_title,
+              documentSummary: row.document_summary || '',
+              category: row.category,
+              label: meta.label || '',
+              chapter: meta.chapter || '',
+              section: meta.section || '',
+              articleTitle: meta.articleTitle || '',
+            };
+          }),
+        });
+      } else {
+        // ── ILIKE fallback (1글자 검색어 등 FTS 불가 시) ──
+        let filterClauses = [`ds.raw_text ILIKE $1 ESCAPE '\\'`, 'd.deleted_at IS NULL'];
+        let params = [`%${escapeIlike(trimmed)}%`];
+        let paramIdx = 2;
+
+        if (resolvedIds2.length > 0) {
+          filterClauses.push(`ds.document_id = ANY($${paramIdx})`);
+          params.push(resolvedIds2);
+          paramIdx++;
+        }
+        if (chapter) {
+          filterClauses.push(`ds.metadata->>'chapter' ILIKE $${paramIdx} ESCAPE '\\'`);
+          params.push(`%${escapeIlike(chapter)}%`);
+          paramIdx++;
+        }
+        if (tag) {
+          filterClauses.push(`EXISTS (
+            SELECT 1 FROM document_tags dt
+            JOIN tags t ON t.id = dt.tag_id
+            WHERE dt.document_id = ds.document_id AND t.name = $${paramIdx}
+          )`);
+          params.push(tag);
+          paramIdx++;
+        }
+        params.push(limit);
+
+        const result = await query(
+          `SELECT
+             ds.id AS section_id,
+             ds.section_type,
+             ds.section_index,
+             ds.raw_text,
+             ds.summary AS section_summary,
+             ds.metadata AS section_metadata,
+             ds.document_id,
+             d.title AS document_title,
+             d.category,
+             d.summary AS document_summary
+           FROM document_sections ds
+           JOIN documents d ON ds.document_id = d.id
+           WHERE ${filterClauses.join(' AND ')}
+           ORDER BY ds.document_id, ds.section_index
+           LIMIT $${paramIdx}`,
+          params
+        );
+
+        res.json({
+          type: 'text',
+          query: q,
+          count: result.rows.length,
+          results: result.rows.map(row => {
+            const meta = row.section_metadata || {};
+            return {
+              sectionId: row.section_id,
+              sectionType: row.section_type,
+              sectionIndex: row.section_index,
+              rawText: row.raw_text,
+              sectionSummary: row.section_summary || '',
+              documentId: row.document_id,
+              documentTitle: row.document_title,
+              documentSummary: row.document_summary || '',
+              category: row.category,
+              label: meta.label || '',
+              chapter: meta.chapter || '',
+              section: meta.section || '',
+              articleTitle: meta.articleTitle || '',
+            };
+          }),
+        });
+      }
     }
   } catch (err) {
     sendError(res, err, '[Search]');
