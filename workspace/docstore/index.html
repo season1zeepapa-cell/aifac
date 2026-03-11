@@ -5903,12 +5903,14 @@
         cohere: 'Cohere', upstage: 'Upstage',
         'law-api': '국가법령정보센터', 'ocr-space': 'OCR.space',
         'google-vision': 'Google Vision', 'aws-textract': 'AWS Textract', 'naver-clova': '네이버 CLOVA',
+        'naver-search': '네이버 검색 API',
       };
       const providerColors = {
         openai: 'green', anthropic: 'yellow', gemini: 'primary',
         cohere: 'blue', upstage: 'blue',
         'law-api': 'gray', 'ocr-space': 'gray',
         'google-vision': 'primary', 'aws-textract': 'yellow', 'naver-clova': 'green',
+        'naver-search': 'green',
       };
 
       if (loading && !data) {
@@ -6202,6 +6204,7 @@
                           'google-vision': { env: 'GOOGLE_VISION_API_KEY', desc: 'Google Cloud Vision OCR' },
                           'aws-textract': { env: 'AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY', desc: 'AWS Textract 문서 OCR' },
                           'naver-clova': { env: 'CLOVA_OCR_SECRET + CLOVA_OCR_URL', desc: '네이버 CLOVA OCR' },
+                          'naver-search': { env: 'NAVER_CLIENT_ID + NAVER_CLIENT_SECRET', desc: '네이버 뉴스 검색 크롤링' },
                         };
                         const g = envGuide[key.provider];
                         return g ? (

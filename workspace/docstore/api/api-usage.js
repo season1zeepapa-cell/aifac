@@ -38,7 +38,7 @@ module.exports = async function handler(req, res) {
         ['openai', 0], ['anthropic', 0], ['gemini', 0],
         ['cohere', 1000], ['upstage', 100],
         ['law-api', 0], ['ocr-space', 500],
-        ['google-vision', 0], ['aws-textract', 0], ['naver-clova', 0],
+        ['google-vision', 0], ['aws-textract', 0], ['naver-clova', 0], ['naver-search', 0],
       ];
       for (const [prov, limit] of allProviders) {
         await query(
@@ -60,6 +60,7 @@ module.exports = async function handler(req, res) {
         'google-vision': !!process.env.GOOGLE_VISION_API_KEY,
         'aws-textract': !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
         'naver-clova': !!(process.env.CLOVA_OCR_SECRET && process.env.CLOVA_OCR_URL),
+        'naver-search': !!(process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET),
       };
 
       // 2) 사용량 기간 설정
@@ -335,6 +336,27 @@ module.exports = async function handler(req, res) {
               testReq.on('error', reject);
               testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
               testReq.write(JSON.stringify({ version: 'V2', requestId: 'test', timestamp: Date.now(), images: [] }));
+              testReq.end();
+            });
+          } else if (provider === 'naver-search' && process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET) {
+            // 네이버 검색 API 테스트 (뉴스 1건 검색)
+            await new Promise((resolve, reject) => {
+              const testReq = https.request({
+                hostname: 'openapi.naver.com',
+                path: '/v1/search/news.json?query=test&display=1',
+                method: 'GET',
+                headers: {
+                  'X-Naver-Client-Id': process.env.NAVER_CLIENT_ID,
+                  'X-Naver-Client-Secret': process.env.NAVER_CLIENT_SECRET,
+                },
+                timeout: 10000,
+              }, (r) => {
+                let d = '';
+                r.on('data', c => d += c);
+                r.on('end', () => r.statusCode === 200 ? resolve() : reject(new Error(`네이버 API 응답: ${r.statusCode}`)));
+              });
+              testReq.on('error', reject);
+              testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
               testReq.end();
             });
           } else {
