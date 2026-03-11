@@ -24,21 +24,42 @@ module.exports = async function handler(req, res) {
   if (await checkRateLimit(req, res, 'search')) return;
 
   // 자동완성 서제스트 모드 (조직별 격리)
+  // 문서 제목 + 섹션 텍스트 양쪽에서 매칭하여 최대 10건 반환
   if (req.query.suggest !== undefined) {
     const prefix = (req.query.suggest || '').trim();
     if (prefix.length < 1) return res.json({ suggestions: [] });
     const escaped = escapeIlike(prefix);
     const { clause: sugOrgC, params: sugOrgP, nextIdx: sugNextIdx } = orgFilter(orgId, 'd', 2);
     const sugOrgWhere = sugOrgC ? ` AND ${sugOrgC}` : '';
-    const result = await query(
-      `SELECT DISTINCT title AS text, 'document' AS type
+
+    // 1) 문서 제목 매칭 (최대 5건)
+    const docResult = await query(
+      `SELECT DISTINCT title AS text, 'document' AS type, category
        FROM documents d
        WHERE deleted_at IS NULL AND title ILIKE $1${sugOrgWhere}
        ORDER BY title
-       LIMIT 10`,
+       LIMIT 5`,
       [`%${escaped}%`, ...sugOrgP]
     );
-    return res.json({ suggestions: result.rows });
+
+    // 2) 섹션(조문/본문) 매칭 — 문서 제목과 중복되지 않는 것만 (최대 5건)
+    const secResult = await query(
+      `SELECT DISTINCT ON (s.raw_text)
+         LEFT(s.raw_text, 80) AS text, 'section' AS type,
+         d.title AS doc_title, s.metadata->>'label' AS label
+       FROM document_sections s
+       JOIN documents d ON d.id = s.document_id
+       WHERE d.deleted_at IS NULL AND s.raw_text ILIKE $1${sugOrgWhere.replace(/\bd\./g, 'd.')}
+       ORDER BY s.raw_text
+       LIMIT 5`,
+      [`%${escaped}%`, ...sugOrgP]
+    );
+
+    const suggestions = [
+      ...docResult.rows,
+      ...secResult.rows,
+    ];
+    return res.json({ suggestions });
   }
 
   const q = req.query.q;
