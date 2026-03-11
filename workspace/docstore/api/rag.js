@@ -118,6 +118,8 @@ ${question.trim()}`;
     };
     if (llmOptions.model) callOpts.model = llmOptions.model;
     if (llmOptions.thinkingBudget) callOpts.thinkingBudget = llmOptions.thinkingBudget;
+    if (llmOptions.thinkingLevel) callOpts.thinkingLevel = llmOptions.thinkingLevel;
+    if (llmOptions.reasoningEffort) callOpts.reasoningEffort = llmOptions.reasoningEffort;
 
     // 소스 정보 (스트리밍/비스트리밍 공통)
     const sourcesData = sources.map(s => ({

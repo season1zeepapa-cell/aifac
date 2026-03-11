@@ -45,8 +45,11 @@ function callGemini(prompt, options = {}) {
 
   const url = `${GEMINI_BASE_URL}/${model}:generateContent`;
   const genConfig = { temperature, maxOutputTokens: maxTokens };
-  // Gemini 2.5 thinking budget 지원
-  if (options.thinkingBudget && options.thinkingBudget > 0) {
+  // Thinking 설정: Gemini 3.x → thinkingLevel, Gemini 2.5 → thinkingBudget
+  const isGemini3 = model.startsWith('gemini-3');
+  if (isGemini3 && options.thinkingLevel && ['low', 'medium', 'high'].includes(options.thinkingLevel)) {
+    genConfig.thinkingConfig = { thinkingLevel: options.thinkingLevel };
+  } else if (options.thinkingBudget && options.thinkingBudget > 0) {
     genConfig.thinkingConfig = { thinkingBudget: options.thinkingBudget };
   }
   const body = JSON.stringify({
@@ -85,6 +88,11 @@ function callGemini(prompt, options = {}) {
   });
 }
 
+// o-시리즈 + GPT-5.4: temperature 미지원, reasoning_effort 지원
+const O_SERIES = ['gpt-5.4', 'o3-pro', 'o4-mini', 'o3', 'o3-mini', 'o1-mini', 'o1'];
+// GPT-5 계열: max_tokens 대신 max_completion_tokens 사용
+const GPT5_SERIES = ['gpt-5.3-chat-latest', 'gpt-5.2', 'gpt-5.1', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano'];
+
 // ── OpenAI 호출 ──
 function callOpenAI(prompt, options = {}) {
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
@@ -92,13 +100,31 @@ function callOpenAI(prompt, options = {}) {
 
   const { maxTokens = 1024, temperature = 0.2, timeout = 30000 } = options;
   const model = options.model || LLM_PROVIDERS.openai.model;
+  const isOSeries = O_SERIES.includes(model);
+  const isGPT5 = GPT5_SERIES.includes(model);
 
-  const body = JSON.stringify({
+  // 모델별 파라미터 구성
+  const params = {
     model,
     messages: [{ role: 'user', content: prompt }],
-    temperature,
-    max_tokens: maxTokens,
-  });
+  };
+
+  if (isOSeries) {
+    // o-시리즈: reasoning_effort 사용, temperature 미지원
+    const VALID_EFFORT = { low: 'low', medium: 'medium', high: 'high' };
+    params.reasoning_effort = VALID_EFFORT[options.reasoningEffort] || 'medium';
+    params.max_completion_tokens = maxTokens;
+  } else if (isGPT5) {
+    // GPT-5 계열: max_completion_tokens 사용
+    params.max_completion_tokens = maxTokens;
+    params.temperature = temperature;
+  } else {
+    // 일반 모델: max_tokens + temperature
+    params.max_tokens = maxTokens;
+    params.temperature = temperature;
+  }
+
+  const body = JSON.stringify(params);
 
   return new Promise((resolve, reject) => {
     const req = https.request('https://api.openai.com/v1/chat/completions', {
@@ -211,7 +237,11 @@ function callGeminiStream(prompt, options = {}, onToken) {
 
   const url = `${GEMINI_BASE_URL}/${model}:streamGenerateContent?alt=sse`;
   const genConfig = { temperature, maxOutputTokens: maxTokens };
-  if (options.thinkingBudget && options.thinkingBudget > 0) {
+  // Thinking 설정: Gemini 3.x → thinkingLevel, Gemini 2.5 → thinkingBudget
+  const isGemini3 = model.startsWith('gemini-3');
+  if (isGemini3 && options.thinkingLevel && ['low', 'medium', 'high'].includes(options.thinkingLevel)) {
+    genConfig.thinkingConfig = { thinkingLevel: options.thinkingLevel };
+  } else if (options.thinkingBudget && options.thinkingBudget > 0) {
     genConfig.thinkingConfig = { thinkingBudget: options.thinkingBudget };
   }
   const body = JSON.stringify({
@@ -273,13 +303,28 @@ function callOpenAIStream(prompt, options = {}, onToken) {
   const { maxTokens = 1024, temperature = 0.2, timeout = 60000 } = options;
   const model = options.model || LLM_PROVIDERS.openai.model;
 
-  const body = JSON.stringify({
+  const isOSeries = O_SERIES.includes(model);
+  const isGPT5 = GPT5_SERIES.includes(model);
+
+  const params = {
     model,
     messages: [{ role: 'user', content: prompt }],
-    temperature,
-    max_tokens: maxTokens,
     stream: true,
-  });
+  };
+
+  if (isOSeries) {
+    const VALID_EFFORT = { low: 'low', medium: 'medium', high: 'high' };
+    params.reasoning_effort = VALID_EFFORT[options.reasoningEffort] || 'medium';
+    params.max_completion_tokens = maxTokens;
+  } else if (isGPT5) {
+    params.max_completion_tokens = maxTokens;
+    params.temperature = temperature;
+  } else {
+    params.max_tokens = maxTokens;
+    params.temperature = temperature;
+  }
+
+  const body = JSON.stringify(params);
 
   return new Promise((resolve, reject) => {
     const req = https.request('https://api.openai.com/v1/chat/completions', {
