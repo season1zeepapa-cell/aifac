@@ -1,5 +1,6 @@
 // 임베딩 생성 유틸리티 (OpenAI text-embedding-3-small)
 const OpenAI = require('openai');
+const { smartChunk } = require('./text-splitters');
 
 // OpenAI 클라이언트 (싱글턴)
 let client;
@@ -157,7 +158,7 @@ function buildEnrichedText({
  * @param {string[]} docContext.tags - 태그 배열
  * @param {string[]} docContext.keywords - 키워드 배열
  */
-async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onProgress = null) {
+async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onProgress = null, chunkStrategy = 'sentence') {
   const { title = '', summary = '', category = '', tags = [], keywords = [] } = docContext;
 
   // 1) 문서의 모든 섹션 조회
@@ -180,8 +181,8 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
       const sectionMeta = section.metadata || {};
       const sectionSummary = section.summary || '';
 
-      // 2) 원문 청크 분할
-      const chunks = chunkText(section.raw_text);
+      // 2) 전략에 따라 원문 청크 분할
+      const chunks = await smartChunk(section.raw_text, chunkStrategy);
       if (chunks.length === 0) return [];
 
       // 3) 각 청크에 맥락 정보 추가 → enriched text 생성
@@ -270,7 +271,7 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
  * @param {string} [label] - 로그 라벨 (예: 'Upload', 'URL Import')
  * @returns {Promise<{ status: string, totalChunks?: number, error?: string }>}
  */
-async function createEmbeddingsForDocument(db, documentId, label = 'Embed') {
+async function createEmbeddingsForDocument(db, documentId, label = 'Embed', chunkStrategy = 'sentence') {
   try {
     let totalChunks = 0;
     const savedSections = await db.query(
@@ -281,7 +282,8 @@ async function createEmbeddingsForDocument(db, documentId, label = 'Embed') {
     for (const section of savedSections.rows) {
       if (!section.raw_text || section.raw_text.trim().length === 0) continue;
 
-      const chunks = chunkText(section.raw_text);
+      // 전략에 따라 청크 분할 (smartChunk는 async)
+      const chunks = await smartChunk(section.raw_text, chunkStrategy);
       if (chunks.length === 0) continue;
 
       const embeddings = await generateEmbeddings(chunks);

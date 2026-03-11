@@ -89,6 +89,9 @@ module.exports = async function handler(req, res) {
       sectionType = req.body.sectionType || 'page';
       customDelimiter = req.body.customDelimiter;
 
+      // 청크 분할 전략 (sentence, recursive, law-article, semantic)
+      if (req.body.chunkStrategy) extraOptions.chunkStrategy = req.body.chunkStrategy;
+
       // 형식별 추가 옵션 (프론트에서 전달)
       if (req.body.contentColumn) extraOptions.contentColumn = req.body.contentColumn;
       if (req.body.contentField) extraOptions.contentField = req.body.contentField;
@@ -199,8 +202,10 @@ module.exports = async function handler(req, res) {
 
     console.log(`[Upload] 저장 완료: 문서 ID ${documentId}, ${sections.length}개 섹션`);
 
-    // 3) 임베딩 생성
-    const embeddingResult = await createEmbeddingsForDocument({ query }, documentId, 'Upload');
+    // 3) 임베딩 생성 (청크 분할 전략 전달)
+    const chunkStrategy = extraOptions.chunkStrategy || 'sentence';
+    console.log(`[Upload] 청크 전략: ${chunkStrategy}`);
+    const embeddingResult = await createEmbeddingsForDocument({ query }, documentId, 'Upload', chunkStrategy);
 
     res.json({
       success: true,

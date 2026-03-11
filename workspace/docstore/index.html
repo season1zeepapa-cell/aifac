@@ -898,6 +898,7 @@
       const [error, setError] = useState(null);
       const [dragOver, setDragOver] = useState(false);
       const [deidentify, setDeidentify] = useState(false); // 비식별화 토글
+      const [chunkStrategy, setChunkStrategy] = useState('sentence'); // 청크 분할 전략
       const fileInputRef = useRef(null);
 
       // ── 법령 검색 모드 state ──
@@ -1020,6 +1021,7 @@
           if (contentField) formData.append('contentField', contentField);
           if (contentType) formData.append('contentType', contentType);
           if (deidentify) formData.append('deidentify', 'true');
+          if (chunkStrategy && chunkStrategy !== 'sentence') formData.append('chunkStrategy', chunkStrategy);
 
           const token = getAuthToken();
           const data = await uploadProgress.upload(`${API_BASE_URL}/upload`, formData, token);
@@ -1038,13 +1040,13 @@
         } finally {
           setUploading(false);
         }
-      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, deidentify, onUploadComplete]);
+      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, deidentify, chunkStrategy, onUploadComplete]);
 
       const handleReset = useCallback(() => {
         setFile(null); setFileType(null); setTitle(''); setCategory('기타');
         setSectionType('full'); setCustomDelimiter(''); setContentColumn('');
         setContentField(''); setContentType('general'); setPreviewInfo(null);
-        setDeidentify(false); setError(null); setResult(null);
+        setDeidentify(false); setChunkStrategy('sentence'); setError(null); setResult(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }, []);
 
@@ -1277,6 +1279,31 @@
                         ]}
                       />
                     )}
+                  </div>
+                </Card>
+              )}
+
+              {/* 청크 분할 전략 선택 */}
+              {file && (
+                <Card>
+                  <div className="space-y-3">
+                    <Select
+                      label="청크 분할 전략"
+                      value={chunkStrategy}
+                      onChange={e => setChunkStrategy(e.target.value)}
+                      options={[
+                        { value: 'sentence', label: '문장 단위 — 마침표 기준 분할 (기본)' },
+                        { value: 'recursive', label: '재귀적 분할 — 문단→줄→문장 계층 분할 (범용)' },
+                        { value: 'law-article', label: '법령 조문 — 제N조/항/호 단위 (법령용)' },
+                        { value: 'semantic', label: 'AI 의미 분할 — 주제 변화 감지 (느림, AI 비용 발생)' },
+                      ]}
+                    />
+                    <div className="text-xs text-text-secondary">
+                      {chunkStrategy === 'sentence' && '마침표·느낌표·물음표를 기준으로 문장을 묶어 분할합니다.'}
+                      {chunkStrategy === 'recursive' && '문단 → 줄바꿈 → 문장 → 단어 순서로 계층적으로 분할합니다. 일반 문서에 가장 적합합니다.'}
+                      {chunkStrategy === 'law-article' && '제N조, 제N조의N 패턴을 감지하여 조문 단위로 분할합니다. 법령/규정 문서에 최적화되어 있습니다.'}
+                      {chunkStrategy === 'semantic' && '⚠️ AI(Gemini Flash)가 텍스트의 주제 변화를 감지하여 의미 단위로 분할합니다. 처리 시간이 길고 API 비용이 발생합니다.'}
+                    </div>
                   </div>
                 </Card>
               )}

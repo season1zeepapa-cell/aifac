@@ -158,7 +158,8 @@ module.exports = async (req, res) => {
     console.log(`  ${articles.length}개 조문 저장 완료 (참조 관계 포함)`);
 
     // 6) 임베딩 생성
-    const embeddingResult = await createEmbeddingsForDocument({ query: dbQuery }, documentId, 'Law Import');
+    // 법령 임포트는 자동으로 법령 조문 분할 전략 사용
+    const embeddingResult = await createEmbeddingsForDocument({ query: dbQuery }, documentId, 'Law Import', 'law-article');
 
     // 7) 교차 참조 매트릭스 구축 (비동기 — 응답 차단 없이 백그라운드 실행)
     let crossRefResult = null;
