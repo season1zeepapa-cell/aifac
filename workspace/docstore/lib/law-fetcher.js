@@ -69,137 +69,225 @@ async function searchLaw(query, oc, target = 'law') {
 async function getLawDetail(lawId, oc, target = 'law') {
   const validTargets = ['law', 'admrul', 'ordin'];
   const t = validTargets.includes(target) ? target : 'law';
-  const url = `https://www.law.go.kr/DRF/lawService.do?OC=${oc}&target=${t}&MST=${lawId}&type=JSON`;
+
+  // 행정규칙/자치법규는 MST 대신 ID 파라미터 사용
+  const idParam = t === 'law' ? `MST=${lawId}` : `ID=${lawId}`;
+  const url = `https://www.law.go.kr/DRF/lawService.do?OC=${oc}&target=${t}&${idParam}&type=JSON`;
   const data = await fetchLawAPI(url);
 
-  // 응답 루트 키 감지: 법령 / 행정규칙 / 자치법규
-  const law = data['법령'] || data.law || data['행정규칙'] || data['자치법규'];
+  // ── 행정규칙 전용 파싱 (응답 구조가 완전히 다름) ──
+  if (t === 'admrul' && data.AdmRulService) {
+    const svc = data.AdmRulService;
+    const bi = svc['행정규칙기본정보'] || {};
+    const info = {
+      name: bi['행정규칙명'] || '',
+      promulgationDate: bi['발령일자'] || '',
+      enforcementDate: bi['시행일자'] || '',
+      ministry: bi['소관부처명'] || '',
+    };
+
+    // 조문내용: 숫자 키 객체 → 문자열 배열 (각 항목이 조문 텍스트)
+    const joRaw = svc['조문내용'] || {};
+    const textItems = Object.keys(joRaw)
+      .filter(k => /^\d+$/.test(k))
+      .sort((a, b) => +a - +b)
+      .map(k => joRaw[k])
+      .filter(v => typeof v === 'string' && v.trim());
+
+    return { info, articles: parseAdmRulArticles(textItems) };
+  }
+
+  // ── 자치법규 전용 파싱 ──
+  if (t === 'ordin' && data.OrdinService) {
+    const svc = data.OrdinService;
+    const bi = svc['자치법규기본정보'] || svc['기본정보'] || {};
+    const info = {
+      name: bi['자치법규명'] || bi['법령명_한글'] || '',
+      promulgationDate: bi['공포일자'] || '',
+      enforcementDate: bi['시행일자'] || '',
+      ministry: bi['자치단체명'] || bi['소관부처명'] || '',
+    };
+
+    // 자치법규 조문도 숫자 키 문자열 또는 구조화된 조문단위일 수 있음
+    const joRaw = svc['조문내용'] || svc['조문'] || {};
+    if (joRaw['조문단위']) {
+      return { info, articles: parseLawArticles(joRaw['조문단위']) };
+    }
+    const textItems = Object.keys(joRaw)
+      .filter(k => /^\d+$/.test(k))
+      .sort((a, b) => +a - +b)
+      .map(k => joRaw[k])
+      .filter(v => typeof v === 'string' && v.trim());
+    return { info, articles: parseAdmRulArticles(textItems) };
+  }
+
+  // ── 법령 파싱 (기존 로직) ──
+  const law = data['법령'] || data.law;
   if (law) {
     const basicInfo = law['기본정보'] || {};
     const info = {
-      name: basicInfo['법령명_한글'] || basicInfo['행정규칙명'] || basicInfo['자치법규명'] || law['법령명한글'] || '',
-      promulgationDate: basicInfo['공포일자'] || basicInfo['발령일자'] || '',
+      name: basicInfo['법령명_한글'] || law['법령명한글'] || '',
+      promulgationDate: basicInfo['공포일자'] || '',
       enforcementDate: basicInfo['시행일자'] || '',
-      ministry: basicInfo['소관부처명'] || basicInfo['소관부처'] || '',
+      ministry: basicInfo['소관부처명'] || '',
     };
 
-    // 조문 파싱 + 계층 라벨링 (편/장/절/관)
     const joItems = law['조문']?.['조문단위'] || [];
-    const joArray = Array.isArray(joItems) ? joItems : [joItems];
+    return { info, articles: parseLawArticles(joItems) };
+  }
 
-    // 현재 계층 위치 추적 (편 > 장 > 절 > 관)
-    let currentPart = '';    // 편
-    let currentChapter = ''; // 장
-    let currentSection = ''; // 절
-    let currentSubsection = ''; // 관
+  return { info: null, articles: [] };
+}
 
-    const articles = [];
+/**
+ * 법령 조문단위 (구조화된 객체 배열) 파싱
+ * @param {Array|Object} joItems - 조문단위 데이터
+ * @returns {Array} articles
+ */
+function parseLawArticles(joItems) {
+  const joArray = Array.isArray(joItems) ? joItems : [joItems];
 
-    for (const jo of joArray) {
-      const rawContent = (jo['조문내용'] || '').trim();
-      const hasTitle = !!jo['조문제목'];
+  let currentPart = '';
+  let currentChapter = '';
+  let currentSection = '';
+  let currentSubsection = '';
+  const articles = [];
 
-      // 조문제목이 없는 항목은 계층 구분자 (편/장/절/관)
-      if (!hasTitle && rawContent) {
-        // "제N편 ...", "제N장 ...", "제N절 ...", "제N관 ..." 패턴 감지
-        if (/제\d+편/.test(rawContent)) {
-          currentPart = rawContent.replace(/\s+/g, ' ').trim();
-          currentChapter = '';
-          currentSection = '';
-          currentSubsection = '';
-        } else if (/제\d+장/.test(rawContent)) {
-          currentChapter = rawContent.replace(/\s+/g, ' ').trim();
-          currentSection = '';
-          currentSubsection = '';
-        } else if (/제\d+절/.test(rawContent)) {
-          currentSection = rawContent.replace(/\s+/g, ' ').trim();
-          currentSubsection = '';
-        } else if (/제\d+관/.test(rawContent)) {
-          currentSubsection = rawContent.replace(/\s+/g, ' ').trim();
-        }
-        // 계층 구분자는 조문이 아니므로 건너뜀
-        continue;
+  for (const jo of joArray) {
+    const rawContent = (jo['조문내용'] || '').trim();
+    const hasTitle = !!jo['조문제목'];
+
+    if (!hasTitle && rawContent) {
+      if (/제\d+편/.test(rawContent)) {
+        currentPart = rawContent.replace(/\s+/g, ' ').trim();
+        currentChapter = ''; currentSection = ''; currentSubsection = '';
+      } else if (/제\d+장/.test(rawContent)) {
+        currentChapter = rawContent.replace(/\s+/g, ' ').trim();
+        currentSection = ''; currentSubsection = '';
+      } else if (/제\d+절/.test(rawContent)) {
+        currentSection = rawContent.replace(/\s+/g, ' ').trim();
+        currentSubsection = '';
+      } else if (/제\d+관/.test(rawContent)) {
+        currentSubsection = rawContent.replace(/\s+/g, ' ').trim();
       }
+      continue;
+    }
 
-      // 실제 조문 파싱
-      let content = rawContent;
-
-      // 항(hang) 데이터 병합
-      const hangData = jo['항'];
-      if (hangData) {
-        const hangArray = Array.isArray(hangData) ? hangData : [hangData];
-        for (const hang of hangArray) {
-          const hangContent = hang['항내용'] || '';
-          if (hangContent) {
-            content += '\n' + hangContent;
-          }
-          // 호(ho) 데이터
-          const hoData = hang['호'];
-          if (hoData) {
-            const hoArray = Array.isArray(hoData) ? hoData : [hoData];
-            for (const ho of hoArray) {
-              const hoContent = ho['호내용'] || '';
-              if (hoContent) {
-                content += '\n  ' + hoContent;
-              }
-            }
+    let content = rawContent;
+    const hangData = jo['항'];
+    if (hangData) {
+      const hangArray = Array.isArray(hangData) ? hangData : [hangData];
+      for (const hang of hangArray) {
+        if (hang['항내용']) content += '\n' + hang['항내용'];
+        const hoData = hang['호'];
+        if (hoData) {
+          const hoArray = Array.isArray(hoData) ? hoData : [hoData];
+          for (const ho of hoArray) {
+            if (ho['호내용']) content += '\n  ' + ho['호내용'];
           }
         }
       }
+    }
 
-      // 라벨 조합: "제1장 총칙 > 제1조(목적)"
-      const articleName = `제${jo['조문번호']}조` + (jo['조문가지번호'] ? `의${jo['조문가지번호']}` : '') + (jo['조문제목'] ? `(${jo['조문제목']})` : '');
-      const pathParts = [currentPart, currentChapter, currentSection, currentSubsection].filter(Boolean);
+    const articleName = `제${jo['조문번호']}조` + (jo['조문가지번호'] ? `의${jo['조문가지번호']}` : '') + (jo['조문제목'] ? `(${jo['조문제목']})` : '');
+    const pathParts = [currentPart, currentChapter, currentSection, currentSubsection].filter(Boolean);
+    const label = pathParts.length > 0 ? `${pathParts.join(' > ')} > ${articleName}` : articleName;
+
+    articles.push({
+      number: jo['조문번호'] || '',
+      branchNumber: jo['조문가지번호'] || '',
+      title: jo['조문제목'] || '',
+      content: content.trim(),
+      part: currentPart, chapter: currentChapter,
+      section: currentSection, subsection: currentSubsection,
+      label,
+    });
+  }
+  return articles;
+}
+
+/**
+ * 행정규칙/자치법규 조문 텍스트 배열 파싱
+ * 각 항목이 "제N장 ...", "제N조(제목) 내용..." 형식의 문자열
+ * @param {string[]} textItems - 조문 텍스트 배열
+ * @returns {Array} articles
+ */
+function parseAdmRulArticles(textItems) {
+  let currentPart = '';
+  let currentChapter = '';
+  let currentSection = '';
+  const articles = [];
+
+  for (const text of textItems) {
+    const trimmed = text.trim();
+    if (!trimmed) continue;
+
+    // 계층 구분자 감지: "제N장 ...", "제N절 ..." 등
+    if (/^제\d+장\s/.test(trimmed) && !trimmed.includes('조(') && !trimmed.includes('조 ')) {
+      currentChapter = trimmed; currentSection = ''; continue;
+    }
+    if (/^제\d+절\s/.test(trimmed)) {
+      currentSection = trimmed; continue;
+    }
+    if (/^제\d+편\s/.test(trimmed)) {
+      currentPart = trimmed; currentChapter = ''; currentSection = ''; continue;
+    }
+
+    // 조문 파싱: "제N조(제목) 내용..." 또는 "제N조의N(제목) 내용..."
+    const artMatch = trimmed.match(/^제(\d+)조(?:의(\d+))?\(([^)]+)\)\s*([\s\S]*)/);
+    if (artMatch) {
+      const [, num, branch, title, content] = artMatch;
+      const articleName = `제${num}조` + (branch ? `의${branch}` : '') + `(${title})`;
+      const pathParts = [currentPart, currentChapter, currentSection].filter(Boolean);
       const label = pathParts.length > 0 ? `${pathParts.join(' > ')} > ${articleName}` : articleName;
 
       articles.push({
-        number: jo['조문번호'] || '',
-        branchNumber: jo['조문가지번호'] || '',
-        title: jo['조문제목'] || '',
-        content: content.trim(),
-        // 계층 라벨 정보
-        part: currentPart,
-        chapter: currentChapter,
-        section: currentSection,
-        subsection: currentSubsection,
+        number: num,
+        branchNumber: branch || '',
+        title,
+        content: content.trim() || trimmed,
+        part: currentPart, chapter: currentChapter,
+        section: currentSection, subsection: '',
         label,
       });
+      continue;
     }
 
-    // 행정규칙/자치법규에서 조문이 없는 경우 — 본문 텍스트를 섹션으로 분할
-    if (articles.length === 0) {
-      const bodyText = law['본문'] || law['내용'] || '';
-      if (bodyText) {
-        // 본문을 단락별로 분할 (빈 줄 기준) — 각 단락을 하나의 article로
-        const paragraphs = bodyText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-        if (paragraphs.length > 0) {
-          paragraphs.forEach((para, idx) => {
-            articles.push({
-              number: String(idx + 1),
-              branchNumber: '',
-              title: '',
-              content: para,
-              part: '', chapter: '', section: '', subsection: '',
-              label: `본문 ${idx + 1}`,
-            });
-          });
-        } else {
-          // 분할이 안 되면 전체를 하나의 섹션으로
-          articles.push({
-            number: '1',
-            branchNumber: '',
-            title: info.name,
-            content: bodyText.trim(),
-            part: '', chapter: '', section: '', subsection: '',
-            label: '본문',
-          });
-        }
-      }
+    // "제N조 내용..." (제목 없는 조문)
+    const simpleMatch = trimmed.match(/^제(\d+)조(?:의(\d+))?\s+([\s\S]*)/);
+    if (simpleMatch) {
+      const [, num, branch, content] = simpleMatch;
+      const articleName = `제${num}조` + (branch ? `의${branch}` : '');
+      const pathParts = [currentPart, currentChapter, currentSection].filter(Boolean);
+      const label = pathParts.length > 0 ? `${pathParts.join(' > ')} > ${articleName}` : articleName;
+
+      articles.push({
+        number: num,
+        branchNumber: branch || '',
+        title: '',
+        content: content.trim(),
+        part: currentPart, chapter: currentChapter,
+        section: currentSection, subsection: '',
+        label,
+      });
+      continue;
     }
 
-    return { info, articles };
+    // 조문 패턴이 아닌 텍스트 — 이전 조문에 병합하거나 새 항목으로 추가
+    if (articles.length > 0) {
+      articles[articles.length - 1].content += '\n' + trimmed;
+    } else {
+      articles.push({
+        number: String(articles.length + 1),
+        branchNumber: '',
+        title: '',
+        content: trimmed,
+        part: '', chapter: '', section: '', subsection: '',
+        label: `본문 ${articles.length + 1}`,
+      });
+    }
   }
-  return { info: null, articles: [] };
+  return articles;
 }
 
 module.exports = { fetchLawAPI, searchLaw, getLawDetail };
