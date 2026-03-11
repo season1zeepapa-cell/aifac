@@ -4435,8 +4435,18 @@
         setActionLoading(null);
       }, [engines]);
 
-      const providerLabels = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini', upstage: 'Upstage' };
-      const providerColors = { openai: 'green', anthropic: 'yellow', gemini: 'primary', upstage: 'blue' };
+      const providerLabels = {
+        openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini',
+        cohere: 'Cohere', upstage: 'Upstage',
+        'law-api': '국가법령정보센터', 'ocr-space': 'OCR.space',
+        'google-vision': 'Google Vision', 'aws-textract': 'AWS Textract', 'naver-clova': '네이버 CLOVA',
+      };
+      const providerColors = {
+        openai: 'green', anthropic: 'yellow', gemini: 'primary',
+        cohere: 'blue', upstage: 'blue',
+        'law-api': 'gray', 'ocr-space': 'gray',
+        'google-vision': 'primary', 'aws-textract': 'yellow', 'naver-clova': 'green',
+      };
 
       if (loading && !data) {
         return (
@@ -4724,6 +4734,11 @@
                           gemini: { env: 'GEMINI_API_KEY', desc: 'RAG 질의응답 + AI 요약 + OCR' },
                           cohere: { env: 'COHERE_API_KEY', desc: '검색 Rerank (선택, 무료 1000회/월)' },
                           upstage: { env: 'UPSTAGE_API_KEY', desc: 'Upstage OCR (무료)' },
+                          'law-api': { env: 'LAW_API_OC', desc: '국가법령정보센터 법령 검색/임포트' },
+                          'ocr-space': { env: 'OCR_SPACE_API_KEY', desc: 'OCR.space 텍스트 추출 (무료 500회/월)' },
+                          'google-vision': { env: 'GOOGLE_VISION_API_KEY', desc: 'Google Cloud Vision OCR' },
+                          'aws-textract': { env: 'AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY', desc: 'AWS Textract 문서 OCR' },
+                          'naver-clova': { env: 'CLOVA_OCR_SECRET + CLOVA_OCR_URL', desc: '네이버 CLOVA OCR' },
                         };
                         const g = envGuide[key.provider];
                         return g ? (

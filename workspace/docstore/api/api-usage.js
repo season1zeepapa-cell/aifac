@@ -33,11 +33,19 @@ module.exports = async function handler(req, res) {
 
       const { range = 'today' } = req.query;
 
-      // 1) 키 상태 조회 (upstage 행 자동 생성)
-      await query(`
-        INSERT INTO api_key_status (provider, daily_limit) VALUES ('upstage', 100)
-        ON CONFLICT (provider) DO NOTHING
-      `);
+      // 1) 키 상태 조회 (모든 프로바이더 행 자동 생성)
+      const allProviders = [
+        ['openai', 0], ['anthropic', 0], ['gemini', 0],
+        ['cohere', 1000], ['upstage', 100],
+        ['law-api', 0], ['ocr-space', 500],
+        ['google-vision', 0], ['aws-textract', 0], ['naver-clova', 0],
+      ];
+      for (const [prov, limit] of allProviders) {
+        await query(
+          `INSERT INTO api_key_status (provider, daily_limit) VALUES ($1, $2) ON CONFLICT (provider) DO NOTHING`,
+          [prov, limit]
+        );
+      }
       const keyStatus = await query('SELECT * FROM api_key_status ORDER BY provider');
 
       // 키 설정 여부 확인 (환경변수에 있는지)
@@ -47,6 +55,11 @@ module.exports = async function handler(req, res) {
         gemini: !!process.env.GEMINI_API_KEY,
         cohere: !!process.env.COHERE_API_KEY,
         upstage: !!process.env.UPSTAGE_API_KEY,
+        'law-api': !!process.env.LAW_API_OC,
+        'ocr-space': !!process.env.OCR_SPACE_API_KEY,
+        'google-vision': !!process.env.GOOGLE_VISION_API_KEY,
+        'aws-textract': !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
+        'naver-clova': !!(process.env.CLOVA_OCR_SECRET && process.env.CLOVA_OCR_URL),
       };
 
       // 2) 사용량 기간 설정
@@ -232,6 +245,96 @@ module.exports = async function handler(req, res) {
               testReq.on('error', reject);
               testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
               testReq.write('{}');
+              testReq.end();
+            });
+          } else if (provider === 'cohere' && process.env.COHERE_API_KEY) {
+            // Cohere API 키 테스트 (모델 목록 조회)
+            await new Promise((resolve, reject) => {
+              const testReq = https.request({
+                hostname: 'api.cohere.com',
+                path: '/v1/models',
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${process.env.COHERE_API_KEY}` },
+                timeout: 10000,
+              }, (r) => {
+                let d = '';
+                r.on('data', c => d += c);
+                r.on('end', () => r.statusCode === 200 ? resolve() : reject(new Error(`Cohere API ${r.statusCode}`)));
+              });
+              testReq.on('error', reject);
+              testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
+              testReq.end();
+            });
+          } else if (provider === 'law-api' && process.env.LAW_API_OC) {
+            // 국가법령정보센터 API 테스트
+            await new Promise((resolve, reject) => {
+              const oc = encodeURIComponent(process.env.LAW_API_OC);
+              https.get(`https://www.law.go.kr/DRF/lawSearch.do?OC=${oc}&target=law&type=JSON&display=1&query=개인정보`, { timeout: 10000 }, (r) => {
+                let d = '';
+                r.on('data', c => d += c);
+                r.on('end', () => r.statusCode === 200 ? resolve() : reject(new Error(`법령 API ${r.statusCode}`)));
+              }).on('error', reject);
+            });
+          } else if (provider === 'ocr-space' && process.env.OCR_SPACE_API_KEY) {
+            // OCR.space 간단 테스트
+            await new Promise((resolve, reject) => {
+              const testReq = https.request({
+                hostname: 'api.ocr.space',
+                path: '/parse/image',
+                method: 'POST',
+                headers: { 'apikey': process.env.OCR_SPACE_API_KEY, 'Content-Type': 'application/json' },
+                timeout: 10000,
+              }, (r) => {
+                let d = '';
+                r.on('data', c => d += c);
+                r.on('end', () => (r.statusCode === 200 || r.statusCode === 400) ? resolve() : reject(new Error(`OCR.space API ${r.statusCode}`)));
+              });
+              testReq.on('error', reject);
+              testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
+              testReq.write('{}');
+              testReq.end();
+            });
+          } else if (provider === 'google-vision' && process.env.GOOGLE_VISION_API_KEY) {
+            // Google Vision API 테스트
+            const gvKey = encodeURIComponent(process.env.GOOGLE_VISION_API_KEY);
+            await new Promise((resolve, reject) => {
+              const testReq = https.request({
+                hostname: 'vision.googleapis.com',
+                path: `/v1/images:annotate?key=${gvKey}`,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 10000,
+              }, (r) => {
+                let d = '';
+                r.on('data', c => d += c);
+                r.on('end', () => (r.statusCode === 200 || r.statusCode === 400) ? resolve() : reject(new Error(`Google Vision API ${r.statusCode}`)));
+              });
+              testReq.on('error', reject);
+              testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
+              testReq.write(JSON.stringify({ requests: [] }));
+              testReq.end();
+            });
+          } else if (provider === 'aws-textract' && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+            // AWS 자격증명 존재 확인 (실제 Textract 호출은 SDK 필요하므로 키 존재만 확인)
+            if (process.env.AWS_ACCESS_KEY_ID.length < 16) throw new Error('AWS_ACCESS_KEY_ID 형식 오류');
+          } else if (provider === 'naver-clova' && process.env.CLOVA_OCR_SECRET && process.env.CLOVA_OCR_URL) {
+            // CLOVA OCR URL 접근 테스트
+            const url = new URL(process.env.CLOVA_OCR_URL);
+            await new Promise((resolve, reject) => {
+              const testReq = https.request({
+                hostname: url.hostname,
+                path: url.pathname,
+                method: 'POST',
+                headers: { 'X-OCR-SECRET': process.env.CLOVA_OCR_SECRET, 'Content-Type': 'application/json' },
+                timeout: 10000,
+              }, (r) => {
+                let d = '';
+                r.on('data', c => d += c);
+                r.on('end', () => (r.statusCode !== 401 && r.statusCode !== 403) ? resolve() : reject(new Error('CLOVA OCR 인증 실패')));
+              });
+              testReq.on('error', reject);
+              testReq.on('timeout', () => { testReq.destroy(); reject(new Error('시간 초과')); });
+              testReq.write(JSON.stringify({ version: 'V2', requestId: 'test', timestamp: Date.now(), images: [] }));
               testReq.end();
             });
           } else {
