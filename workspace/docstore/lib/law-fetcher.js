@@ -31,7 +31,7 @@ function fetchLawAPI(url) {
  */
 async function searchLaw(query, oc) {
   const encoded = encodeURIComponent(query);
-  const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${oc}&target=law&type=JSON&query=${encoded}&display=5`;
+  const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${oc}&target=law&type=JSON&query=${encoded}&display=20`;
   const data = await fetchLawAPI(url);
 
   if (data.LawSearch && data.LawSearch.law) {
