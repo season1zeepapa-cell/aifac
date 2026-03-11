@@ -91,6 +91,34 @@ const deidentifyHandler = require('./api/deidentify');
 app.get('/api/deidentify', (req, res) => deidentifyHandler(req, res));
 app.post('/api/deidentify', (req, res) => deidentifyHandler(req, res));
 
+// ── /api/crawl-sources (GET, POST, PUT, DELETE) — 크롤링 소스 + 제외 패턴 ──
+const crawlSourcesHandler = require('./api/crawl-sources');
+app.get('/api/crawl-sources', (req, res) => crawlSourcesHandler(req, res));
+app.post('/api/crawl-sources', (req, res) => crawlSourcesHandler(req, res));
+app.put('/api/crawl-sources', (req, res) => crawlSourcesHandler(req, res));
+app.delete('/api/crawl-sources', (req, res) => crawlSourcesHandler(req, res));
+
+// ── /api/crawl-keywords (GET, POST, PUT, DELETE) — 크롤링 키워드 ──
+const crawlKeywordsHandler = require('./api/crawl-keywords');
+app.get('/api/crawl-keywords', (req, res) => crawlKeywordsHandler(req, res));
+app.post('/api/crawl-keywords', (req, res) => crawlKeywordsHandler(req, res));
+app.put('/api/crawl-keywords', (req, res) => crawlKeywordsHandler(req, res));
+app.delete('/api/crawl-keywords', (req, res) => crawlKeywordsHandler(req, res));
+
+// ── POST /api/naver-news — 네이버 뉴스 검색 ──
+const naverNewsHandler = require('./api/naver-news');
+app.post('/api/naver-news', (req, res) => naverNewsHandler(req, res));
+
+// ── POST /api/crawl — 사이트 게시판 크롤링 실행 ──
+const crawlHandler = require('./api/crawl');
+app.post('/api/crawl', (req, res) => crawlHandler(req, res));
+
+// ── /api/crawl-ingest (GET, POST, DELETE) — 크롤링 결과 지식화 ──
+const crawlIngestHandler = require('./api/crawl-ingest');
+app.get('/api/crawl-ingest', (req, res) => crawlIngestHandler(req, res));
+app.post('/api/crawl-ingest', (req, res) => crawlIngestHandler(req, res));
+app.delete('/api/crawl-ingest', (req, res) => crawlIngestHandler(req, res));
+
 // ── 서버 시작 / Vercel 서버리스 export ────────────────
 if (require.main === module) {
   app.listen(PORT, () => {

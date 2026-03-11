@@ -942,6 +942,168 @@
       const [urlError, setUrlError] = useState(null);
       const [urlResult, setUrlResult] = useState(null);
 
+      // ── 크롤링 수집 모드 state ──
+      const [crawlSources, setCrawlSources] = useState([]);
+      const [crawlKeywords, setCrawlKeywords] = useState([]);
+      const [crawlExclusions, setCrawlExclusions] = useState([]);
+      const [crawlResults, setCrawlResults] = useState([]);
+      const [crawlLoading, setCrawlLoading] = useState(false);
+      const [crawlError, setCrawlError] = useState(null);
+      const [crawlSubTab, setCrawlSubTab] = useState('execute'); // 'execute' | 'sources' | 'keywords' | 'exclusions'
+      // 실행 설정
+      const [crawlSourceId, setCrawlSourceId] = useState('');
+      const [crawlKeywordId, setCrawlKeywordId] = useState('');
+      const [crawlMode, setCrawlMode] = useState('naver'); // 'naver' | 'board'
+      const [crawlRecentDays, setCrawlRecentDays] = useState(7);
+      const [crawlTitleWeight, setCrawlTitleWeight] = useState(10);
+      const [crawlContentWeight, setCrawlContentWeight] = useState(3);
+      const [crawlMaxResults, setCrawlMaxResults] = useState(20);
+      const [crawlExecuting, setCrawlExecuting] = useState(false);
+      const [crawlIngesting, setCrawlIngesting] = useState(false);
+      const [selectedCrawlIds, setSelectedCrawlIds] = useState(new Set());
+      // 소스/키워드/제외 추가 폼
+      const [newSourceName, setNewSourceName] = useState('');
+      const [newSourceUrl, setNewSourceUrl] = useState('');
+      const [newKeyword, setNewKeyword] = useState('');
+      const [newExclusion, setNewExclusion] = useState('');
+
+      // 크롤링 데이터 로드
+      const loadCrawlData = useCallback(async () => {
+        try {
+          const [srcRes, kwRes, exRes, resRes] = await Promise.all([
+            authFetch(`${API_BASE_URL}/crawl-sources`).then(r => r.json()),
+            authFetch(`${API_BASE_URL}/crawl-keywords`).then(r => r.json()),
+            authFetch(`${API_BASE_URL}/crawl-sources?exclusions=1`).then(r => r.json()),
+            authFetch(`${API_BASE_URL}/crawl-ingest`).then(r => r.json()),
+          ]);
+          setCrawlSources(srcRes.sources || []);
+          setCrawlKeywords(kwRes.keywords || []);
+          setCrawlExclusions(exRes.exclusions || []);
+          setCrawlResults(resRes.results || []);
+        } catch (err) {
+          console.error('[크롤링 데이터 로드]', err);
+        }
+      }, []);
+
+      // 크롤링 모드 진입 시 데이터 로드
+      useEffect(() => {
+        if (uploadMode === 'crawl') loadCrawlData();
+      }, [uploadMode, loadCrawlData]);
+
+      // 크롤링 실행 (네이버 뉴스 / 사이트 게시판)
+      const handleCrawlExecute = useCallback(async () => {
+        const kw = crawlKeywords.find(k => k.id === parseInt(crawlKeywordId));
+        if (!kw) { setCrawlError('키워드를 선택하세요.'); return; }
+
+        setCrawlExecuting(true);
+        setCrawlError(null);
+        try {
+          let data;
+          if (crawlMode === 'naver') {
+            const res = await authFetch(`${API_BASE_URL}/naver-news`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                keyword: kw.keyword,
+                keywordId: kw.id,
+                maxResults: crawlMaxResults,
+                titleWeight: crawlTitleWeight,
+                contentWeight: crawlContentWeight,
+                recentDays: crawlRecentDays,
+              }),
+            });
+            data = await res.json();
+            if (!res.ok) throw new Error(data.error || '네이버 검색 실패');
+          } else {
+            if (!crawlSourceId) { setCrawlError('크롤링 소스를 선택하세요.'); setCrawlExecuting(false); return; }
+            const res = await authFetch(`${API_BASE_URL}/crawl`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sourceId: parseInt(crawlSourceId),
+                keyword: kw.keyword,
+                recentDays: crawlRecentDays,
+                titleWeight: crawlTitleWeight,
+                contentWeight: crawlContentWeight,
+              }),
+            });
+            data = await res.json();
+            if (!res.ok) throw new Error(data.error || '크롤링 실패');
+          }
+          // 결과 목록 새로고침
+          await loadCrawlData();
+        } catch (err) {
+          setCrawlError(err.message);
+        } finally {
+          setCrawlExecuting(false);
+        }
+      }, [crawlMode, crawlKeywordId, crawlSourceId, crawlKeywords, crawlMaxResults, crawlTitleWeight, crawlContentWeight, crawlRecentDays, loadCrawlData]);
+
+      // 선택한 결과 지식화
+      const handleCrawlIngest = useCallback(async () => {
+        if (selectedCrawlIds.size === 0) return;
+        setCrawlIngesting(true);
+        setCrawlError(null);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/crawl-ingest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resultIds: [...selectedCrawlIds], category: '크롤링' }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '지식화 실패');
+          setSelectedCrawlIds(new Set());
+          await loadCrawlData();
+          if (onUploadComplete) onUploadComplete();
+        } catch (err) {
+          setCrawlError(err.message);
+        } finally {
+          setCrawlIngesting(false);
+        }
+      }, [selectedCrawlIds, loadCrawlData, onUploadComplete]);
+
+      // 소스 추가
+      const handleAddSource = useCallback(async () => {
+        if (!newSourceName.trim() || !newSourceUrl.trim()) return;
+        try {
+          await authFetch(`${API_BASE_URL}/crawl-sources`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newSourceName, boardUrl: newSourceUrl, baseUrl: new URL(newSourceUrl).origin }),
+          });
+          setNewSourceName(''); setNewSourceUrl('');
+          await loadCrawlData();
+        } catch (err) { setCrawlError(err.message); }
+      }, [newSourceName, newSourceUrl, loadCrawlData]);
+
+      // 키워드 추가
+      const handleAddKeyword = useCallback(async () => {
+        if (!newKeyword.trim()) return;
+        try {
+          await authFetch(`${API_BASE_URL}/crawl-keywords`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyword: newKeyword, maxResults: crawlMaxResults, titleWeight: crawlTitleWeight, contentWeight: crawlContentWeight }),
+          });
+          setNewKeyword('');
+          await loadCrawlData();
+        } catch (err) { setCrawlError(err.message); }
+      }, [newKeyword, crawlMaxResults, crawlTitleWeight, crawlContentWeight, loadCrawlData]);
+
+      // 제외 패턴 추가
+      const handleAddExclusion = useCallback(async () => {
+        if (!newExclusion.trim()) return;
+        try {
+          await authFetch(`${API_BASE_URL}/crawl-sources?exclusion=1`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urlPattern: newExclusion }),
+          });
+          setNewExclusion('');
+          await loadCrawlData();
+        } catch (err) { setCrawlError(err.message); }
+      }, [newExclusion, loadCrawlData]);
+
       // ── 파일 선택 핸들러 (모든 형식 지원) ──
       const handleFileSelect = useCallback((selectedFile) => {
         if (!selectedFile) return;
@@ -1176,26 +1338,32 @@
 
       return (
         <div className="space-y-5 fade-in">
-          {/* 모드 토글 — 3개 균등 배분 */}
-          <div className="grid grid-cols-3 gap-2 bg-gray-100 p-1 rounded-xl">
+          {/* 모드 토글 — 4개 균등 배분 */}
+          <div className="grid grid-cols-4 gap-1 bg-gray-100 p-1 rounded-xl">
             <button
               onClick={() => setUploadMode('file')}
-              className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 uploadMode === 'file' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
-            >파일 업로드</button>
+            >파일</button>
             <button
               onClick={() => setUploadMode('law')}
-              className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 uploadMode === 'law' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
-            >법령 검색</button>
+            >법령</button>
             <button
               onClick={() => setUploadMode('url')}
-              className={`py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 uploadMode === 'url' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
               }`}
-            >URL 크롤링</button>
+            >URL</button>
+            <button
+              onClick={() => setUploadMode('crawl')}
+              className={`py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                uploadMode === 'crawl' ? 'bg-card-bg text-primary shadow-sm' : 'text-text-secondary hover:text-text'
+              }`}
+            >크롤링</button>
           </div>
 
           {/* ── 파일 업로드 모드 ── */}
@@ -1600,6 +1768,345 @@
               >
                 {urlImporting ? '크롤링 중...' : 'URL 크롤링'}
               </Button>
+            </>
+          )}
+
+          {/* ── 크롤링 수집 모드 ── */}
+          {uploadMode === 'crawl' && (
+            <>
+              {/* 서브탭 */}
+              <div className="flex gap-1 bg-bg border border-border rounded-lg p-0.5">
+                {[
+                  { id: 'execute', label: '실행' },
+                  { id: 'sources', label: '소스 관리' },
+                  { id: 'keywords', label: '키워드' },
+                  { id: 'exclusions', label: '제외 패턴' },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setCrawlSubTab(tab.id)}
+                    className={`flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                      crawlSubTab === tab.id ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-text'
+                    }`}
+                  >{tab.label}</button>
+                ))}
+              </div>
+
+              {crawlError && (
+                <Card className="border-red-200 bg-red-50">
+                  <p className="text-sm text-red-500">{crawlError}</p>
+                </Card>
+              )}
+
+              {/* ── 실행 탭 ── */}
+              {crawlSubTab === 'execute' && (
+                <>
+                  <Card>
+                    <div className="space-y-4">
+                      {/* 수집 방식 선택 */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setCrawlMode('naver')}
+                          className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                            crawlMode === 'naver' ? 'border-primary bg-primary/10 text-primary' : 'border-border text-text-secondary hover:text-text'
+                          }`}
+                        >네이버 뉴스</button>
+                        <button
+                          onClick={() => setCrawlMode('board')}
+                          className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                            crawlMode === 'board' ? 'border-primary bg-primary/10 text-primary' : 'border-border text-text-secondary hover:text-text'
+                          }`}
+                        >사이트 게시판</button>
+                      </div>
+
+                      {/* 사이트 소스 선택 (게시판 모드) */}
+                      {crawlMode === 'board' && (
+                        <Select
+                          label="크롤링 소스"
+                          value={crawlSourceId}
+                          onChange={e => setCrawlSourceId(e.target.value)}
+                          options={[
+                            { value: '', label: '소스를 선택하세요' },
+                            ...crawlSources.filter(s => s.is_active).map(s => ({ value: String(s.id), label: s.name })),
+                          ]}
+                        />
+                      )}
+
+                      {/* 키워드 선택 */}
+                      <Select
+                        label="검색 키워드"
+                        value={crawlKeywordId}
+                        onChange={e => {
+                          setCrawlKeywordId(e.target.value);
+                          const kw = crawlKeywords.find(k => k.id === parseInt(e.target.value));
+                          if (kw) {
+                            setCrawlTitleWeight(parseFloat(kw.title_weight));
+                            setCrawlContentWeight(parseFloat(kw.content_weight));
+                            setCrawlMaxResults(kw.max_results);
+                          }
+                        }}
+                        options={[
+                          { value: '', label: '키워드를 선택하세요' },
+                          ...crawlKeywords.filter(k => k.is_active).map(k => ({ value: String(k.id), label: k.keyword })),
+                        ]}
+                      />
+
+                      {/* 설정 옵션 */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-text-secondary mb-1">최근 일수</label>
+                          <input type="number" min="1" max="90" value={crawlRecentDays} onChange={e => setCrawlRecentDays(parseInt(e.target.value) || 7)}
+                            className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary" />
+                        </div>
+                        {crawlMode === 'naver' && (
+                          <div>
+                            <label className="block text-xs font-medium text-text-secondary mb-1">최대 건수</label>
+                            <input type="number" min="1" max="100" value={crawlMaxResults} onChange={e => setCrawlMaxResults(parseInt(e.target.value) || 20)}
+                              className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-text-secondary mb-1">제목 가중치</label>
+                          <input type="number" min="0" step="0.5" value={crawlTitleWeight} onChange={e => setCrawlTitleWeight(parseFloat(e.target.value) || 0)}
+                            className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-text-secondary mb-1">내용 가중치</label>
+                          <input type="number" min="0" step="0.5" value={crawlContentWeight} onChange={e => setCrawlContentWeight(parseFloat(e.target.value) || 0)}
+                            className="w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary" />
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-text-secondary">
+                        {crawlMode === 'naver'
+                          ? '네이버 뉴스 검색 API로 키워드 관련 뉴스를 수집합니다.'
+                          : '등록된 사이트 게시판에서 키워드 관련 게시물을 수집합니다.'}
+                      </p>
+                    </div>
+                  </Card>
+
+                  <Button variant="primary" size="lg" className="w-full" disabled={crawlExecuting || !crawlKeywordId}
+                    onClick={handleCrawlExecute}>
+                    {crawlExecuting ? '수집 중...' : '크롤링 실행'}
+                  </Button>
+
+                  {/* 수집 결과 미리보기 */}
+                  {crawlResults.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-text">{crawlResults.length}건의 수집 결과</p>
+                        <div className="flex gap-2">
+                          <button onClick={() => {
+                            const allIds = new Set(crawlResults.filter(r => !r.is_ingested).map(r => r.id));
+                            setSelectedCrawlIds(prev => prev.size === allIds.size ? new Set() : allIds);
+                          }} className="text-xs text-primary hover:underline">
+                            {selectedCrawlIds.size > 0 ? '선택 해제' : '전체 선택'}
+                          </button>
+                          {selectedCrawlIds.size > 0 && (
+                            <button onClick={handleCrawlIngest} disabled={crawlIngesting}
+                              className="text-xs bg-primary text-white px-3 py-1 rounded-lg hover:bg-primary/90 disabled:opacity-50">
+                              {crawlIngesting ? '처리 중...' : `${selectedCrawlIds.size}건 지식화`}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {crawlResults.map(item => (
+                          <div key={item.id} className={`p-3 rounded-lg border transition-colors ${
+                            item.is_ingested ? 'border-green-200 bg-green-50/30 opacity-60' :
+                            selectedCrawlIds.has(item.id) ? 'border-primary bg-primary/5' : 'border-border bg-card-bg'
+                          }`}>
+                            <div className="flex items-start gap-2">
+                              {!item.is_ingested && (
+                                <input type="checkbox" checked={selectedCrawlIds.has(item.id)}
+                                  onChange={() => setSelectedCrawlIds(prev => {
+                                    const next = new Set(prev);
+                                    next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+                                    return next;
+                                  })}
+                                  className="mt-1 accent-primary" />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                    item.source_type === 'naver_news' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {item.source_type === 'naver_news' ? '뉴스' : item.source_name || '게시판'}
+                                  </span>
+                                  <span className="text-[10px] text-text-secondary font-mono">
+                                    점수: {parseFloat(item.relevance_score || 0).toFixed(1)}
+                                  </span>
+                                  {item.is_ingested && <span className="text-[10px] text-green-600 font-medium">저장됨</span>}
+                                </div>
+                                <a href={item.url} target="_blank" rel="noopener noreferrer"
+                                  className="text-sm font-medium text-text hover:text-primary line-clamp-2">{item.title}</a>
+                                {item.snippet && <p className="text-xs text-text-secondary mt-1 line-clamp-2">{item.snippet}</p>}
+                                <div className="flex items-center gap-3 mt-1">
+                                  {item.published_at && (
+                                    <span className="text-[10px] text-text-secondary">
+                                      {new Date(item.published_at).toLocaleDateString('ko-KR')}
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-text-secondary">
+                                    제목:{parseFloat(item.title_score || 0).toFixed(1)} / 내용:{parseFloat(item.content_score || 0).toFixed(1)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* ── 소스 관리 탭 ── */}
+              {crawlSubTab === 'sources' && (
+                <>
+                  <Card>
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium text-text">새 소스 추가</p>
+                      <Input label="사이트 이름" value={newSourceName} onChange={e => setNewSourceName(e.target.value)} placeholder="예: KISA" />
+                      <Input label="게시판 URL" value={newSourceUrl} onChange={e => setNewSourceUrl(e.target.value)} placeholder="https://www.kisa.or.kr/401" />
+                      <Button variant="primary" size="sm" onClick={handleAddSource} disabled={!newSourceName.trim() || !newSourceUrl.trim()}>추가</Button>
+                    </div>
+                  </Card>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-text">등록된 소스 ({crawlSources.length})</p>
+                    {crawlSources.map(src => (
+                      <Card key={src.id}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-text">{src.name}</p>
+                            <p className="text-xs text-text-secondary truncate">{src.board_url}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={async () => {
+                              await authFetch(`${API_BASE_URL}/crawl-sources?id=${src.id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ isActive: !src.is_active }),
+                              });
+                              await loadCrawlData();
+                            }} className={`text-xs px-2 py-1 rounded ${src.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              {src.is_active ? '활성' : '비활성'}
+                            </button>
+                            <button onClick={async () => {
+                              if (!confirm('이 소스를 삭제하시겠습니까?')) return;
+                              await authFetch(`${API_BASE_URL}/crawl-sources?id=${src.id}`, { method: 'DELETE' });
+                              await loadCrawlData();
+                            }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* ── 키워드 관리 탭 ── */}
+              {crawlSubTab === 'keywords' && (
+                <>
+                  <Card>
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium text-text">새 키워드 추가</p>
+                      <Input label="키워드" value={newKeyword} onChange={e => setNewKeyword(e.target.value)} placeholder="예: 개인정보보호" />
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-xs font-medium text-text-secondary mb-1">최대 건수</label>
+                          <input type="number" min="1" max="100" value={crawlMaxResults} onChange={e => setCrawlMaxResults(parseInt(e.target.value) || 20)}
+                            className="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-primary" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-text-secondary mb-1">제목 가중치</label>
+                          <input type="number" min="0" step="0.5" value={crawlTitleWeight} onChange={e => setCrawlTitleWeight(parseFloat(e.target.value) || 0)}
+                            className="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-primary" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-text-secondary mb-1">내용 가중치</label>
+                          <input type="number" min="0" step="0.5" value={crawlContentWeight} onChange={e => setCrawlContentWeight(parseFloat(e.target.value) || 0)}
+                            className="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-primary" />
+                        </div>
+                      </div>
+                      <Button variant="primary" size="sm" onClick={handleAddKeyword} disabled={!newKeyword.trim()}>추가</Button>
+                    </div>
+                  </Card>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-text">등록된 키워드 ({crawlKeywords.length})</p>
+                    {crawlKeywords.map(kw => (
+                      <Card key={kw.id}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-text">{kw.keyword}</p>
+                            <p className="text-xs text-text-secondary">
+                              최대 {kw.max_results}건 | 제목 x{parseFloat(kw.title_weight)} | 내용 x{parseFloat(kw.content_weight)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={async () => {
+                              await authFetch(`${API_BASE_URL}/crawl-keywords?id=${kw.id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ isActive: !kw.is_active }),
+                              });
+                              await loadCrawlData();
+                            }} className={`text-xs px-2 py-1 rounded ${kw.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              {kw.is_active ? '활성' : '비활성'}
+                            </button>
+                            <button onClick={async () => {
+                              if (!confirm('이 키워드를 삭제하시겠습니까?')) return;
+                              await authFetch(`${API_BASE_URL}/crawl-keywords?id=${kw.id}`, { method: 'DELETE' });
+                              await loadCrawlData();
+                            }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* ── 제외 패턴 탭 ── */}
+              {crawlSubTab === 'exclusions' && (
+                <>
+                  <Card>
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium text-text">제외 URL 패턴 추가</p>
+                      <Input label="URL 패턴" value={newExclusion} onChange={e => setNewExclusion(e.target.value)} placeholder="예: blog.example.com" />
+                      <p className="text-xs text-text-secondary">이 패턴이 포함된 URL은 크롤링 결과에서 제외됩니다.</p>
+                      <Button variant="primary" size="sm" onClick={handleAddExclusion} disabled={!newExclusion.trim()}>추가</Button>
+                    </div>
+                  </Card>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-text">등록된 제외 패턴 ({crawlExclusions.length})</p>
+                    {crawlExclusions.map(ex => (
+                      <Card key={ex.id}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <p className="text-sm font-mono text-text">{ex.url_pattern}</p>
+                            {ex.reason && <p className="text-xs text-text-secondary">{ex.reason}</p>}
+                          </div>
+                          <button onClick={async () => {
+                            await authFetch(`${API_BASE_URL}/crawl-sources?exclusionId=${ex.id}`, { method: 'DELETE' });
+                            await loadCrawlData();
+                          }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                        </div>
+                      </Card>
+                    ))}
+                    {crawlExclusions.length === 0 && (
+                      <p className="text-xs text-text-secondary text-center py-4">등록된 제외 패턴이 없습니다.</p>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>

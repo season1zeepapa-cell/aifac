@@ -16,7 +16,12 @@
     "api/api-usage.js": { "maxDuration": 30 },
     "api/login.js": { "maxDuration": 10 },
     "api/cross-references.js": { "maxDuration": 120 },
-    "api/chat-sessions.js": { "maxDuration": 10 }
+    "api/chat-sessions.js": { "maxDuration": 10 },
+    "api/crawl-sources.js": { "maxDuration": 10 },
+    "api/crawl-keywords.js": { "maxDuration": 10 },
+    "api/naver-news.js": { "maxDuration": 30 },
+    "api/crawl.js": { "maxDuration": 60 },
+    "api/crawl-ingest.js": { "maxDuration": 300 }
   },
   "headers": [
     {
