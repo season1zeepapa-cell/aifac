@@ -27,46 +27,60 @@ function fetchLawAPI(url) {
  * 법령 검색 (법령명으로)
  * @param {string} query - 검색어
  * @param {string} oc - 법제처 API 인증키
- * @returns {Promise<Object>} { totalCount, results }
+ * @param {string} target - 검색 대상: 'law'(법령), 'admrul'(행정규칙), 'ordin'(자치법규)
+ * @returns {Promise<Object>} { totalCount, results, target }
  */
-async function searchLaw(query, oc) {
+async function searchLaw(query, oc, target = 'law') {
   const encoded = encodeURIComponent(query);
-  const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${oc}&target=law&type=JSON&query=${encoded}&display=20`;
+  const validTargets = ['law', 'admrul', 'ordin'];
+  const t = validTargets.includes(target) ? target : 'law';
+  const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${oc}&target=${t}&type=JSON&query=${encoded}&display=20`;
   const data = await fetchLawAPI(url);
 
-  if (data.LawSearch && data.LawSearch.law) {
-    const laws = Array.isArray(data.LawSearch.law) ? data.LawSearch.law : [data.LawSearch.law];
-    const results = laws.map(l => ({
-      id: l['법령일련번호'] || l.lawId,
-      name: l['법령명한글'] || l.lawNameKorean,
+  // 각 target별 응답 키가 다름
+  const rootKey = t === 'admrul' ? 'AdmRulSearch' : t === 'ordin' ? 'OrdinSearch' : 'LawSearch';
+  const itemKey = t === 'admrul' ? 'admrul' : t === 'ordin' ? 'ordin' : 'law';
+
+  const root = data[rootKey];
+  if (root && root[itemKey]) {
+    const items = Array.isArray(root[itemKey]) ? root[itemKey] : [root[itemKey]];
+    const results = items.map(l => ({
+      id: l['법령일련번호'] || l['행정규칙일련번호'] || l['자치법규일련번호'] || l.lawId || '',
+      name: l['법령명한글'] || l['행정규칙명'] || l['자치법규명'] || '',
       shortName: l['법령약칭명'] || '',
-      promulgationDate: l['공포일자'] || '',
+      promulgationDate: l['공포일자'] || l['발령일자'] || '',
       enforcementDate: l['시행일자'] || '',
-      ministry: l['소관부처명'] || '',
-      link: l['법령상세링크'] || '',
+      ministry: l['소관부처명'] || l['소관부처'] || '',
+      link: l['법령상세링크'] || l['행정규칙상세링크'] || l['자치법규상세링크'] || '',
+      lawType: t === 'admrul' ? (l['행정규칙종류'] || '행정규칙') : t === 'ordin' ? '자치법규' : '',
     }));
-    return { totalCount: data.LawSearch.totalCnt || results.length, results };
+    return { totalCount: root.totalCnt || results.length, results, target: t };
   }
-  return { totalCount: 0, results: [] };
+  return { totalCount: 0, results: [], target: t };
 }
 
 /**
  * 법령 상세 조문 조회
- * @param {string} lawId - 법령일련번호
+ * @param {string} lawId - 법령일련번호 또는 행정규칙/자치법규 일련번호
  * @param {string} oc - 법제처 API 인증키
+ * @param {string} target - 'law' | 'admrul' | 'ordin'
  * @returns {Promise<Object>} { info, articles }
  */
-async function getLawDetail(lawId, oc) {
-  const url = `https://www.law.go.kr/DRF/lawService.do?OC=${oc}&target=law&MST=${lawId}&type=JSON`;
+async function getLawDetail(lawId, oc, target = 'law') {
+  const validTargets = ['law', 'admrul', 'ordin'];
+  const t = validTargets.includes(target) ? target : 'law';
+  const url = `https://www.law.go.kr/DRF/lawService.do?OC=${oc}&target=${t}&MST=${lawId}&type=JSON`;
   const data = await fetchLawAPI(url);
 
-  if (data['법령'] || data.law) {
-    const law = data['법령'] || data.law;
+  // 응답 루트 키 감지: 법령 / 행정규칙 / 자치법규
+  const law = data['법령'] || data.law || data['행정규칙'] || data['자치법규'];
+  if (law) {
+    const basicInfo = law['기본정보'] || {};
     const info = {
-      name: law['기본정보']?.['법령명_한글'] || law['법령명한글'] || '',
-      promulgationDate: law['기본정보']?.['공포일자'] || '',
-      enforcementDate: law['기본정보']?.['시행일자'] || '',
-      ministry: law['기본정보']?.['소관부처명'] || '',
+      name: basicInfo['법령명_한글'] || basicInfo['행정규칙명'] || basicInfo['자치법규명'] || law['법령명한글'] || '',
+      promulgationDate: basicInfo['공포일자'] || basicInfo['발령일자'] || '',
+      enforcementDate: basicInfo['시행일자'] || '',
+      ministry: basicInfo['소관부처명'] || basicInfo['소관부처'] || '',
     };
 
     // 조문 파싱 + 계층 라벨링 (편/장/절/관)
@@ -150,6 +164,37 @@ async function getLawDetail(lawId, oc) {
         subsection: currentSubsection,
         label,
       });
+    }
+
+    // 행정규칙/자치법규에서 조문이 없는 경우 — 본문 텍스트를 섹션으로 분할
+    if (articles.length === 0) {
+      const bodyText = law['본문'] || law['내용'] || '';
+      if (bodyText) {
+        // 본문을 단락별로 분할 (빈 줄 기준) — 각 단락을 하나의 article로
+        const paragraphs = bodyText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+        if (paragraphs.length > 0) {
+          paragraphs.forEach((para, idx) => {
+            articles.push({
+              number: String(idx + 1),
+              branchNumber: '',
+              title: '',
+              content: para,
+              part: '', chapter: '', section: '', subsection: '',
+              label: `본문 ${idx + 1}`,
+            });
+          });
+        } else {
+          // 분할이 안 되면 전체를 하나의 섹션으로
+          articles.push({
+            number: '1',
+            branchNumber: '',
+            title: info.name,
+            content: bodyText.trim(),
+            part: '', chapter: '', section: '', subsection: '',
+            label: '본문',
+          });
+        }
+      }
     }
 
     return { info, articles };

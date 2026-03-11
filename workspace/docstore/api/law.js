@@ -23,7 +23,8 @@ module.exports = async (req, res) => {
   try {
     if (action === 'search') {
       if (!query) return res.status(400).json({ error: '검색어(query)가 필요합니다.' });
-      const result = await searchLaw(query, OC);
+      const { target } = req.body;
+      const result = await searchLaw(query, OC, target || 'law');
 
       // 검색 결과의 lawId 목록으로 이미 임포트된 법령 조회 (조직별 격리)
       const lawIds = (result.results || []).map(r => String(r.id));

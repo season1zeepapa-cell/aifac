@@ -39,7 +39,7 @@ module.exports = async (req, res) => {
 
   if (await checkRateLimit(req, res, 'lawImport')) return;
 
-  const { lawId, lawName } = req.body;
+  const { lawId, lawName, target: lawTarget } = req.body;
   if (!lawId) return res.status(400).json({ error: '법령ID(lawId)가 필요합니다.' });
 
   const OC = (process.env.LAW_API_OC || '').trim();
@@ -61,7 +61,7 @@ module.exports = async (req, res) => {
 
     // 2) 법제처 API에서 조문 가져오기
     console.log(`법령 임포트 시작: ${lawName || lawId}`);
-    const { info, articles } = await getLawDetail(lawId, OC);
+    const { info, articles } = await getLawDetail(lawId, OC, lawTarget || 'law');
 
     if (!info || articles.length === 0) {
       return res.status(404).json({ error: '법령 조문을 찾을 수 없습니다.' });
@@ -69,14 +69,17 @@ module.exports = async (req, res) => {
 
     // 3) documents 테이블에 저장
     const title = lawName || info.name || '제목 없음';
+    const category = lawTarget === 'admrul' ? '행정규칙' : lawTarget === 'ordin' ? '자치법규' : '법령';
     const docResult = await dbQuery(
       `INSERT INTO documents (title, file_type, category, metadata, org_id)
-       VALUES ($1, 'law', '법령', $2, $3)
+       VALUES ($1, 'law', $2, $3, $4)
        RETURNING id`,
       [
         title,
+        category,
         JSON.stringify({
           lawId: String(lawId),
+          lawTarget: lawTarget || 'law',
           promulgationDate: info.promulgationDate,
           enforcementDate: info.enforcementDate,
           ministry: info.ministry,
