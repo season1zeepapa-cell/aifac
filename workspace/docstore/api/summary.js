@@ -23,7 +23,7 @@ async function summarizeSection(section, options = {}) {
 
 ${label ? `[조문] ${label}\n` : ''}${text.substring(0, 2000)}`;
 
-  return callLLM(prompt, { ...options, maxTokens: 256, timeout: 15000 });
+  return callLLM(prompt, { ...options, maxTokens: 256, timeout: 15000, _endpoint: 'summary' });
 }
 
 module.exports = async (req, res) => {

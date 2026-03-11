@@ -1,6 +1,7 @@
 // 임베딩 생성 유틸리티 (OpenAI text-embedding-3-small)
 const OpenAI = require('openai');
 const { smartChunk } = require('./text-splitters');
+const { trackUsage } = require('./api-tracker');
 
 // OpenAI 클라이언트 (싱글턴)
 let client;
@@ -73,6 +74,12 @@ async function generateEmbeddings(chunks) {
     input: chunks,
   });
 
+  // 사용량 추적 (토큰 수는 응답에 포함됨)
+  trackUsage({
+    provider: 'openai', model: EMBEDDING_MODEL, endpoint: 'embeddings-batch',
+    tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
+  }).catch(() => {});
+
   // 인덱스 순서대로 정렬하여 반환
   return response.data
     .sort((a, b) => a.index - b.index)
@@ -91,6 +98,12 @@ async function generateEmbedding(text) {
     model: EMBEDDING_MODEL,
     input: text,
   });
+
+  // 사용량 추적
+  trackUsage({
+    provider: 'openai', model: EMBEDDING_MODEL, endpoint: 'embedding-single',
+    tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
+  }).catch(() => {});
 
   return response.data[0].embedding;
 }

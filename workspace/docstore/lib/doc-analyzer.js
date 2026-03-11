@@ -4,7 +4,7 @@
 //   const { analyzeDocument, analyzeSections } = require('../lib/doc-analyzer');
 //   const analysis = await analyzeDocument(sectionsText, title, category);
 //   const sectionSummaries = await analyzeSections(sections);
-const { callGemini } = require('./gemini');
+const { callLLM } = require('./gemini');
 
 /**
  * 문서 전체 분석 — 요약, 키워드, 태그 추천
@@ -41,7 +41,7 @@ JSON만 반환하세요. 다른 텍스트는 포함하지 마세요:
 ${truncated}`;
 
   try {
-    const raw = await callGemini(prompt, { maxTokens: 2048, timeout: 60000 });
+    const raw = await callLLM(prompt, { provider: 'gemini', _endpoint: 'doc-analyzer', maxTokens: 2048, timeout: 60000 });
     // JSON 파싱 (마크다운 코드블록 제거)
     const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     const result = JSON.parse(cleaned);
@@ -99,7 +99,7 @@ async function analyzeSections(sections) {
 ${sectionList}`;
 
       try {
-        const raw = await callGemini(prompt, { maxTokens: 4096, timeout: 60000 });
+        const raw = await callLLM(prompt, { provider: 'gemini', _endpoint: 'doc-analyzer', maxTokens: 4096, timeout: 60000 });
         const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
         const parsed = JSON.parse(cleaned);
         return { validBatch, parsed };

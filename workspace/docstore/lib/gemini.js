@@ -1,7 +1,9 @@
 // 멀티 LLM 공통 호출 모듈
 // Gemini / OpenAI / Claude 3개 프로바이더 지원
 // 모델명·엔드포인트를 한 곳에서 관리
+// callLLM/callLLMStream 호출 시 api-tracker를 통해 자동으로 사용량 DB 기록
 const https = require('https');
+const { trackUsage, isCreditError, updateKeyStatus } = require('./api-tracker');
 
 // ── 프로바이더별 모델 설정 ──
 const GEMINI_MODEL = 'gemini-2.5-flash';
@@ -75,6 +77,12 @@ function callGemini(prompt, options = {}) {
             return;
           }
           const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          // 토큰 사용량 추출 → options._usage에 기록
+          if (options._usage) {
+            const um = parsed.usageMetadata || {};
+            options._usage.tokensIn = um.promptTokenCount || 0;
+            options._usage.tokensOut = um.candidatesTokenCount || 0;
+          }
           resolve(text.trim());
         } catch {
           reject(new Error('Gemini 응답 파싱 실패'));
@@ -146,6 +154,12 @@ function callOpenAI(prompt, options = {}) {
             return;
           }
           const text = parsed.choices?.[0]?.message?.content || '';
+          // 토큰 사용량 추출 → options._usage에 기록
+          if (options._usage) {
+            const u = parsed.usage || {};
+            options._usage.tokensIn = u.prompt_tokens || 0;
+            options._usage.tokensOut = u.completion_tokens || 0;
+          }
           resolve(text.trim());
         } catch {
           reject(new Error('OpenAI 응답 파싱 실패'));
@@ -195,6 +209,12 @@ function callClaude(prompt, options = {}) {
             return;
           }
           const text = parsed.content?.[0]?.text || '';
+          // 토큰 사용량 추출 → options._usage에 기록
+          if (options._usage) {
+            const u = parsed.usage || {};
+            options._usage.tokensIn = u.input_tokens || 0;
+            options._usage.tokensOut = u.output_tokens || 0;
+          }
           resolve(text.trim());
         } catch {
           reject(new Error('Claude 응답 파싱 실패'));
@@ -208,15 +228,51 @@ function callClaude(prompt, options = {}) {
   });
 }
 
-// ── 통합 호출 함수 ──
+// ── 통합 호출 함수 (자동 추적 포함) ──
 // provider: 'gemini' | 'openai' | 'claude' (기본: gemini)
-function callLLM(prompt, options = {}) {
+// 호출 시 자동으로 api_usage 테이블에 토큰/비용 기록
+async function callLLM(prompt, options = {}) {
   const provider = options.provider || 'gemini';
-  switch (provider) {
-    case 'openai': return callOpenAI(prompt, options);
-    case 'claude': return callClaude(prompt, options);
-    case 'gemini':
-    default: return callGemini(prompt, options);
+  const model = options.model || LLM_PROVIDERS[provider]?.model || 'unknown';
+  const endpoint = options._endpoint || 'llm-call';
+
+  // _usage 객체를 전달 → 프로바이더 함수가 토큰 수를 여기에 기록
+  const usage = {};
+  options._usage = usage;
+
+  try {
+    let result;
+    switch (provider) {
+      case 'openai': result = await callOpenAI(prompt, options); break;
+      case 'claude': result = await callClaude(prompt, options); break;
+      case 'gemini':
+      default: result = await callGemini(prompt, options); break;
+    }
+
+    // 성공 시 사용량 기록 (비동기, 실패해도 결과에 영향 없음)
+    trackUsage({
+      provider, model, endpoint,
+      tokensIn: usage.tokensIn || 0,
+      tokensOut: usage.tokensOut || 0,
+      status: 'success',
+    }).catch(() => {});
+
+    return result;
+  } catch (err) {
+    // 에러 시에도 기록
+    const creditExhausted = isCreditError(err);
+    trackUsage({
+      provider, model, endpoint,
+      status: creditExhausted ? 'credit_exhausted' : 'error',
+      errorMessage: err.message,
+    }).catch(() => {});
+
+    // 크레딧 소진이면 키 비활성화
+    if (creditExhausted) {
+      updateKeyStatus(provider, { isActive: false, lastError: err.message }).catch(() => {});
+    }
+
+    throw err;
   }
 }
 
@@ -439,14 +495,52 @@ function callClaudeStream(prompt, options = {}, onToken) {
   });
 }
 
-// ── 통합 스트리밍 호출 ──
-function callLLMStream(prompt, options = {}, onToken) {
+// ── 통합 스트리밍 호출 (자동 추적 포함) ──
+// 스트리밍은 토큰 수를 응답에서 직접 얻기 어려우므로 글자 수 기반 추정
+async function callLLMStream(prompt, options = {}, onToken) {
   const provider = options.provider || 'gemini';
-  switch (provider) {
-    case 'openai': return callOpenAIStream(prompt, options, onToken);
-    case 'claude': return callClaudeStream(prompt, options, onToken);
-    case 'gemini':
-    default: return callGeminiStream(prompt, options, onToken);
+  const model = options.model || LLM_PROVIDERS[provider]?.model || 'unknown';
+  const endpoint = options._endpoint || 'llm-stream';
+  const startTime = Date.now();
+
+  // 출력 토큰 추정용 — 콜백을 감싸서 글자 수 집계
+  let outputChars = 0;
+  const wrappedOnToken = (token) => {
+    outputChars += token.length;
+    if (onToken) onToken(token);
+  };
+
+  try {
+    switch (provider) {
+      case 'openai': await callOpenAIStream(prompt, options, wrappedOnToken); break;
+      case 'claude': await callClaudeStream(prompt, options, wrappedOnToken); break;
+      case 'gemini':
+      default: await callGeminiStream(prompt, options, wrappedOnToken); break;
+    }
+
+    // 토큰 추정: 한국어 ~2자/토큰, 영어 ~4자/토큰 → 평균 3자/토큰
+    const estimatedOut = Math.ceil(outputChars / 3);
+    const estimatedIn = Math.ceil(prompt.length / 3);
+
+    trackUsage({
+      provider, model, endpoint,
+      tokensIn: estimatedIn,
+      tokensOut: estimatedOut,
+      status: 'success',
+    }).catch(() => {});
+  } catch (err) {
+    const creditExhausted = isCreditError(err);
+    trackUsage({
+      provider, model, endpoint,
+      status: creditExhausted ? 'credit_exhausted' : 'error',
+      errorMessage: err.message,
+    }).catch(() => {});
+
+    if (creditExhausted) {
+      updateKeyStatus(provider, { isActive: false, lastError: err.message }).catch(() => {});
+    }
+
+    throw err;
   }
 }
 

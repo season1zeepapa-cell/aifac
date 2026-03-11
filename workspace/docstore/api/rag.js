@@ -122,6 +122,7 @@ ${question.trim()}`;
       provider,
       temperature: llmOptions.temperature ?? 0.3,
       maxTokens: llmOptions.maxTokens ?? 3072,
+      _endpoint: 'rag',
     };
     if (llmOptions.model) callOpts.model = llmOptions.model;
     if (llmOptions.thinkingBudget) callOpts.thinkingBudget = llmOptions.thinkingBudget;
