@@ -1080,7 +1080,7 @@
         } finally {
           setLawSearching(false);
         }
-      }, [lawQuery]);
+      }, [lawQuery, lawTarget]);
 
       // 법령 임포트 진행 단계 시뮬레이션
       const lawSteps = useMemo(() => [
