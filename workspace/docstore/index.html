@@ -2647,9 +2647,7 @@
       const fetchCrossRefs = useCallback(async () => {
         setLoading(true);
         try {
-          const resp = await fetch(`/api/cross-references?docId=${documentId}`, {
-            headers: { 'Authorization': `Bearer ${authToken}` },
-          });
+          const resp = await authFetch(`/api/cross-references?docId=${documentId}`);
           if (!resp.ok) throw new Error('조회 실패');
           setData(await resp.json());
         } catch (e) {
@@ -2665,9 +2663,9 @@
       const handleBuild = useCallback(async (type) => {
         setBuilding(true);
         try {
-          const resp = await fetch('/api/cross-references', {
+          const resp = await authFetch('/api/cross-references', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ docId: documentId, type }),
           });
           if (!resp.ok) throw new Error('구축 실패');
