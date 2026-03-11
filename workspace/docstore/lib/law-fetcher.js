@@ -39,7 +39,8 @@ async function searchLaw(query, oc, target = 'law') {
 
   // 각 target별 응답 키가 다름
   const rootKey = t === 'admrul' ? 'AdmRulSearch' : t === 'ordin' ? 'OrdinSearch' : 'LawSearch';
-  const itemKey = t === 'admrul' ? 'admrul' : t === 'ordin' ? 'ordin' : 'law';
+  // 자치법규(OrdinSearch)도 아이템 키가 'law'임 (API 사양)
+  const itemKey = t === 'admrul' ? 'admrul' : 'law';
 
   const root = data[rootKey];
   if (root && root[itemKey]) {
@@ -50,9 +51,9 @@ async function searchLaw(query, oc, target = 'law') {
       shortName: l['법령약칭명'] || '',
       promulgationDate: l['공포일자'] || l['발령일자'] || '',
       enforcementDate: l['시행일자'] || '',
-      ministry: l['소관부처명'] || l['소관부처'] || '',
+      ministry: l['소관부처명'] || l['소관부처'] || l['지자체기관명'] || '',
       link: l['법령상세링크'] || l['행정규칙상세링크'] || l['자치법규상세링크'] || '',
-      lawType: t === 'admrul' ? (l['행정규칙종류'] || '행정규칙') : t === 'ordin' ? '자치법규' : '',
+      lawType: t === 'admrul' ? (l['행정규칙종류'] || '행정규칙') : t === 'ordin' ? (l['자치법규종류'] || '자치법규') : '',
     }));
     return { totalCount: root.totalCnt || results.length, results, target: t };
   }
@@ -70,12 +71,12 @@ async function getLawDetail(lawId, oc, target = 'law') {
   const validTargets = ['law', 'admrul', 'ordin'];
   const t = validTargets.includes(target) ? target : 'law';
 
-  // 행정규칙/자치법규는 MST 대신 ID 파라미터 사용
-  const idParam = t === 'law' ? `MST=${lawId}` : `ID=${lawId}`;
+  // 행정규칙만 MST 대신 ID 파라미터 사용 (법령/자치법규는 MST)
+  const idParam = t === 'admrul' ? `ID=${lawId}` : `MST=${lawId}`;
   const url = `https://www.law.go.kr/DRF/lawService.do?OC=${oc}&target=${t}&${idParam}&type=JSON`;
   const data = await fetchLawAPI(url);
 
-  // ── 행정규칙 전용 파싱 (응답 구조가 완전히 다름) ──
+  // ── 행정규칙 전용 파싱 (응답: AdmRulService) ──
   if (t === 'admrul' && data.AdmRulService) {
     const svc = data.AdmRulService;
     const bi = svc['행정규칙기본정보'] || {};
@@ -86,7 +87,7 @@ async function getLawDetail(lawId, oc, target = 'law') {
       ministry: bi['소관부처명'] || '',
     };
 
-    // 조문내용: 숫자 키 객체 → 문자열 배열 (각 항목이 조문 텍스트)
+    // 조문내용: 숫자 키 객체 → 문자열 배열
     const joRaw = svc['조문내용'] || {};
     const textItems = Object.keys(joRaw)
       .filter(k => /^\d+$/.test(k))
@@ -97,31 +98,24 @@ async function getLawDetail(lawId, oc, target = 'law') {
     return { info, articles: parseAdmRulArticles(textItems) };
   }
 
-  // ── 자치법규 전용 파싱 ──
-  if (t === 'ordin' && data.OrdinService) {
-    const svc = data.OrdinService;
-    const bi = svc['자치법규기본정보'] || svc['기본정보'] || {};
+  // ── 자치법규 파싱 (응답: LawService, 기본정보: 자치법규기본정보, 조문: 조문.조) ──
+  if (t === 'ordin' && data.LawService) {
+    const svc = data.LawService;
+    const bi = svc['자치법규기본정보'] || {};
     const info = {
-      name: bi['자치법규명'] || bi['법령명_한글'] || '',
+      name: bi['자치법규명'] || '',
       promulgationDate: bi['공포일자'] || '',
       enforcementDate: bi['시행일자'] || '',
-      ministry: bi['자치단체명'] || bi['소관부처명'] || '',
+      ministry: bi['지자체기관명'] || '',
     };
 
-    // 자치법규 조문도 숫자 키 문자열 또는 구조화된 조문단위일 수 있음
-    const joRaw = svc['조문내용'] || svc['조문'] || {};
-    if (joRaw['조문단위']) {
-      return { info, articles: parseLawArticles(joRaw['조문단위']) };
-    }
-    const textItems = Object.keys(joRaw)
-      .filter(k => /^\d+$/.test(k))
-      .sort((a, b) => +a - +b)
-      .map(k => joRaw[k])
-      .filter(v => typeof v === 'string' && v.trim());
-    return { info, articles: parseAdmRulArticles(textItems) };
+    // 자치법규 조문: 조문.조 배열 (각 항목: 조문번호, 조제목, 조내용)
+    const joData = svc['조문']?.['조'] || svc['조문']?.['조문단위'] || [];
+    const joArray = Array.isArray(joData) ? joData : (joData ? [joData] : []);
+    return { info, articles: parseOrdinArticles(joArray) };
   }
 
-  // ── 법령 파싱 (기존 로직) ──
+  // ── 법령 파싱 (응답: 법령) ──
   const law = data['법령'] || data.law;
   if (law) {
     const basicInfo = law['기본정보'] || {};
@@ -201,6 +195,38 @@ function parseLawArticles(joItems) {
       part: currentPart, chapter: currentChapter,
       section: currentSection, subsection: currentSubsection,
       label,
+    });
+  }
+  return articles;
+}
+
+/**
+ * 자치법규 조문 파싱 (조문.조 배열)
+ * 각 항목: { 조문번호, 조제목, 조내용, 조문여부 }
+ * @param {Array} joArray
+ * @returns {Array} articles
+ */
+function parseOrdinArticles(joArray) {
+  const articles = [];
+
+  for (const jo of joArray) {
+    const content = (jo['조내용'] || '').trim();
+    if (!content) continue;
+
+    // 조문번호: 배열이면 첫 번째 값 사용, "000100" → "1"
+    const rawNum = Array.isArray(jo['조문번호']) ? jo['조문번호'][0] : (jo['조문번호'] || '');
+    const num = String(parseInt(rawNum, 10) / 100) || rawNum;
+    const title = jo['조제목'] || '';
+
+    const articleName = `제${num}조` + (title ? `(${title})` : '');
+
+    articles.push({
+      number: num,
+      branchNumber: '',
+      title,
+      content,
+      part: '', chapter: '', section: '', subsection: '',
+      label: articleName,
     });
   }
   return articles;
