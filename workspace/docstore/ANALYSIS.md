@@ -3375,3 +3375,10 @@ npx playwright test tests/search-advanced.spec.js -g "하이라이팅" --no-deps
 # 브라우저 보이기 모드
 npx playwright test tests/search-advanced.spec.js --headed --no-deps
 ```
+
+---
+
+> **최신 종합 분석 보고서**: [ANALYSIS2.md](./ANALYSIS2.md) 참조
+> - 기능 구현 현황 (구현 완료 vs 미구현 분류)
+> - RAG 아키텍처 수준 평가 (LangChain / Hybrid RAG / LangGraph / Graph RAG 4개 기준)
+> - 개선 로드맵 제안 (Phase 1~3)
