@@ -2408,3 +2408,558 @@ for (let step = 0; step < MAX_STEPS; step++) {
 10. 커뮤니티 요약 생성
 11. 글로벌 검색 모드
 ```
+
+---
+
+## 8. Text Splitter (청크 분할) 향상 방안
+
+### 8.1 현재 구현 분석
+
+**위치**: `lib/embeddings.js:chunkText()` (24~57줄)
+
+```javascript
+function chunkText(text, chunkSize = 500, overlap = 100) {
+  const sentences = text.match(/[^.!?]+[.!?]?\s*/g) || [text];
+  // → 문장 단위로 분리 후 chunkSize까지 묶고, overlap만큼 이전 텍스트 포함
+}
+```
+
+**현재 방식**: 문장 단위 분할 + 글자 수 기준 overlap
+
+**한계점**:
+
+| 문제 | 설명 |
+|------|------|
+| 문장 분리 패턴 단순 | `.!?` 기준만 사용, 한국어 법령의 `제N조`, `①②③` 항목 구분 불가 |
+| 분할 전략 단일 | 문장 + overlap 방식만 존재, 문서 유형별 최적화 불가 |
+| 구조 인식 부재 | 제목/항목/표 등의 문서 구조를 무시하고 단순 글자 수로 자름 |
+| overlap이 글자 단위 | 문장 경계를 무시하고 잘라서 의미가 깨질 수 있음 |
+
+### 8.2 향상 전략: 다중 분할기 (Splitter Registry)
+
+업로드 시 사용자가 문서 유형에 맞는 분할 전략을 선택할 수 있도록 **전략 패턴**으로 확장:
+
+```
+업로드 UI:
+┌─────────────────────────────────────────┐
+│  분할 전략:  ○ 기본(문장)              │
+│              ○ 법령(조/항/호)           │
+│              ○ 마크다운(제목 기준)       │
+│              ○ 의미 단위(AI 분할)       │
+│              ○ 사용자 정의(정규식)       │
+└─────────────────────────────────────────┘
+```
+
+| 전략 ID | 대상 문서 | 분할 기준 | 장점 |
+|---------|----------|----------|------|
+| `sentence` | 일반 텍스트 | `.!?` + overlap | 현재 방식 (기본값) |
+| `recursive` | 범용 | 단락 → 문장 → 글자 순 재귀 분할 | LangChain 방식, 안정적 |
+| `law-article` | 법령 | `제N조`, `①②③`, 장/절 경계 | 법률 조문 단위 보존 |
+| `heading` | 마크다운/보고서 | `#`, `##`, `제N장` 등 제목 태그 | 논리 구조 유지 |
+| `semantic` | 중요 문서 | AI가 의미 경계 판단 | 최고 품질, 비용 높음 |
+| `regex` | 사용자 정의 | 사용자 입력 정규식 | 유연성 최대 |
+
+### 8.3 RecursiveCharacterTextSplitter 구현
+
+LangChain에서 가장 범용적으로 사용되는 패턴. **큰 단위부터 시도 → 실패 시 작은 단위로 재귀**:
+
+```
+분할 시도 순서 (separators):
+1. 단락 (\n\n) 으로 나눔 → chunkSize 이내? → OK, 저장
+2. 줄바꿈 (\n) 으로 나눔 → chunkSize 이내? → OK, 저장
+3. 문장 (. ! ?) 으로 나눔 → chunkSize 이내? → OK, 저장
+4. 단어 (공백) 으로 나눔 → chunkSize 이내? → OK, 저장
+5. 글자 단위 강제 분할 (최후 수단)
+```
+
+**의사 코드**:
+
+```javascript
+function recursiveChunk(text, separators, chunkSize, overlap) {
+  // 1) 현재 구분자로 분할 시도
+  const [sep, ...rest] = separators;
+  const parts = text.split(sep);
+
+  const chunks = [];
+  let current = '';
+
+  for (const part of parts) {
+    if ((current + part).length <= chunkSize) {
+      current += part + sep;
+    } else {
+      if (current) chunks.push(current.trim());
+      // 단일 part가 chunkSize 초과 → 다음 구분자로 재귀
+      if (part.length > chunkSize && rest.length > 0) {
+        chunks.push(...recursiveChunk(part, rest, chunkSize, overlap));
+      } else {
+        current = applyOverlap(current, overlap) + part + sep;
+      }
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+```
+
+**장점**: 단락 경계를 최대한 보존하면서, 긴 단락만 문장 단위로 쪼갬
+
+### 8.4 법령 전용 분할기 (law-article)
+
+docstore의 핵심 콘텐츠가 법령이므로 **체감 효과가 가장 큰** 분할기:
+
+```
+입력:
+  "제10조(개인정보의 처리 제한) ① 개인정보처리자는 ...
+   ② 제1항에도 불구하고 ...
+   ③ 개인정보처리자는 ..."
+
+분할 결과:
+  청크1: [제10조①] "제10조(개인정보의 처리 제한)\n① 개인정보처리자는 ..."
+  청크2: [제10조②] "제10조(개인정보의 처리 제한)\n② 제1항에도 불구하고 ..."
+  청크3: [제10조③] "제10조(개인정보의 처리 제한)\n③ 개인정보처리자는 ..."
+                     ↑ 조문 제목을 컨텍스트로 자동 첨부
+```
+
+**핵심 설계 원칙**:
+
+1. **항(①②③) 단위 분할** — 항이 길면 호(1. 2. 3.) 단위까지 세분화
+2. **조문 제목 자동 첨부** — 분할된 각 청크에 원본 조문 제목을 prefix로 추가
+3. **교차 참조 보존** — 분할 시 "제N조 참조" 관계가 metadata에 유지됨
+4. **law-import.js 연동** — 이미 `parseReferences()`로 조문 참조 파싱 중, 여기에 청크 단위 연결
+
+**분할 로직**:
+
+```javascript
+function chunkLawArticle(rawText, metadata) {
+  const articleTitle = extractArticleTitle(rawText);  // "제10조(개인정보의 처리 제한)"
+  const paragraphs = rawText.split(/(?=①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)/);
+
+  return paragraphs.map((para, i) => ({
+    text: articleTitle + '\n' + para.trim(),
+    label: `${metadata.label}${getParagraphMark(i)}`,
+    // 항이 chunkSize 초과 시 호 단위로 재분할
+    subChunks: para.length > chunkSize ? splitBySubItems(para) : null,
+  }));
+}
+```
+
+### 8.5 시맨틱 청킹 (AI 활용)
+
+가장 정교하지만 비용이 드는 방식. **중요 문서 한정** 사용:
+
+```
+흐름:
+1. 원문 텍스트를 AI(Gemini Flash)에게 전송
+2. AI가 "의미가 바뀌는 지점"의 문장 번호를 반환
+3. 해당 경계를 기준으로 분할
+
+프롬프트 예시:
+  "다음 텍스트에서 주제가 바뀌는 지점의 문장 번호를 알려주세요.
+   각 구간은 300~600자 사이가 되도록 해주세요.
+   JSON 배열로 반환: [3, 7, 12, ...]"
+```
+
+**비용 추정** (Gemini 2.5 Flash 기준):
+- 1만 글자 문서 → 약 $0.003 (입력) + $0.005 (출력) ≈ 1원 미만
+- 비용 대비 품질 향상이 크므로 "정밀 분석" 옵션으로 제공 가치 있음
+
+**적용 방안**: 업로드 UI에 "정밀 분석 (AI 분할)" 체크박스 추가, 체크 시 시맨틱 청킹 적용
+
+### 8.6 프론트엔드 UI 변경
+
+업로드 탭의 기존 `sectionType` 드롭다운을 확장하여 **임베딩 분할 전략** 옵션 추가:
+
+```
+현재 (섹션 분할):  page | heading | paragraph | line | custom
+추가 (청크 분할):  sentence(기본) | recursive | law-article | semantic
+```
+
+두 단계 분할 파이프라인:
+1. **섹션 분할** (text-extractor.js) — 파일 → 섹션 (페이지/제목/단락 단위)
+2. **청크 분할** (embeddings.js) — 섹션 → 청크 (임베딩용 작은 단위)
+
+### 8.7 구현 우선순위
+
+| 순위 | 항목 | 난이도 | 효과 | 구현 범위 |
+|------|------|--------|------|----------|
+| **1** | Recursive 분할기 | 낮음 | 높음 | `chunkText()` 교체 — 기존 코드 최소 변경으로 전체 품질 향상 |
+| **2** | 법령 전용 분할기 | 중간 | 매우 높음 | `chunkLawArticle()` 신규 + `law-import.js` 연동 — 핵심 콘텐츠 검색 정확도 직접 향상 |
+| **3** | 업로드 UI 전략 선택 | 낮음 | 중간 | 프론트 드롭다운 추가 + API 파라미터 전달 — 사용자 선택 가능 |
+| **4** | 시맨틱 청킹 | 높음 | 높음 | AI 호출 로직 + 비용 관리 — 중요 문서 한정 사용 |
+
+### 8.8 기대 효과
+
+```
+현재: 문장 기준 단순 분할 → 조문 중간에서 잘림 → 검색 시 맥락 손실
+개선 후:
+  - Recursive: 단락 경계 보존 → 일반 문서 검색 품질 ~20% 향상 (추정)
+  - 법령 분할: 조/항 단위 보존 + 제목 자동 첨부 → 법령 검색 정확도 ~40% 향상 (추정)
+  - 시맨틱: AI가 의미 경계 판단 → 복잡한 문서 검색 품질 ~30% 추가 향상 (추정)
+```
+
+**현재 enriched embedding(`buildEnrichedText`)과 결합** 시:
+- 청크 품질 향상 (분할기) + 맥락 정보 강화 (enriched) = **상승 효과**
+- 특히 법령 분할기 + enriched embedding 조합은 조문 검색에서 최고 성능 기대
+
+---
+
+## 코드베이스 대조 분석 (2026-03-11)
+
+> ANALYSIS.md 문서 내용과 실제 코드베이스를 비교 점검한 결과
+
+### 코드 규모
+
+| 영역 | 파일 수 | 총 줄 수 |
+|------|---------|----------|
+| 프론트엔드 (`index.html`) | 1 | 5,420 |
+| API (`api/*.js`) | 15 | ~2,800 |
+| 라이브러리 (`lib/*.js` + `lib/ocr/`) | 23+ | ~4,600 |
+| 스크립트 (`scripts/`) | 13 | 미계측 |
+| **합계** | **52+** | **~12,974** |
+
+### ANALYSIS.md 미기재 파일 (코드에만 존재)
+
+ANALYSIS.md에 기록되지 않았으나, 실제 코드베이스에 구현되어 있는 파일과 기능:
+
+#### lib/ — 신규 모듈
+
+| 파일 | 줄수 | 역할 | 설명 |
+|------|------|------|------|
+| `lib/hybrid-search.js` | 226 | 하이브리드 검색 | 벡터 검색(pgvector) + 전문 검색(tsvector) → RRF(Reciprocal Rank Fusion) 합산 |
+| `lib/reranker.js` | 115 | 검색 결과 재정렬 | Cohere Rerank v3.5 API 연동 (한국어 지원, COHERE_API_KEY 선택적) |
+| `lib/summary-cache.js` | 42 | 요약 캐시 무효화 | 문서/섹션 변경 시 summary 캐시 NULL 초기화 |
+| `lib/text-splitters.js` | 371 | 4가지 청크 분할 전략 | sentence / recursive / law-article / semantic 분할기 |
+| `lib/input-sanitizer.js` | 122 | 입력값 정화 | 파일명 경로순회 방지 + URL SSRF 방어 (내부IP 차단, DNS 검증) |
+| `lib/error-handler.js` | 55 | 공통 에러 핸들러 | 프로덕션에서 내부 에러 메시지 노출 방지 + 안전한 패턴만 허용 |
+| `lib/cors.js` | 53 | CORS 도메인 제한 | `ALLOWED_ORIGINS` 환경변수 기반 화이트리스트 + 기본 도메인(Vercel/localhost) |
+| `lib/rate-limit.js` | 151 | Rate Limiting | DB 기반 카운터 (서버리스 지속) + 인메모리 폴백, 엔드포인트별 한도 |
+| `lib/storage.js` | 161 | Supabase Storage | 파일 관리 유틸리티 |
+| `lib/api-tracker.js` | 175 | API 호출 추적 | 프로바이더별 사용량 DB 기록 |
+| `lib/doc-analyzer.js` | 126 | AI 문서 분석 | Gemini로 문서 요약/키워드/태그 자동 생성 (업로드 파이프라인 통합) |
+
+#### api/ — 신규 엔드포인트
+
+| 파일 | 줄수 | 역할 | 설명 |
+|------|------|------|------|
+| `api/chat-sessions.js` | 86 | 대화 히스토리 | RAG 채팅 세션 CRUD (GET/POST/DELETE) |
+
+#### scripts/ — 신규 마이그레이션
+
+| 파일 | 역할 |
+|------|------|
+| `scripts/add-fts-column.js` | tsvector 컬럼 + GIN 인덱스 마이그레이션 (전문 검색 지원) |
+| `scripts/add-chat-and-favorites.js` | `chat_sessions` 테이블 + 문서 즐겨찾기 컬럼 |
+| `scripts/create-api-usage-table.js` | `api_usage` + `api_key_status` 테이블 |
+| `scripts/migrate-to-storage.js` | Supabase Storage 마이그레이션 스크립트 |
+
+#### DB 테이블 — 미기재
+
+| 테이블 | 용도 |
+|--------|------|
+| `chat_sessions` | RAG 대화 히스토리 (id, title, messages JSONB) |
+| `rate_limits` | Rate Limiting 카운터 (key, count, window_start) |
+
+### 보안 취약점 해결 현황 (ANALYSIS 기준 → 현재 코드 대조)
+
+ANALYSIS.md에 "미조치"로 기록된 항목 중 실제로 해결된 것들:
+
+| # | 항목 | ANALYSIS 상태 | 실제 코드 상태 | 해결 파일 |
+|---|------|--------------|---------------|-----------|
+| 2 | CORS 전체 허용 (`*`) | 🔴 미조치 | ✅ 해결 | `lib/cors.js` — 도메인 화이트리스트 적용, 미허용 도메인은 헤더 미설정 |
+| 3 | Rate Limiting 없음 | 🔴 미조치 | ✅ 해결 | `lib/rate-limit.js` — DB 기반 + 인메모리 폴백, 엔드포인트별 한도 |
+| 4 | URL 파라미터 토큰 | 🟡 미조치 | 확인 필요 | `lib/auth.js` — 검증 필요 |
+| 5 | SSRF 위험 | 🟡 미조치 | ✅ 해결 | `lib/input-sanitizer.js` — 내부 IP 차단, DNS 검증, URL 스키마 검증 |
+| 7 | 에러 메시지 노출 | 🟡 미조치 | ✅ 해결 | `lib/error-handler.js` — 프로덕션에서 일반 메시지 반환, 안전 패턴만 허용 |
+| 10 | 보안 헤더 미설정 | 🟢 미조치 | ✅ 해결 | `vercel.json` — HSTS, X-Frame-Options, X-Content-Type-Options 등 추가 |
+
+### 리팩토링 항목 해결 현황
+
+| 항목 | ANALYSIS 상태 | 실제 코드 상태 |
+|------|--------------|---------------|
+| `callGemini()` 중복 | 미조치 | ✅ 해결 — `lib/gemini.js` (453줄)에 `callGemini`/`callLLM` 통합, 멀티프로바이더 지원 |
+| CORS 설정 중복 | 미조치 | ✅ 해결 — `lib/cors.js` 공통 모듈로 분리, 각 API에서 `setCors()` 호출 |
+| 에러 메시지 정리 | 미조치 | ✅ 해결 — `lib/error-handler.js`의 `sendError()` 공통 함수 |
+
+### 파일 구조 (최신, 2026-03-11)
+
+```
+workspace/docstore/
+├── server.js                    # Express 메인 서버 (96줄, API 라우트 연결)
+├── index.html                   # SPA 프론트엔드 (React + Tailwind CDN, 5420줄)
+├── favicon.svg                  # 파비콘
+├── vercel.json                  # Vercel 배포 설정 (보안 헤더 포함)
+├── package.json                 # 의존성 (12개 런타임 + 1개 devDep)
+├── playwright.config.js         # E2E 테스트 설정
+├── api/
+│   ├── login.js                 # 관리자 로그인 (60줄)
+│   ├── documents.js             # 문서 CRUD + 태그 + 휴지통 + 원본 다운로드 (452줄)
+│   ├── upload.js                # 멀티포맷 업로드 + OCR + 임베딩 (227줄)
+│   ├── search.js                # 텍스트/벡터/하이브리드 검색 (259줄)
+│   ├── rag.js                   # RAG 질의응답 (멀티홉 + 근거 체인) (188줄)
+│   ├── summary.js               # AI 요약 (Gemini) (122줄)
+│   ├── law.js                   # 법령 검색 프록시 (60줄)
+│   ├── law-import.js            # 법령 임포트 (참조 관계) (189줄)
+│   ├── law-graph.js             # 법령 참조 관계 그래프 (105줄)
+│   ├── url-import.js            # 웹 URL 크롤링 (254줄)
+│   ├── ocr.js                   # OCR 처리 (6개 엔진 폴백) (174줄)
+│   ├── api-usage.js             # API 사용량 + OCR 설정 (475줄)
+│   ├── chat-sessions.js         # 대화 히스토리 CRUD (86줄)
+│   ├── cross-references.js      # 교차 참조 매트릭스 (93줄)
+│   └── deidentify.js            # 비식별화 키워드 CRUD (82줄)
+├── lib/
+│   ├── db.js                    # PostgreSQL 커넥션 풀 (47줄)
+│   ├── auth.js                  # HMAC-SHA256 JWT 인증 (147줄)
+│   ├── cors.js                  # CORS 도메인 제한 (53줄)
+│   ├── rate-limit.js            # DB 기반 Rate Limiting (151줄)
+│   ├── error-handler.js         # 프로덕션 에러 메시지 정화 (55줄)
+│   ├── input-sanitizer.js       # 파일명/URL 입력값 정화 (122줄)
+│   ├── gemini.js                # LLM 호출 (Gemini/OpenAI/Claude 멀티프로바이더) (453줄)
+│   ├── embeddings.js            # enriched 임베딩 생성 + OpenAI API (318줄)
+│   ├── text-splitters.js        # 4가지 청크 분할 전략 (371줄)
+│   ├── pdf-extractor.js         # PDF 추출 (텍스트 + OCR + 문제 파싱) (425줄)
+│   ├── text-extractor.js        # 멀티포맷 텍스트 추출 (445줄)
+│   ├── hybrid-search.js         # 하이브리드 검색 (벡터 + FTS + RRF) (226줄)
+│   ├── reranker.js              # Cohere Rerank 재정렬 (115줄)
+│   ├── rag-agent.js             # 멀티홉 RAG 검색 엔진 (245줄)
+│   ├── cross-reference.js       # 교차 참조 감지 (247줄)
+│   ├── doc-analyzer.js          # AI 문서 분석 (요약/키워드/태그) (126줄)
+│   ├── summary-cache.js         # 요약 캐시 무효화 (42줄)
+│   ├── law-fetcher.js           # 법제처 API 클라이언트 (160줄)
+│   ├── api-tracker.js           # API 호출 추적 (175줄)
+│   ├── deidentify.js            # 비식별화 매칭/치환 (68줄)
+│   ├── storage.js               # Supabase Storage 파일 관리 (161줄)
+│   ├── ocr.js                   # OCR 엔진 매니저 (576줄)
+│   └── ocr/                     # OCR 엔진 플러그인 (6개)
+│       ├── index.js             # 엔진 레지스트리 + 우선순위 폴백
+│       ├── gemini-vision.js     # Gemini 2.5 Flash
+│       ├── claude-vision.js     # Claude Sonnet
+│       ├── naver-clova.js       # 네이버 CLOVA
+│       ├── google-vision.js     # Google Cloud Vision
+│       ├── aws-textract.js      # AWS Textract
+│       └── ocr-space.js         # OCR.space (무료)
+├── scripts/
+│   ├── create-tables.js         # DB 스키마 생성
+│   ├── create-api-usage-table.js # API 사용량 테이블
+│   ├── add-labeling-tables.js   # 라벨링 시스템 마이그레이션
+│   ├── add-soft-delete.js       # 소프트 삭제 마이그레이션
+│   ├── add-storage-path.js      # Storage 경로 마이그레이션
+│   ├── add-original-file.js     # 원본 파일 컬럼 마이그레이션
+│   ├── add-cross-references-table.js # 교차 참조 테이블
+│   ├── add-fts-column.js        # tsvector 전문 검색 컬럼 + GIN 인덱스
+│   ├── add-chat-and-favorites.js # 채팅 세션 + 즐겨찾기
+│   ├── generate-embeddings.js   # 기존 문서 임베딩 생성
+│   ├── reindex-enriched.js      # enriched 임베딩 재처리
+│   ├── migrate-to-storage.js    # Supabase Storage 마이그레이션
+│   └── import-pdf.js            # CLI PDF 임포트
+└── tests/                       # Playwright E2E 테스트
+```
+
+### DB 테이블 (최신, 2026-03-11)
+
+| 테이블 | 용도 | 주요 컬럼 |
+|--------|------|-----------|
+| `documents` | 문서 메타 + 원본 | id, title, file_type, category, summary, keywords(TEXT[]), summary_embedding(vector 1536), original_file(BYTEA), is_favorite, deleted_at |
+| `document_sections` | 추출 텍스트 | document_id(FK), section_type, raw_text, summary, metadata(JSONB), fts_vector(tsvector) |
+| `document_chunks` | 벡터 임베딩 | section_id(FK), chunk_text, enriched_text, embedding(vector 1536), fts_vector(tsvector) |
+| `cross_references` | 조문 간 참조 관계 | source_section_id, target_section_id, relation_type, confidence |
+| `tags` | 태그 정의 | name(UNIQUE), color, usage_count |
+| `document_tags` | 문서↔태그 연결 | document_id(FK), tag_id(FK) — 복합 PK |
+| `api_usage` | API 호출 기록 | provider, model, endpoint, status, tokens_in/out, cost_estimate |
+| `api_key_status` | API 키 상태 | provider, is_active, daily_limit, last_checked |
+| `ocr_engine_config` | OCR 엔진 설정 | engine_id, is_enabled, priority_order |
+| `chat_sessions` | RAG 대화 히스토리 | title, messages(JSONB), created_at, updated_at |
+| `rate_limits` | Rate Limiting | key(PK), count, window_start |
+| `deidentify_keywords` | 비식별화 키워드 | keyword(UNIQUE) |
+| `public.users` | 사용자 (error 공유) | username, password_hash, name, is_admin |
+
+### 환경변수 (최신, 2026-03-11)
+
+```
+# 필수
+DATABASE_URL=postgresql://...
+AUTH_TOKEN_SECRET=32자이상시크릿       # JWT 서명 키 (미설정 시 서버 시작 거부)
+GEMINI_API_KEY=AI...                  # RAG, 요약, OCR, 문서 분석
+
+# AI API (선택적 — 해당 기능 사용 시 필요)
+OPENAI_API_KEY=sk-...                 # 임베딩, PDF 퀴즈 파싱
+ANTHROPIC_API_KEY=sk-ant-...          # Claude OCR (폴백)
+
+# 외부 서비스
+LAW_API_OC=법제처API인증키              # 법령 임포트
+
+# CORS 도메인 (선택적)
+ALLOWED_ORIGINS=https://example.com    # 쉼표 구분, 기본값: Vercel+localhost
+
+# OCR 엔진 (선택적)
+OCR_SPACE_API_KEY=K...                # OCR.space 무료
+CLOVA_OCR_SECRET=...                  # 네이버 CLOVA
+CLOVA_OCR_URL=...                     # 네이버 CLOVA 엔드포인트
+GOOGLE_VISION_API_KEY=...             # Google Cloud Vision
+AWS_ACCESS_KEY_ID=...                 # AWS Textract
+AWS_SECRET_ACCESS_KEY=...             # AWS Textract
+AWS_TEXTRACT_REGION=ap-northeast-2    # AWS Textract 리전
+
+# 검색 재정렬 (선택적)
+COHERE_API_KEY=...                    # Cohere Rerank v3.5 (미설정 시 스킵)
+
+# SSL (선택적)
+DB_CA_CERT=...                        # Supabase CA 인증서 (MITM 방어)
+DB_SSL_VERIFY=true                    # 기본 CA로 SSL 검증
+```
+
+### 남은 미구현 사항 (우선순위)
+
+| 우선도 | 항목 | 상태 | 비고 |
+|--------|------|------|------|
+| 🔴 높음 | 원본 파일 BYTEA → Supabase Storage 이전 | 미구현 | `lib/storage.js` + `scripts/migrate-to-storage.js` 존재하나 전환 미완료 → DB 팽창 위험 |
+| 🔴 높음 | AI 요약 병렬 처리 | 미구현 | 60+ 섹션 순차 → 300초 타임아웃 → Promise.allSettled 전환 필요 |
+| 🟡 중간 | 임베딩 배치 최적화 | 미구현 | 섹션별 개별 OpenAI API 호출 → 전체 배치 1회로 비용 절감 |
+| 🟡 중간 | 법령 임포트 배치 INSERT | 미구현 | 100+ 조문 → 100+ 개별 INSERT → multi-row INSERT |
+| 🟡 중간 | 프론트엔드 태그 관리 UI | 미구현 | 백엔드 태그 CRUD 완료, UI 미반영 |
+| 🟡 중간 | RegExp 인젝션 방어 | 미확인 | `lib/pdf-extractor.js` 사용자 구분자 → 특수문자 이스케이프 필요 |
+| 🟢 낮음 | 문서 메타 수정 (제목/카테고리) | 미구현 | 현재 삭제 후 재업로드만 가능 |
+| 🟢 낮음 | 검색 결과 하이라이팅 | 미구현 | 검색어 위치 시각적 표시 |
+| 🟢 낮음 | 감사 로그 | 미구현 | audit_log 테이블 + 로깅 |
+
+---
+
+## RAG Output Parser 구현 (2026-03-11)
+
+> LLM 마크다운 출력을 구조화된 JSON으로 파싱하여 섹션별 렌더링 + 환각 감지
+
+### 이전 문제점
+
+| 항목 | 이전 상태 | 문제 |
+|------|-----------|------|
+| Output Parser | 없음 (LLM 마크다운 출력을 그대로 사용) | 구조화된 JSON 파싱 없음 |
+| 근거 체인 | 프롬프트로 유도 | 파싱/검증 없이 통째로 렌더링 |
+| 환각 감지 | 없음 | 존재하지 않는 근거 번호 인용 감지 불가 |
+| 프론트엔드 | `marked.parse()` 통째로 렌더링 | 섹션별 접기/펼치기 등 UI 제어 불가 |
+
+### 변경 파일
+
+| 파일 | 변경 유형 | 줄수 | 역할 |
+|------|-----------|------|------|
+| `lib/output-parser.js` | 신규 | 220 | RAG 출력 파서 — JSON 파싱 + 마크다운 폴백 + 근거 번호 검증 |
+| `api/rag.js` | 수정 | — | 프롬프트를 JSON 출력으로 변경 + 파서 통합 + 스트리밍 `parsed` 이벤트 전송 |
+| `index.html` | 수정 | — | `ParsedAnswer` 구조화 렌더링 컴포넌트 + SSE `parsed` 이벤트 수신 |
+
+### 동작 흐름
+
+```
+[이전]
+LLM → 마크다운 문자열 → marked.parse() → HTML 통째로 표시
+
+[이후]
+LLM → JSON 출력 유도 (프롬프트 변경)
+       ↓
+   output-parser.js 2단계 파싱
+       ├─ 1차: JSON 파싱 시도 (```json 코드블록 감싸기 처리 포함)
+       └─ 2차: 마크다운 폴백 파서 (### 헤딩 기준 섹션 분리)
+       ↓
+   근거 번호 검증 (sourceIndex vs sources 배열 범위 → 환각 감지)
+       ↓
+   ParsedAnswer 컴포넌트로 섹션별 렌더링
+       ├─ 💡 결론 (파란 카드)
+       ├─ 📋 근거 체인 (접기/펼치기, 타임라인 UI, 단계별 번호)
+       ├─ 🔗 교차 참조 (접기/펼치기, 관계 화살표)
+       ├─ ⚠️ 주의사항 (노란 카드)
+       └─ ▼ 원본 보기 (디버그 토글)
+```
+
+### 핵심 기능 상세
+
+#### 1. 2단계 파싱 전략
+
+```javascript
+// lib/output-parser.js
+function parseRAGOutput(llmOutput, sources) {
+  // 1차: JSON 파싱 시도 — LLM이 JSON으로 답변한 경우
+  const jsonResult = tryParseJSON(llmOutput, sources);
+  if (jsonResult) return jsonResult;  // format: 'json'
+
+  // 2차: 마크다운 폴백 — ### 헤딩으로 섹션 분리
+  return parseMarkdownAnswer(llmOutput, sources);  // format: 'markdown'
+}
+```
+
+- JSON 우선 시도 → 실패 시 마크다운 폴백 → 둘 다 실패 시 전체를 결론으로 표시
+- `\`\`\`json ... \`\`\`` 코드블록 감싸기도 자동 처리
+
+#### 2. 환각 방지 (근거 번호 검증)
+
+```javascript
+// sourceIndex가 sources 배열 범위를 벗어나면 경고
+if (idx < 1 || idx > sources.length) {
+  result.warnings.push(`[근거 ${idx}]은 존재하지 않는 근거 번호입니다`);
+  result.evidenceChain.push({ ...step, verified: false });
+}
+```
+
+- LLM이 `[근거 99]`처럼 없는 근거를 인용하면 `verified: false` + 빨간 배지 표시
+- 프론트엔드에서 미검증 근거는 빨간 원형 번호로 시각적 경고
+
+#### 3. 프롬프트 변경 (JSON 출력 유도)
+
+```
+이전: "### 결론 / ### 근거 체인 / ### 교차 참조" 마크다운 형식 유도
+이후: JSON 스키마 명시 + "JSON 외의 텍스트는 절대 포함하지 마세요" 강제
+      sourceIndex가 근거 자료 번호(1~N)와 일치하도록 규칙 명시
+```
+
+#### 4. 스트리밍 호환 (2단계 렌더링)
+
+```
+1. 스트리밍 중: 토큰 축적 → marked.parse()로 실시간 표시 (기존과 동일)
+2. 스트리밍 완료: 서버에서 parseRAGOutput() 실행 → SSE 'parsed' 이벤트로 전송
+3. 프론트엔드: parsed 수신 → ParsedAnswer 구조화 UI로 자동 전환
+```
+
+#### 5. 하위 호환
+
+- `parsed` 데이터가 없거나 `parsed.parsed === false`이면 기존 `marked.parse()` 렌더링 유지
+- 비스트리밍 모드에서도 `response.parsed` 필드에 파싱 결과 포함
+
+### 파싱 결과 객체 스키마
+
+```javascript
+{
+  conclusion: string,        // 결론 텍스트
+  evidenceChain: [           // 근거 체인 (단계별 배열)
+    {
+      step: number,          // 단계 번호
+      sourceIndex: number,   // 근거 자료 번호 (1부터)
+      sourceLabel: string,   // 출처 조문명
+      quote: string,         // 핵심 내용 인용
+      reasoning: string,     // 설명
+      verified: boolean,     // 근거 번호 검증 결과
+    }
+  ],
+  crossReferences: [         // 교차 참조 관계
+    { from: string, to: string, relation: string }
+  ],
+  caveats: string,           // 주의사항
+  raw: string,               // LLM 원본 출력
+  format: 'json' | 'markdown' | 'empty',  // 파싱 방식
+  parsed: boolean,           // 파싱 성공 여부
+  warnings: string[],        // 환각 감지 등 경고 목록
+}
+```
+
+### API 응답 변경
+
+```javascript
+// POST /api/rag 응답 (비스트리밍)
+{
+  question: "CCTV 설치 기준은?",
+  answer: "원본 LLM 출력",
+  parsed: { conclusion, evidenceChain, ... },  // ← 신규 추가
+  provider: "gemini",
+  hops: 2,
+  crossRefs: [...],
+  sources: [...]
+}
+
+// SSE 스트리밍 이벤트 (신규)
+data: { type: "parsed", parsed: { conclusion, evidenceChain, ... } }
+```

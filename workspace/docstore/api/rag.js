@@ -13,6 +13,7 @@ const { checkRateLimit } = require('../lib/rate-limit');
 const { callLLM, callLLMStream } = require('../lib/gemini');
 const { sendError } = require('../lib/error-handler');
 const { multiHopSearch } = require('../lib/rag-agent');
+const { parseRAGOutput } = require('../lib/output-parser');
 
 // SSE 헬퍼: 이벤트 데이터를 SSE 형식으로 전송
 function sseWrite(res, data) {
@@ -76,34 +77,40 @@ module.exports = async (req, res) => {
 
 ## 답변 형식
 
-반드시 아래 구조로 답변하세요. 각 섹션 제목은 정확히 아래 형식을 사용하세요.
+반드시 아래 JSON 형식으로만 답변하세요. JSON 외의 텍스트는 절대 포함하지 마세요.
 
-### 결론
-질문에 대한 직접 답변을 1~3문장으로 작성하세요.
-
-### 근거 체인
-결론에 이르는 논리 경로를 단계별로 작성하세요. 각 단계마다:
-- **[근거 N] 출처 조문명**: 해당 조문의 핵심 내용 인용 → 이 근거가 의미하는 바를 설명
-
-단계 간 연결이 있으면 "→ 따라서" 또는 "→ 이에 근거하여" 등으로 이어주세요.
-
-### 교차 참조
-근거 자료 사이의 관계를 정리하세요 (있는 경우만):
-- 조문A → (준용/적용/예외) → 조문B
-- 법률A ↔ 법률B (관련 조문)
-
-관계가 없으면 이 섹션은 생략하세요.
-
-### 주의사항
-예외 조항, 단서, 주의할 점이 있으면 작성하세요. 없으면 생략하세요.
+\`\`\`json
+{
+  "conclusion": "질문에 대한 직접 답변 (1~3문장, 한국어)",
+  "evidenceChain": [
+    {
+      "sourceIndex": 1,
+      "sourceLabel": "출처 조문명 (예: 제25조 영상정보처리기기의 설치·운영 제한)",
+      "quote": "해당 조문의 핵심 내용 인용",
+      "reasoning": "이 근거가 의미하는 바 설명"
+    }
+  ],
+  "crossReferences": [
+    {
+      "from": "조문A",
+      "to": "조문B",
+      "relation": "준용|적용|예외|관련"
+    }
+  ],
+  "caveats": "예외 조항, 단서, 주의할 점 (없으면 빈 문자열)"
+}
+\`\`\`
 
 ## 규칙
 - 근거 자료에 있는 내용만 바탕으로 답변하세요
-- 근거 자료에 없는 내용은 "해당 내용은 제공된 자료에서 확인할 수 없습니다"라고 답변하세요
+- 근거 자료에 없는 내용은 conclusion에 "해당 내용은 제공된 자료에서 확인할 수 없습니다"라고 답변하세요
+- sourceIndex는 근거 자료의 번호(1부터 시작)와 정확히 일치해야 합니다. 존재하지 않는 번호를 사용하지 마세요
+- evidenceChain은 결론에 이르는 논리 경로를 단계별로 작성하세요. 단계 간 논리적 연결이 드러나도록 reasoning을 작성하세요
+- crossReferences는 근거 자료 사이의 참조/준용/예외 관계만 포함하세요. 관계가 없으면 빈 배열 []
 - 답변은 한국어로 작성하세요
 - 이전 대화가 있으면 맥락을 이어서 답변하세요
 
---- 근거 자료 ---
+--- 근거 자료 (총 ${sources.length}건) ---
 ${contextText}
 ${historyText}
 
@@ -150,18 +157,25 @@ ${question.trim()}`;
         provider,
       });
 
-      // LLM 스트리밍 시작 — 토큰 도착마다 전송
+      // LLM 스트리밍 시작 — 토큰 도착마다 전송 + 완료 후 구조화 파싱
+      let accumulated = '';
       try {
         await callLLMStream(prompt, callOpts, (token) => {
+          accumulated += token;
           sseWrite(res, { type: 'token', token });
         });
+        // 스트리밍 완료 후 구조화 파싱 결과 전송
+        const parsed = parseRAGOutput(accumulated, sources);
+        sseWrite(res, { type: 'parsed', parsed });
         sseWrite(res, { type: 'done' });
       } catch (streamErr) {
         console.warn(`[RAG] 스트리밍 실패, 일반 모드로 fallback:`, streamErr.message);
         // 스트리밍 실패 시 일반 호출로 fallback
         try {
           const answer = await callLLM(prompt, callOpts);
+          const parsed = parseRAGOutput(answer, sources);
           sseWrite(res, { type: 'token', token: answer });
+          sseWrite(res, { type: 'parsed', parsed });
           sseWrite(res, { type: 'done' });
         } catch (fallbackErr) {
           sseWrite(res, { type: 'error', error: fallbackErr.message });
@@ -171,11 +185,13 @@ ${question.trim()}`;
     } else {
       // ── 기존 JSON 응답 모드 ──
       const answer = await callLLM(prompt, callOpts);
-      console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자, ${searchResult.hops}홉)`);
+      const parsed = parseRAGOutput(answer, sources);
+      console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자, ${searchResult.hops}홉, 파싱: ${parsed.format}${parsed.warnings.length > 0 ? ', 경고: ' + parsed.warnings.length : ''})`);
 
       res.json({
         question: question.trim(),
-        answer,
+        answer: parsed.raw,
+        parsed,
         provider,
         hops: searchResult.hops,
         crossRefs: searchResult.crossRefs || [],

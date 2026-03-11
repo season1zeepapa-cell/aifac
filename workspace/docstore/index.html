@@ -3788,6 +3788,176 @@
     }
 
     // ========================================
+    // 구조화 답변 렌더링 컴포넌트
+    // ========================================
+    // LLM 응답을 결론/근거 체인/교차 참조/주의사항 섹션으로 분리 표시
+    function ParsedAnswer({ parsed, raw, sources }) {
+      const [showEvidence, setShowEvidence] = useState(true);
+      const [showCrossRefs, setShowCrossRefs] = useState(false);
+      const [showRaw, setShowRaw] = useState(false);
+
+      // 파싱 결과가 없거나 파싱 실패 시 기존 마크다운 렌더링
+      if (!parsed || !parsed.parsed) {
+        return React.createElement('div', {
+          className: 'text-sm text-text leading-relaxed markdown-body',
+          dangerouslySetInnerHTML: {
+            __html: typeof marked !== 'undefined' ? marked.parse(raw || '') : (raw || '')
+          }
+        });
+      }
+
+      const { conclusion, evidenceChain, crossReferences, caveats, warnings, format } = parsed;
+
+      return React.createElement('div', { className: 'space-y-2' },
+        // 파싱 형식 + 경고 배지
+        warnings && warnings.length > 0 && React.createElement('div', {
+          className: 'flex flex-wrap gap-1 mb-1'
+        },
+          warnings.map((w, i) => React.createElement('span', {
+            key: i,
+            className: 'text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700'
+          }, w))
+        ),
+
+        // 결론 섹션
+        conclusion && React.createElement('div', {
+          className: 'bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3'
+        },
+          React.createElement('div', { className: 'flex items-center gap-1.5 mb-1.5' },
+            React.createElement('span', { className: 'text-blue-600 dark:text-blue-400 text-xs font-bold' }, '\u{1F4A1} \uACB0\uB860')
+          ),
+          React.createElement('div', {
+            className: 'text-sm text-text leading-relaxed markdown-body',
+            dangerouslySetInnerHTML: {
+              __html: typeof marked !== 'undefined' ? marked.parse(conclusion) : conclusion
+            }
+          })
+        ),
+
+        // 근거 체인 섹션
+        evidenceChain && evidenceChain.length > 0 && React.createElement('div', {
+          className: 'border border-border rounded-lg overflow-hidden'
+        },
+          React.createElement('button', {
+            className: 'w-full flex items-center justify-between px-3 py-2 bg-bg hover:bg-card-bg transition-colors text-left',
+            onClick: () => setShowEvidence(v => !v)
+          },
+            React.createElement('span', { className: 'text-xs font-bold text-text flex items-center gap-1' },
+              '\u{1F4CB} \uADFC\uAC70 \uCCB4\uC778',
+              React.createElement('span', { className: 'text-text-secondary font-normal' }, `(${evidenceChain.length}\uB2E8\uACC4)`)
+            ),
+            React.createElement('svg', {
+              className: `w-3.5 h-3.5 text-text-secondary transition-transform ${showEvidence ? 'rotate-180' : ''}`,
+              fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24'
+            }, React.createElement('path', { strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2, d: 'M19 9l-7 7-7-7' }))
+          ),
+          showEvidence && React.createElement('div', { className: 'px-3 pb-3 space-y-2 pt-1' },
+            evidenceChain.map((step, i) => {
+              // 근거 번호가 sources에 있으면 클릭 가능하게 표시
+              const srcIdx = step.sourceIndex;
+              const matchedSource = srcIdx && sources && sources[srcIdx - 1];
+              return React.createElement('div', {
+                key: i,
+                className: `relative pl-6 ${i < evidenceChain.length - 1 ? 'pb-2 border-l-2 border-blue-200 dark:border-blue-800 ml-1.5' : 'ml-1.5'}`
+              },
+                // 순서 번호 원형
+                React.createElement('div', {
+                  className: `absolute -left-[9px] top-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold ${
+                    step.verified !== false
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-red-400 text-white'
+                  }`
+                }, step.step || i + 1),
+                // 조문명
+                React.createElement('div', { className: 'text-xs' },
+                  srcIdx && React.createElement('span', {
+                    className: 'font-bold text-blue-600 dark:text-blue-400 mr-1'
+                  }, `[\uADFC\uAC70 ${srcIdx}]`),
+                  React.createElement('span', {
+                    className: 'font-medium text-text'
+                  }, step.sourceLabel || ''),
+                  step.verified === false && React.createElement('span', {
+                    className: 'text-[10px] text-red-500 ml-1'
+                  }, '(\uBBF8\uAC80\uC99D)')
+                ),
+                // 인용
+                step.quote && React.createElement('div', {
+                  className: 'text-xs text-text-secondary mt-0.5 pl-2 border-l-2 border-gray-200 dark:border-gray-600 italic'
+                }, `"${step.quote}"`),
+                // 설명
+                step.reasoning && React.createElement('div', {
+                  className: 'text-xs text-text mt-0.5'
+                }, `\u2192 ${step.reasoning}`),
+                // 연결 화살표 (마지막이 아닌 경우)
+                i < evidenceChain.length - 1 && React.createElement('div', {
+                  className: 'text-[10px] text-blue-500 font-medium mt-1'
+                }, '\u2193 \uB530\uB77C\uC11C')
+              );
+            })
+          )
+        ),
+
+        // 교차 참조 섹션
+        crossReferences && crossReferences.length > 0 && React.createElement('div', {
+          className: 'border border-border rounded-lg overflow-hidden'
+        },
+          React.createElement('button', {
+            className: 'w-full flex items-center justify-between px-3 py-2 bg-bg hover:bg-card-bg transition-colors text-left',
+            onClick: () => setShowCrossRefs(v => !v)
+          },
+            React.createElement('span', { className: 'text-xs font-bold text-text flex items-center gap-1' },
+              '\u{1F517} \uAD50\uCC28 \uCC38\uC870',
+              React.createElement('span', { className: 'text-text-secondary font-normal' }, `(${crossReferences.length}\uAC74)`)
+            ),
+            React.createElement('svg', {
+              className: `w-3.5 h-3.5 text-text-secondary transition-transform ${showCrossRefs ? 'rotate-180' : ''}`,
+              fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24'
+            }, React.createElement('path', { strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2, d: 'M19 9l-7 7-7-7' }))
+          ),
+          showCrossRefs && React.createElement('div', { className: 'px-3 pb-2 space-y-1 pt-1' },
+            crossReferences.map((ref, i) => React.createElement('div', {
+              key: i,
+              className: 'flex items-center gap-1.5 text-xs'
+            },
+              React.createElement('span', { className: 'text-text font-medium' }, ref.from),
+              React.createElement('span', { className: 'text-purple-500 font-bold' }, `\u2192 (${ref.relation}) \u2192`),
+              React.createElement('span', { className: 'text-text font-medium' }, ref.to)
+            ))
+          )
+        ),
+
+        // 주의사항 섹션
+        caveats && caveats.trim().length > 0 && React.createElement('div', {
+          className: 'bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-3'
+        },
+          React.createElement('div', { className: 'flex items-center gap-1 mb-1' },
+            React.createElement('span', { className: 'text-amber-600 dark:text-amber-400 text-xs font-bold' }, '\u26A0\uFE0F \uC8FC\uC758\uC0AC\uD56D')
+          ),
+          React.createElement('div', {
+            className: 'text-xs text-text leading-relaxed markdown-body',
+            dangerouslySetInnerHTML: {
+              __html: typeof marked !== 'undefined' ? marked.parse(caveats) : caveats
+            }
+          })
+        ),
+
+        // 원본 보기 토글 (디버그용)
+        React.createElement('div', { className: 'flex items-center gap-2' },
+          React.createElement('button', {
+            className: 'text-[10px] text-text-secondary hover:text-text transition-colors',
+            onClick: () => setShowRaw(v => !v)
+          }, showRaw ? '\u25B2 \uC6D0\uBCF8 \uC811\uAE30' : `\u25BC \uC6D0\uBCF8 \uBCF4\uAE30 (${format})`),
+        ),
+        showRaw && React.createElement('div', {
+          className: 'text-xs text-text-secondary bg-bg rounded p-2 border border-border max-h-60 overflow-y-auto markdown-body',
+          dangerouslySetInnerHTML: {
+            __html: typeof marked !== 'undefined' ? marked.parse(raw || '') : (raw || '')
+          }
+        })
+      );
+    }
+
+    // ========================================
     // AI 채팅 탭 (멀티턴 RAG 대화)
     // ========================================
     function ChatTab() {
@@ -3934,6 +4104,15 @@
                 const updated = [...prev];
                 const last = { ...updated[updated.length - 1] };
                 last.content = currentText;
+                updated[updated.length - 1] = last;
+                return updated;
+              });
+            } else if (event.type === 'parsed') {
+              // 스트리밍 완료 후 구조화 파싱 결과 수신
+              setChatMessages(prev => {
+                const updated = [...prev];
+                const last = { ...updated[updated.length - 1] };
+                last.parsed = event.parsed;
                 updated[updated.length - 1] = last;
                 return updated;
               });
@@ -4194,12 +4373,11 @@
                             </span>
                           )}
                         </div>
-                        <div
-                          className="text-sm text-text leading-relaxed markdown-body"
-                          dangerouslySetInnerHTML={{
-                            __html: typeof marked !== 'undefined' ? marked.parse(msg.content || '') : msg.content
-                          }}
-                        />
+                        {React.createElement(ParsedAnswer, {
+                          parsed: msg.parsed,
+                          raw: msg.content,
+                          sources: msg.sources
+                        })}
                       </div>
                     ) : (
                       <p className="text-sm leading-relaxed">{msg.content}</p>
