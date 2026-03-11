@@ -2,7 +2,7 @@
 // GET /api/law-graph?docId=123
 // → { nodes: [...], links: [...], stats: {...} }
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { sendError } = require('../lib/error-handler');
 
@@ -10,7 +10,7 @@ module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, OPTIONS' })) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET만 허용' });
 
-  const { error: authError } = requireAdmin(req);
+  const { error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   const docId = req.query.docId || req.query.id;

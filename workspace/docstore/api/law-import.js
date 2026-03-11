@@ -4,7 +4,7 @@
 const { getLawDetail } = require('../lib/law-fetcher');
 const { createEmbeddingsForDocument } = require('../lib/embeddings');
 const { query: dbQuery } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth, orgFilter } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { sendError } = require('../lib/error-handler');
@@ -33,8 +33,8 @@ module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
-  // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  // 인증 체크 (조직별 격리)
+  const { user, orgId, error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   if (await checkRateLimit(req, res, 'lawImport')) return;
@@ -46,10 +46,12 @@ module.exports = async (req, res) => {
   if (!OC) return res.status(500).json({ error: 'LAW_API_OC가 설정되지 않았습니다.' });
 
   try {
-    // 1) 중복 체크 — 같은 lawId로 이미 임포트된 문서가 있는지 확인
+    // 1) 중복 체크 — 같은 lawId로 이미 임포트된 문서가 있는지 확인 (조직별)
+    const { clause: orgC, params: orgP, nextIdx } = orgFilter(orgId, 'd', 2);
+    const dupWhere = orgC ? ` AND ${orgC}` : '';
     const existing = await dbQuery(
-      `SELECT id, title FROM documents WHERE metadata->>'lawId' = $1`,
-      [String(lawId)]
+      `SELECT id, title FROM documents d WHERE metadata->>'lawId' = $1${dupWhere}`,
+      [String(lawId), ...orgP]
     );
     if (existing.rows.length > 0) {
       return res.status(409).json({
@@ -68,8 +70,8 @@ module.exports = async (req, res) => {
     // 3) documents 테이블에 저장
     const title = lawName || info.name || '제목 없음';
     const docResult = await dbQuery(
-      `INSERT INTO documents (title, file_type, category, metadata)
-       VALUES ($1, 'law', '법령', $2)
+      `INSERT INTO documents (title, file_type, category, metadata, org_id)
+       VALUES ($1, 'law', '법령', $2, $3)
        RETURNING id`,
       [
         title,
@@ -80,6 +82,7 @@ module.exports = async (req, res) => {
           ministry: info.ministry,
           articleCount: articles.length,
         }),
+        orgId,
       ]
     );
     const documentId = docResult.rows[0].id;

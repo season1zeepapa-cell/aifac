@@ -5,7 +5,7 @@
 //
 // 요약 결과는 document_sections.metadata.summary에 캐싱
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { callLLM } = require('../lib/gemini');
@@ -31,7 +31,7 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
   // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  const { error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   if (await checkRateLimit(req, res, 'summary')) return;

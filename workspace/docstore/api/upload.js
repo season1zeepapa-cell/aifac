@@ -14,7 +14,7 @@ const { extractFromPdf } = require('../lib/pdf-extractor');
 const { detectFileType, extractFromFile } = require('../lib/text-extractor');
 const { createEmbeddingsForDocument } = require('../lib/embeddings');
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { uploadFile, isStorageAvailable } = require('../lib/storage');
@@ -52,8 +52,8 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: '허용되지 않는 메서드입니다.' });
   }
 
-  // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  // 인증 체크 (조직별 격리)
+  const { user, orgId, error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   // Rate Limit 체크
@@ -167,10 +167,10 @@ module.exports = async function handler(req, res) {
     });
 
     const docResult = await query(
-      `INSERT INTO documents (title, file_type, category, metadata, original_filename, original_mimetype, file_size)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO documents (title, file_type, category, metadata, original_filename, original_mimetype, file_size, org_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
-      [title, fileType, category, metadata, filename, mimetype, fileBuffer.length]
+      [title, fileType, category, metadata, filename, mimetype, fileBuffer.length, orgId]
     );
     const documentId = docResult.rows[0].id;
 

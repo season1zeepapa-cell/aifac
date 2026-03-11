@@ -2,7 +2,7 @@
 // GET  /api/deidentify — 키워드 목록 조회
 // POST /api/deidentify — 키워드 추가/삭제
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { sendError } = require('../lib/error-handler');
 
@@ -10,7 +10,7 @@ module.exports = async function handler(req, res) {
   if (setCors(req, res)) return;
 
   // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  const { error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   try {

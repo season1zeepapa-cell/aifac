@@ -47,12 +47,12 @@ function extractCrossReferences(chunks) {
  * @returns {{ sources: Array, hops: number }}
  */
 async function multiHopSearch(dbQuery, question, options = {}) {
-  const { topK = 5, docIds = [] } = options;
+  const { topK = 5, docIds = [], orgId = null } = options;
 
-  // ── 1차 검색: 하이브리드 검색 (벡터 + 전문검색 + RRF) ──
+  // ── 1차 검색: 하이브리드 검색 (벡터 + 전문검색 + RRF, 조직별 격리) ──
   let hop1Chunks;
   try {
-    hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds });
+    hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds, orgId });
   } catch (err) {
     // FTS 컬럼 미생성 등의 경우 기존 벡터 검색으로 fallback
     console.warn('[RAG Agent] 하이브리드 검색 실패, 벡터 검색으로 fallback:', err.message);

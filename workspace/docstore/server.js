@@ -81,6 +81,11 @@ const crossRefHandler = require('./api/cross-references');
 app.get('/api/cross-references', (req, res) => crossRefHandler(req, res));
 app.post('/api/cross-references', (req, res) => crossRefHandler(req, res));
 
+// ── /api/organizations (GET, POST) — 조직 관리 (슈퍼 어드민 전용) ──
+const organizationsHandler = require('./api/organizations');
+app.get('/api/organizations', (req, res) => organizationsHandler(req, res));
+app.post('/api/organizations', (req, res) => organizationsHandler(req, res));
+
 // ── /api/deidentify (GET, POST) — 비식별화 키워드 관리 ──
 const deidentifyHandler = require('./api/deidentify');
 app.get('/api/deidentify', (req, res) => deidentifyHandler(req, res));

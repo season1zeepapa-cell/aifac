@@ -1,13 +1,20 @@
 // 문서 목록 조회 / 상세 조회 / 삭제 / 태그 관리 API
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth, orgFilter } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { getSignedUrl, deleteDocumentFiles, isStorageAvailable } = require('../lib/storage');
 const { sendError } = require('../lib/error-handler');
 const { invalidateSummaryCache, invalidateSectionSummary } = require('../lib/summary-cache');
 
 // 단일 문서 영구 삭제 — chunks → sections → tags → Storage → documents 순서
-async function deleteDocumentPermanently(docId) {
+// orgId가 있으면 해당 조직 소유 문서만 삭제 가능
+async function deleteDocumentPermanently(docId, orgId) {
+  // 소유권 확인
+  const orgClause = orgId !== null ? ' AND org_id = $2' : '';
+  const orgParams = orgId !== null ? [docId, orgId] : [docId];
+  const ownership = await query(`SELECT id FROM documents WHERE id = $1${orgClause}`, orgParams);
+  if (ownership.rows.length === 0) throw new Error('NOT_FOUND');
+
   await query('BEGIN');
   try {
     const sectionRows = await query('SELECT id FROM document_sections WHERE document_id = $1', [docId]);
@@ -32,7 +39,7 @@ async function deleteDocumentPermanently(docId) {
 }
 
 // 복수 문서 배치 영구 삭제 — 트랜잭션 1회로 전체 처리
-async function deleteDocumentsBatch(docIds) {
+async function deleteDocumentsBatch(docIds, orgId) {
   if (docIds.length === 0) return;
   await query('BEGIN');
   try {
@@ -64,8 +71,8 @@ async function deleteDocumentsBatch(docIds) {
 module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, POST, DELETE, OPTIONS' })) return;
 
-  // 인증 체크 — 관리자만 허용
-  const { user, error: authError } = requireAdmin(req);
+  // 인증 체크 — 로그인 사용자 + 조직 스코핑
+  const { user, orgId, error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   try {
@@ -76,9 +83,11 @@ module.exports = async function handler(req, res) {
       // 원본 파일 다운로드 — ?id=N&download=true
       // 원본 파일 미리보기 — ?id=N&download=preview
       if (id && (download === 'true' || download === 'preview')) {
+        const orgClause = orgId !== null ? ' AND org_id = $2' : '';
+        const orgParams = orgId !== null ? [id, orgId] : [id];
         const doc = await query(
           `SELECT storage_path, original_file, original_filename, original_mimetype
-           FROM documents WHERE id = $1`, [id]
+           FROM documents WHERE id = $1${orgClause}`, orgParams
         );
         if (doc.rows.length === 0) {
           return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
@@ -116,21 +125,26 @@ module.exports = async function handler(req, res) {
         return res.status(404).json({ error: '원본 파일이 저장되어 있지 않습니다.' });
       }
 
-      // 태그 목록 조회 — ?tags=all
+      // 태그 목록 조회 — ?tags=all (조직별 격리)
       if (req.query.tags === 'all') {
+        const { clause, params } = orgFilter(orgId, 't', 1);
+        const tagWhere = clause ? `WHERE ${clause}` : '';
         const tagsResult = await query(
-          'SELECT id, name, color, usage_count FROM tags ORDER BY usage_count DESC, name'
+          `SELECT id, name, color, usage_count FROM tags t ${tagWhere} ORDER BY usage_count DESC, name`,
+          params
         );
         return res.json({ tags: tagsResult.rows });
       }
 
-      // 단건 조회 — 문서 메타 + 섹션 텍스트 + 태그
+      // 단건 조회 — 문서 메타 + 섹션 텍스트 + 태그 (조직별 격리)
       if (id) {
+        const orgClause = orgId !== null ? ' AND org_id = $2' : '';
+        const orgParams = orgId !== null ? [id, orgId] : [id];
         const doc = await query(
           `SELECT id, title, file_type, category, summary, keywords,
                   upload_date AS created_at, metadata, embedding_status,
                   original_filename, original_mimetype, file_size, storage_path, deleted_at
-           FROM documents WHERE id = $1`, [id]
+           FROM documents WHERE id = $1${orgClause}`, orgParams
         );
         if (doc.rows.length === 0) {
           return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
@@ -175,6 +189,14 @@ module.exports = async function handler(req, res) {
       let params = [];
       let whereClauses = [isTrash ? 'd.deleted_at IS NOT NULL' : 'd.deleted_at IS NULL'];
       let paramIdx = 1;
+
+      // 조직별 격리 — 슈퍼 어드민(orgId=null)은 전체 접근
+      const { clause: orgClauseList, params: orgParamsList, nextIdx } = orgFilter(orgId, 'd', paramIdx);
+      if (orgClauseList) {
+        whereClauses.push(orgClauseList);
+        params.push(...orgParamsList);
+        paramIdx = nextIdx;
+      }
 
       if (category && !isTrash) {
         whereClauses.push(`d.category = $${paramIdx}`);
@@ -223,31 +245,39 @@ module.exports = async function handler(req, res) {
 
       // 소프트 삭제 — deleted_at 타임스탬프 기록 (휴지통으로 이동)
       if (action === 'delete' && id) {
-        await query('UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL', [id]);
+        const orgC = orgId !== null ? ' AND org_id = $2' : '';
+        const orgP = orgId !== null ? [id, orgId] : [id];
+        await query(`UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL${orgC}`, orgP);
         return res.json({ success: true, message: '문서가 휴지통으로 이동되었습니다.' });
       }
 
       // 복구 — deleted_at을 NULL로 되돌림
       if (action === 'restore' && id) {
-        await query('UPDATE documents SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL', [id]);
+        const orgC = orgId !== null ? ' AND org_id = $2' : '';
+        const orgP = orgId !== null ? [id, orgId] : [id];
+        await query(`UPDATE documents SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL${orgC}`, orgP);
         return res.json({ success: true, message: '문서가 복구되었습니다.' });
       }
 
       // 영구 삭제 — 실제 데이터 제거 (휴지통에서만 가능)
       if (action === 'permanentDelete' && id) {
-        const check = await query('SELECT id FROM documents WHERE id = $1 AND deleted_at IS NOT NULL', [id]);
+        const orgC = orgId !== null ? ' AND org_id = $2' : '';
+        const orgP = orgId !== null ? [id, orgId] : [id];
+        const check = await query(`SELECT id FROM documents WHERE id = $1 AND deleted_at IS NOT NULL${orgC}`, orgP);
         if (check.rows.length === 0) {
           return res.status(400).json({ error: '휴지통에 있는 문서만 영구 삭제할 수 있습니다.' });
         }
-        await deleteDocumentPermanently(id);
+        await deleteDocumentPermanently(id, orgId);
         return res.json({ success: true, message: '문서가 영구 삭제되었습니다.' });
       }
 
       // 휴지통 비우기 — 트랜잭션 배치 삭제로 전체 처리
       if (action === 'emptyTrash') {
-        const trashed = await query('SELECT id FROM documents WHERE deleted_at IS NOT NULL');
+        const orgC = orgId !== null ? ' AND org_id = $1' : '';
+        const orgP = orgId !== null ? [orgId] : [];
+        const trashed = await query(`SELECT id FROM documents WHERE deleted_at IS NOT NULL${orgC}`, orgP);
         const docIds = trashed.rows.map(r => r.id);
-        await deleteDocumentsBatch(docIds);
+        await deleteDocumentsBatch(docIds, orgId);
         return res.json({ success: true, message: `${docIds.length}개 문서가 영구 삭제되었습니다.`, count: docIds.length });
       }
 
@@ -255,12 +285,14 @@ module.exports = async function handler(req, res) {
       if (action === 'addTag' && id && req.body.tagName) {
         const tagName = req.body.tagName.trim();
         const color = req.body.color || '#6B7280';
-        // 태그가 없으면 생성
-        let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
+        // 태그가 없으면 생성 (조직별 격리)
+        const tagOrgC = orgId !== null ? ' AND org_id = $2' : ' AND org_id IS NULL';
+        const tagOrgP = orgId !== null ? [tagName, orgId] : [tagName];
+        let tagResult = await query(`SELECT id FROM tags WHERE name = $1${tagOrgC}`, tagOrgP);
         if (tagResult.rows.length === 0) {
           tagResult = await query(
-            'INSERT INTO tags (name, color) VALUES ($1, $2) RETURNING id',
-            [tagName, color]
+            'INSERT INTO tags (name, color, org_id) VALUES ($1, $2, $3) RETURNING id',
+            [tagName, color, orgId]
           );
         }
         const tagId = tagResult.rows[0].id;
@@ -309,8 +341,14 @@ module.exports = async function handler(req, res) {
           idx++;
         }
         params.push(id);
+        let updateWhere = `WHERE id = $${idx} AND deleted_at IS NULL`;
+        if (orgId !== null) {
+          idx++;
+          updateWhere += ` AND org_id = $${idx}`;
+          params.push(orgId);
+        }
         const result = await query(
-          `UPDATE documents SET ${sets.join(', ')} WHERE id = $${idx} AND deleted_at IS NULL RETURNING id, title, category`,
+          `UPDATE documents SET ${sets.join(', ')} ${updateWhere} RETURNING id, title, category`,
           params
         );
         if (result.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
@@ -319,6 +357,12 @@ module.exports = async function handler(req, res) {
 
       // 임베딩 재생성 — { action: 'rebuildEmbeddings', id: 문서ID }
       if (action === 'rebuildEmbeddings' && id) {
+        // 소유권 확인
+        const orgC = orgId !== null ? ' AND org_id = $2' : '';
+        const orgP = orgId !== null ? [id, orgId] : [id];
+        const ownerCheck = await query(`SELECT id FROM documents WHERE id = $1${orgC}`, orgP);
+        if (ownerCheck.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
+
         const { createEmbeddingsForDocument } = require('../lib/embeddings');
         // 상태를 pending으로 변경
         await query('UPDATE documents SET embedding_status = $1 WHERE id = $2', ['pending', id]);
@@ -336,9 +380,11 @@ module.exports = async function handler(req, res) {
 
       // 즐겨찾기 토글 — { action: 'toggleFavorite', id: 문서ID }
       if (action === 'toggleFavorite' && id) {
+        const orgC = orgId !== null ? ' AND org_id = $2' : '';
+        const orgP = orgId !== null ? [id, orgId] : [id];
         const result = await query(
-          'UPDATE documents SET is_favorited = NOT COALESCE(is_favorited, false) WHERE id = $1 RETURNING is_favorited',
-          [id]
+          `UPDATE documents SET is_favorited = NOT COALESCE(is_favorited, false) WHERE id = $1${orgC} RETURNING is_favorited`,
+          orgP
         );
         if (result.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
         return res.json({ success: true, is_favorited: result.rows[0].is_favorited });
@@ -352,9 +398,11 @@ module.exports = async function handler(req, res) {
         // 기존 요약 캐시 무효화 (재분석이므로 이전 요약 제거)
         await invalidateSummaryCache(query, id);
 
-        // 문서 + 섹션 조회
+        // 문서 + 섹션 조회 (조직별 격리)
+        const orgC = orgId !== null ? ' AND org_id = $2' : '';
+        const orgP = orgId !== null ? [id, orgId] : [id];
         const doc = await query(
-          'SELECT id, title, category, summary FROM documents WHERE id = $1', [id]
+          `SELECT id, title, category, summary FROM documents WHERE id = $1${orgC}`, orgP
         );
         if (doc.rows.length === 0) return res.status(404).json({ error: '문서를 찾을 수 없습니다.' });
         const docRow = doc.rows[0];
@@ -377,12 +425,14 @@ module.exports = async function handler(req, res) {
           [analysis.summary, analysis.keywords, id]
         );
 
-        // 3) 태그 자동 추가
+        // 3) 태그 자동 추가 (조직별 격리)
         for (const tagName of analysis.tags) {
-          let tagResult = await query('SELECT id FROM tags WHERE name = $1', [tagName]);
+          const tOrgC = orgId !== null ? ' AND org_id = $2' : ' AND org_id IS NULL';
+          const tOrgP = orgId !== null ? [tagName, orgId] : [tagName];
+          let tagResult = await query(`SELECT id FROM tags WHERE name = $1${tOrgC}`, tOrgP);
           if (tagResult.rows.length === 0) {
             tagResult = await query(
-              'INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]
+              'INSERT INTO tags (name, org_id) VALUES ($1, $2) RETURNING id', [tagName, orgId]
             );
           }
           await query(

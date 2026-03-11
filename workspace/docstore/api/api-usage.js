@@ -4,7 +4,7 @@
 // POST /api/api-usage — 키/OCR 설정 변경
 const https = require('https');
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { sendError } = require('../lib/error-handler');
 
@@ -12,7 +12,7 @@ module.exports = async function handler(req, res) {
   if (setCors(req, res, { methods: 'GET, POST, OPTIONS' })) return;
 
   // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  const { error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   try {

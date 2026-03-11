@@ -7,7 +7,7 @@
 // 2) 근거 체인 프롬프트로 LLM 호출
 // 3) 구조화된 답변 + 근거 체인 + 교차 참조 반환
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { callLLM, callLLMStream } = require('../lib/gemini');
@@ -23,7 +23,7 @@ function sseWrite(res, data) {
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
 
-  const { error: authError } = requireAdmin(req);
+  const { user, orgId, error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
@@ -45,6 +45,7 @@ module.exports = async (req, res) => {
     const searchResult = await multiHopSearch(query, question.trim(), {
       topK: Math.min(parseInt(topK, 10) || 5, 10),
       docIds: resolvedDocIds,
+      orgId,
     });
 
     const sources = searchResult.sources;

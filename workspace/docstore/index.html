@@ -806,7 +806,7 @@
             </button>
             {onLogout && (
               <div className="flex items-center gap-3">
-                {user && <span className="text-xs text-text-secondary">{user.name}</span>}
+                {user && <span className="text-xs text-text-secondary">{user.orgName ? `${user.orgName} · ` : ''}{user.name}</span>}
                 {/* 다크모드 토글 */}
                 <button
                   onClick={onToggleTheme}
@@ -5515,7 +5515,7 @@
           const data = await res.json();
           if (!res.ok) { setError(data.error || '로그인에 실패했습니다.'); return; }
           setAuthToken(data.token);
-          setAuthUser({ name: data.name, admin: data.admin });
+          setAuthUser({ name: data.name, admin: data.admin, orgId: data.orgId, orgName: data.orgName });
           onLogin();
         } catch (err) {
           setError('서버 연결에 실패했습니다.');
@@ -5541,7 +5541,7 @@
             <div className="text-center mb-8">
               <div className="text-4xl mb-2">&#128218;</div>
               <h1 className="text-2xl font-bold text-text">DocStore</h1>
-              <p className="text-text-secondary text-sm mt-1">지식 관리 시스템 (관리자 전용)</p>
+              <p className="text-text-secondary text-sm mt-1">지식 관리 시스템</p>
             </div>
 
             {/* 로그인 폼 */}

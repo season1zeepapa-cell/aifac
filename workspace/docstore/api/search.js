@@ -3,7 +3,7 @@
 const { query } = require('../lib/db');
 const { generateEmbedding } = require('../lib/embeddings');
 const { hybridSearch } = require('../lib/hybrid-search');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth, orgFilter } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { escapeIlike } = require('../lib/input-sanitizer');
@@ -17,24 +17,26 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: '허용되지 않는 메서드입니다.' });
   }
 
-  // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  // 인증 체크 (조직별 격리)
+  const { user, orgId, error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   if (await checkRateLimit(req, res, 'search')) return;
 
-  // 자동완성 서제스트 모드
+  // 자동완성 서제스트 모드 (조직별 격리)
   if (req.query.suggest !== undefined) {
     const prefix = (req.query.suggest || '').trim();
     if (prefix.length < 1) return res.json({ suggestions: [] });
     const escaped = escapeIlike(prefix);
+    const { clause: sugOrgC, params: sugOrgP, nextIdx: sugNextIdx } = orgFilter(orgId, 'd', 2);
+    const sugOrgWhere = sugOrgC ? ` AND ${sugOrgC}` : '';
     const result = await query(
       `SELECT DISTINCT title AS text, 'document' AS type
-       FROM documents
-       WHERE deleted_at IS NULL AND title ILIKE $1
+       FROM documents d
+       WHERE deleted_at IS NULL AND title ILIKE $1${sugOrgWhere}
        ORDER BY title
        LIMIT 10`,
-      [`%${escaped}%`]
+      [`%${escaped}%`, ...sugOrgP]
     );
     return res.json({ suggestions: result.rows });
   }
@@ -59,6 +61,7 @@ module.exports = async function handler(req, res) {
       const results = await hybridSearch(query, q.trim(), {
         topK: limit,
         docIds: resolvedIds,
+        orgId,
       });
 
       // chapter/tag 필터는 후처리 (hybrid-search 내부에서는 docIds만 처리)
@@ -107,6 +110,14 @@ module.exports = async function handler(req, res) {
       let filterClauses = ['dc.embedding IS NOT NULL', 'd.deleted_at IS NULL'];
       let params = [vecStr];
       let paramIdx = 2;
+
+      // 조직별 격리
+      const { clause: vecOrgC, params: vecOrgP, nextIdx: vecNextIdx } = orgFilter(orgId, 'd', paramIdx);
+      if (vecOrgC) {
+        filterClauses.push(vecOrgC);
+        params.push(...vecOrgP);
+        paramIdx = vecNextIdx;
+      }
 
       const resolvedIds1 = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
       if (resolvedIds1.length > 0) {
@@ -204,6 +215,14 @@ module.exports = async function handler(req, res) {
         let params = [tsqueryStr];
         let paramIdx = 2;
 
+        // 조직별 격리
+        const { clause: ftsOrgC, params: ftsOrgP, nextIdx: ftsNextIdx } = orgFilter(orgId, 'd', paramIdx);
+        if (ftsOrgC) {
+          filterClauses.push(ftsOrgC);
+          params.push(...ftsOrgP);
+          paramIdx = ftsNextIdx;
+        }
+
         if (resolvedIds2.length > 0) {
           filterClauses.push(`ds.document_id = ANY($${paramIdx})`);
           params.push(resolvedIds2);
@@ -281,6 +300,14 @@ module.exports = async function handler(req, res) {
         let filterClauses = [`ds.raw_text ILIKE $1 ESCAPE '\\'`, 'd.deleted_at IS NULL'];
         let params = [`%${escapeIlike(trimmed)}%`];
         let paramIdx = 2;
+
+        // 조직별 격리
+        const { clause: ilikeOrgC, params: ilikeOrgP, nextIdx: ilikeNextIdx } = orgFilter(orgId, 'd', paramIdx);
+        if (ilikeOrgC) {
+          filterClauses.push(ilikeOrgC);
+          params.push(...ilikeOrgP);
+          paramIdx = ilikeNextIdx;
+        }
 
         if (resolvedIds2.length > 0) {
           filterClauses.push(`ds.document_id = ANY($${paramIdx})`);

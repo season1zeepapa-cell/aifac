@@ -34,7 +34,7 @@ const RRF_K = 60; // RRF 상수 (값이 클수록 하위 순위의 영향이 커
  * @param {Object} options - { topK, docIds }
  * @returns {Array} 검색 결과 (chunk 배열)
  */
-async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [] }) {
+async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [], orgId = null }) {
   // 한국어 토크나이저로 검색어 확장 (n-gram + 동의어)
   const { tsquery: tsqueryStr, expandedTerms } = buildTsquery(queryText, {
     mode: 'or',
@@ -50,6 +50,13 @@ async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [] }) {
   let filterClause = `dc.fts_vector IS NOT NULL`;
   const params = [tsqueryStr];
   let paramIdx = 2;
+
+  // 조직별 격리
+  if (orgId !== null) {
+    filterClause += ` AND d.org_id = $${paramIdx}`;
+    params.push(orgId);
+    paramIdx++;
+  }
 
   if (docIds.length > 0) {
     filterClause += ` AND ds.document_id = ANY($${paramIdx})`;
@@ -94,11 +101,18 @@ async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [] }) {
  * @param {Object} options - { topK, docIds }
  * @returns {Array} 검색 결과 (chunk 배열)
  */
-async function vectorSearch(dbQuery, embedding, { topK = 20, docIds = [] }) {
+async function vectorSearch(dbQuery, embedding, { topK = 20, docIds = [], orgId = null }) {
   const vecStr = `[${embedding.join(',')}]`;
   let filterClause = 'dc.embedding IS NOT NULL';
   const params = [vecStr];
   let paramIdx = 2;
+
+  // 조직별 격리
+  if (orgId !== null) {
+    filterClause += ` AND d.org_id = $${paramIdx}`;
+    params.push(orgId);
+    paramIdx++;
+  }
 
   if (docIds.length > 0) {
     filterClause += ` AND ds.document_id = ANY($${paramIdx})`;
@@ -203,15 +217,15 @@ function rrfFusion(vectorResults, ftsResults, topK = 10) {
  * @returns {Array} RRF 점수 순 결과
  */
 async function hybridSearch(dbQuery, question, options = {}) {
-  const { topK = 10, docIds = [] } = options;
+  const { topK = 10, docIds = [], orgId = null } = options;
 
   // 임베딩 생성
   const embedding = await generateEmbedding(question.trim());
 
-  // 벡터 검색과 전문 검색을 병렬 실행 (성능 최적화)
+  // 벡터 검색과 전문 검색을 병렬 실행 (성능 최적화, 조직별 격리)
   const [vecResults, ftsResults] = await Promise.all([
-    vectorSearch(dbQuery, embedding, { topK: topK * 2, docIds }),
-    ftsSearch(dbQuery, question, { topK: topK * 2, docIds }),
+    vectorSearch(dbQuery, embedding, { topK: topK * 2, docIds, orgId }),
+    ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId }),
   ]);
 
   // RRF로 두 결과를 합산하여 최종 순위 결정

@@ -6,7 +6,7 @@ const http = require('http');
 const iconv = require('iconv-lite');
 const { createEmbeddingsForDocument } = require('../lib/embeddings');
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { uploadFile, isStorageAvailable } = require('../lib/storage');
@@ -158,8 +158,8 @@ module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'POST, OPTIONS' })) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 허용' });
 
-  // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  // 인증 체크 (조직별 격리)
+  const { user, orgId, error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   if (await checkRateLimit(req, res, 'urlImport')) return;
@@ -198,8 +198,8 @@ module.exports = async (req, res) => {
     const htmlBuffer = Buffer.from(html, 'utf-8');
     const htmlFilename = `${title}.html`;
     const docResult = await query(
-      `INSERT INTO documents (title, file_type, category, metadata, original_filename, original_mimetype, file_size)
-       VALUES ($1, 'url', $2, $3, $4, $5, $6)
+      `INSERT INTO documents (title, file_type, category, metadata, original_filename, original_mimetype, file_size, org_id)
+       VALUES ($1, 'url', $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         title,
@@ -212,6 +212,7 @@ module.exports = async (req, res) => {
         htmlFilename,
         'text/html',
         htmlBuffer.length,
+        orgId,
       ]
     );
     const documentId = docResult.rows[0].id;

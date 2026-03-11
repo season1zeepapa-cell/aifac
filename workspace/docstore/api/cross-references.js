@@ -3,7 +3,7 @@
 // POST /api/cross-references { docId, type }  — 교차 참조 구축 트리거
 // GET  /api/cross-references?matrix=true      — 전체 교차 참조 매트릭스 조회
 const { query } = require('../lib/db');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { sendError } = require('../lib/error-handler');
 const {
@@ -15,7 +15,7 @@ const {
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'GET, POST, OPTIONS' })) return;
 
-  const { error: authError } = requireAdmin(req);
+  const { error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   try {

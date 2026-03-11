@@ -129,7 +129,7 @@ function verifyPassword(inputPassword, storedHash) {
 }
 
 /**
- * 인증 미들웨어 — 관리자 토큰 필수
+ * 인증 미들웨어 — 관리자 토큰 필수 (슈퍼 어드민 전용 API용)
  * @returns {{ user, error }} user가 있으면 인증 성공
  */
 function requireAdmin(req) {
@@ -144,4 +144,40 @@ function requireAdmin(req) {
   return { user: payload, error: null };
 }
 
-module.exports = { signToken, verifyToken, extractToken, hashPassword, verifyPassword, requireAdmin, TOKEN_SECRET };
+/**
+ * 인증 미들웨어 — 로그인 사용자 + 조직 스코핑 (멀티테넌시)
+ * orgId가 null이면 슈퍼 어드민 (모든 조직의 데이터 접근 가능)
+ * orgId가 있으면 해당 조직의 데이터만 접근 가능
+ * @returns {{ user, orgId, error }}
+ */
+function requireAuth(req) {
+  const token = extractToken(req);
+  if (!token) return { user: null, orgId: null, error: '로그인이 필요합니다.' };
+
+  const payload = verifyToken(token);
+  if (!payload) return { user: null, orgId: null, error: '인증 토큰이 만료되었거나 유효하지 않습니다.' };
+
+  // orgId가 null/undefined이면 슈퍼 어드민 (전체 접근)
+  return { user: payload, orgId: payload.orgId || null, error: null };
+}
+
+/**
+ * SQL WHERE 절에 org_id 필터를 추가하는 헬퍼
+ * 슈퍼 어드민(orgId=null)이면 필터 없음 (전체 데이터 접근)
+ * @param {number|null} orgId - 조직 ID (null이면 필터 미적용)
+ * @param {string} tableAlias - 테이블 별칭 (예: 'd', 'ds')
+ * @param {number} paramIdx - 다음 파라미터 인덱스 ($N)
+ * @returns {{ clause: string, params: any[], nextIdx: number }}
+ */
+function orgFilter(orgId, tableAlias, paramIdx) {
+  if (orgId === null || orgId === undefined) {
+    return { clause: '', params: [], nextIdx: paramIdx };
+  }
+  return {
+    clause: `${tableAlias}.org_id = $${paramIdx}`,
+    params: [orgId],
+    nextIdx: paramIdx + 1,
+  };
+}
+
+module.exports = { signToken, verifyToken, extractToken, hashPassword, verifyPassword, requireAdmin, requireAuth, orgFilter, TOKEN_SECRET };

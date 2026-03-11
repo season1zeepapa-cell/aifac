@@ -8,7 +8,7 @@
 
 const multer = require('multer');
 const https = require('https');
-const { requireAdmin } = require('../lib/auth');
+const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
 const { sanitizeFilename } = require('../lib/input-sanitizer');
@@ -117,7 +117,7 @@ module.exports = async function handler(req, res) {
   }
 
   // 인증 체크
-  const { error: authError } = requireAdmin(req);
+  const { error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
   // Rate Limit 체크
