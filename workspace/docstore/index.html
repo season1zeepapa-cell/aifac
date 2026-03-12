@@ -482,14 +482,17 @@
           };
           xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else reject(new Error(`Storage 업로드 실패 (${xhr.status})`));
+            else {
+              let detail = '';
+              try { detail = ': ' + JSON.parse(xhr.responseText).message; } catch {}
+              reject(new Error(`Storage 업로드 실패 (${xhr.status})${detail}`));
+            }
           };
           xhr.onerror = () => reject(new Error('Storage 업로드 네트워크 오류'));
 
           // Supabase signed upload URL 사용
           xhr.open('PUT', signedUrl);
           xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-          if (uploadToken) xhr.setRequestHeader('x-upsert', 'true');
           xhr.send(file);
         });
 
