@@ -33,6 +33,10 @@ app.delete('/api/documents', (req, res) => documentsHandler(req, res));
 const uploadHandler = require('./api/upload');
 app.post('/api/upload', (req, res) => uploadHandler(req, res));
 
+// ── POST /api/upload-url — 대용량 파일 signed upload URL 발급 ──
+const uploadUrlHandler = require('./api/upload-url');
+app.post('/api/upload-url', (req, res) => uploadUrlHandler(req, res));
+
 // ── POST /api/law ───────────────────────────────────
 const lawHandler = require('./api/law');
 app.post('/api/law', (req, res) => lawHandler(req, res));

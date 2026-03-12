@@ -439,6 +439,107 @@
         });
       }, []);
 
+      // 대용량 파일 업로드 (Supabase Storage 경유)
+      // 1단계: signed URL 발급 → Storage에 PUT (0~40%)
+      // 2단계: 서버에 storagePath + 메타 전달 (40~100%)
+      const uploadLarge = React.useCallback(async (file, metadata, token) => {
+        const apiBase = window.API_BASE_URL || '';
+
+        // 1단계: signed upload URL 발급
+        setProgress(2);
+        setMessage('대용량 파일 업로드 준비 중...');
+        const urlRes = await fetch(`${apiBase}/upload-url`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            filename: file.name,
+            mimetype: file.type || 'application/octet-stream',
+            fileSize: file.size,
+          }),
+        });
+        if (!urlRes.ok) {
+          const err = await urlRes.json().catch(() => ({}));
+          throw new Error(err.error || `Upload URL 발급 실패 (${urlRes.status})`);
+        }
+        const { signedUrl, storagePath, token: uploadToken } = await urlRes.json();
+
+        // 2단계: signed URL로 파일 직접 PUT (진행률 0~40%)
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhrRef.current = xhr;
+
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = (e.loaded / e.total) * 40;
+              setProgress(pct);
+              const mb = (e.loaded / 1024 / 1024).toFixed(1);
+              const totalMb = (e.total / 1024 / 1024).toFixed(1);
+              setMessage(`Storage 업로드 중... ${mb}MB / ${totalMb}MB`);
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error(`Storage 업로드 실패 (${xhr.status})`));
+          };
+          xhr.onerror = () => reject(new Error('Storage 업로드 네트워크 오류'));
+
+          // Supabase signed upload URL 사용
+          xhr.open('PUT', signedUrl);
+          xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+          if (uploadToken) xhr.setRequestHeader('x-upsert', 'true');
+          xhr.send(file);
+        });
+
+        // 3단계: 서버에 storagePath + 메타데이터 전달 (40~100%)
+        setProgress(45);
+        setMessage('서버에서 텍스트 추출 중...');
+
+        // 서버 처리 진행률 시뮬레이션 (45~95%)
+        let idx = 0;
+        const serverSteps = [
+          { msg: '서버에서 텍스트 추출 중...', pct: 55, delay: 3000 },
+          { msg: 'DB 저장 중...', pct: 65, delay: 3000 },
+          { msg: '임베딩 생성 중...', pct: 75, delay: 5000 },
+          { msg: '임베딩 처리 중...', pct: 85, delay: 5000 },
+          { msg: '마무리 중...', pct: 92, delay: 5000 },
+        ];
+        timerRef.current = setInterval(() => {
+          idx++;
+          if (idx < serverSteps.length) {
+            setProgress(serverSteps[idx].pct);
+            setMessage(serverSteps[idx].msg);
+          } else {
+            setProgress(prev => Math.min(95, prev + 0.3));
+          }
+        }, serverSteps[idx]?.delay || 4000);
+
+        const processRes = await fetch(`${apiBase}/upload`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            storagePath,
+            filename: file.name,
+            mimetype: file.type || 'application/octet-stream',
+            ...metadata,
+          }),
+        });
+
+        if (timerRef.current) clearInterval(timerRef.current);
+
+        if (!processRes.ok) {
+          const err = await processRes.json().catch(() => ({}));
+          throw new Error(err.error || `서버 처리 실패 (${processRes.status})`);
+        }
+
+        return await processRes.json();
+      }, []);
+
       const finish = React.useCallback((msg) => {
         if (timerRef.current) clearInterval(timerRef.current);
         xhrRef.current = null;
@@ -458,7 +559,7 @@
         if (xhrRef.current) xhrRef.current.abort();
       }, []);
 
-      return { progress, message, upload, finish, reset };
+      return { progress, message, upload, uploadLarge, finish, reset };
     }
 
     // ========================================
@@ -1205,29 +1306,52 @@
       // ── 업로드 실행 (XHR 실시간 진행률) ──
       const uploadProgress = useUploadProgress();
 
+      // Vercel 서버리스 body 크기 제한
+      const MAX_DIRECT_UPLOAD = 4.5 * 1024 * 1024; // 4.5MB
+
       const handleUpload = useCallback(async () => {
         if (!file) return;
         setUploading(true);
         setError(null);
         setResult(null);
         try {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('title', title || file.name.replace(/\.[^.]+$/, ''));
-          formData.append('category', category);
-          formData.append('sectionType', sectionType);
-          if (sectionType === 'custom' && customDelimiter) {
-            formData.append('customDelimiter', customDelimiter);
-          }
-          if (contentColumn) formData.append('contentColumn', contentColumn);
-          if (contentField) formData.append('contentField', contentField);
-          if (contentType) formData.append('contentType', contentType);
-          if (deidentify) formData.append('deidentify', 'true');
-          if (chunkStrategy && chunkStrategy !== 'sentence') formData.append('chunkStrategy', chunkStrategy);
-          if (pdfLoader && pdfLoader !== 'pdf-parse') formData.append('pdfLoader', pdfLoader);
-
           const token = getAuthToken();
-          const data = await uploadProgress.upload(`${API_BASE_URL}/upload`, formData, token);
+          const isLargeFile = file.size > MAX_DIRECT_UPLOAD;
+
+          let data;
+          if (isLargeFile) {
+            // ── 대용량: Supabase Storage 경유 ──
+            const metadata = {
+              title: title || file.name.replace(/\.[^.]+$/, ''),
+              category,
+              sectionType,
+            };
+            if (sectionType === 'custom' && customDelimiter) metadata.customDelimiter = customDelimiter;
+            if (contentColumn) metadata.contentColumn = contentColumn;
+            if (contentField) metadata.contentField = contentField;
+            if (contentType) metadata.contentType = contentType;
+            if (deidentify) metadata.deidentify = 'true';
+            if (chunkStrategy && chunkStrategy !== 'sentence') metadata.chunkStrategy = chunkStrategy;
+            if (pdfLoader && pdfLoader !== 'pdf-parse') metadata.pdfLoader = pdfLoader;
+
+            data = await uploadProgress.uploadLarge(file, metadata, token);
+          } else {
+            // ── 일반: 기존 multipart 방식 ──
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('title', title || file.name.replace(/\.[^.]+$/, ''));
+            formData.append('category', category);
+            formData.append('sectionType', sectionType);
+            if (sectionType === 'custom' && customDelimiter) formData.append('customDelimiter', customDelimiter);
+            if (contentColumn) formData.append('contentColumn', contentColumn);
+            if (contentField) formData.append('contentField', contentField);
+            if (contentType) formData.append('contentType', contentType);
+            if (deidentify) formData.append('deidentify', 'true');
+            if (chunkStrategy && chunkStrategy !== 'sentence') formData.append('chunkStrategy', chunkStrategy);
+            if (pdfLoader && pdfLoader !== 'pdf-parse') formData.append('pdfLoader', pdfLoader);
+            data = await uploadProgress.upload(`${API_BASE_URL}/upload`, formData, token);
+          }
+
           uploadProgress.finish('업로드 완료!');
           setResult(data);
           setTimeout(() => {
@@ -1397,6 +1521,9 @@
                     <div className="flex items-center justify-center gap-2">
                       <Badge color={currentConfig.color}>{currentConfig.label}</Badge>
                       <span className="text-sm text-text-secondary">{formatFileSize(file.size)}</span>
+                      {file.size > 4.5 * 1024 * 1024 && (
+                        <Badge color="blue">Storage 경유</Badge>
+                      )}
                     </div>
                   </div>
                 ) : (

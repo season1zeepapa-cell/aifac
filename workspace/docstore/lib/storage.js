@@ -150,6 +150,38 @@ async function deleteDocumentFiles(documentId) {
   }
 }
 
+/**
+ * Signed Upload URL 발급 (클라이언트가 직접 Storage에 업로드할 때 사용)
+ * @param {string} storagePath - 버킷 내 파일 경로
+ * @returns {{ signedUrl: string, path: string, token: string }}
+ */
+async function createSignedUploadUrl(storagePath) {
+  await ensureBucket();
+  const client = getClient();
+  const { data, error } = await client.storage
+    .from(BUCKET_NAME)
+    .createSignedUploadUrl(storagePath);
+
+  if (error) throw new Error(`Signed Upload URL 발급 실패: ${error.message}`);
+  return data;
+}
+
+/**
+ * Storage에서 파일 다운로드 (서버 처리용)
+ * @param {string} storagePath - 버킷 내 파일 경로
+ * @returns {Buffer} 파일 버퍼
+ */
+async function downloadFile(storagePath) {
+  const client = getClient();
+  const { data, error } = await client.storage
+    .from(BUCKET_NAME)
+    .download(storagePath);
+
+  if (error) throw new Error(`Storage 파일 다운로드 실패: ${error.message}`);
+  const arrayBuffer = await data.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 module.exports = {
   uploadFile,
   getSignedUrl,
@@ -157,5 +189,7 @@ module.exports = {
   deleteDocumentFiles,
   isStorageAvailable,
   ensureBucket,
+  createSignedUploadUrl,
+  downloadFile,
   BUCKET_NAME,
 };
