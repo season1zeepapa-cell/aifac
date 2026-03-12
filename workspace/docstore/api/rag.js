@@ -14,6 +14,7 @@ const { callLLM, callLLMStream } = require('../lib/gemini');
 const { sendError } = require('../lib/error-handler');
 const { multiHopSearch } = require('../lib/rag-agent');
 const { parseRAGOutput } = require('../lib/output-parser');
+const { createTrace, createSpan, endSpan, finalizeTrace } = require('../lib/langfuse');
 
 // SSE 헬퍼: 이벤트 데이터를 SSE 형식으로 전송
 function sseWrite(res, data) {
@@ -38,6 +39,15 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
   }
 
+  // LangFuse 트레이스 생성 — RAG 파이프라인 전체를 하나의 트레이스로 기록
+  const trace = createTrace({
+    name: 'rag-query',
+    input: question.trim(),
+    metadata: { provider, stream, topK, useQueryRewrite, useHyDE, useMorpheme },
+    userId: user,
+    tags: ['rag', provider],
+  });
+
   try {
     // 문서 필터: docIds(배열) 우선, docId(단일) 하위 호환
     const resolvedDocIds = Array.isArray(docIds) && docIds.length > 0
@@ -48,6 +58,13 @@ module.exports = async (req, res) => {
     const onProgress = stream ? (progress) => {
       try { sseWrite(res, { type: 'enhancement', ...progress }); } catch {}
     } : null;
+
+    // 검색 단계 스팬
+    const searchSpan = createSpan(trace, {
+      name: 'multi-hop-search',
+      input: question.trim(),
+      metadata: { topK, docIds: resolvedDocIds, useQueryRewrite, useHyDE },
+    });
 
     // 1) 멀티홉 검색 (쿼리 리라이팅 + HyDE 포함)
     console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..." (${provider}, rewrite:${useQueryRewrite}, hyde:${useHyDE})`);
@@ -67,7 +84,13 @@ module.exports = async (req, res) => {
     const enh = searchResult.enhancement || {};
     console.log(`[RAG] ${sources.length}개 근거 자료 검색 (${searchResult.hops}홉${searchResult.crossRefs ? ', 교차참조: ' + searchResult.crossRefs.length + '건' : ''}${enh.queryRewrite ? ', 리라이팅: ' + enh.queryRewrite.timing + 'ms' : ''}${enh.hyde ? ', HyDE: ' + enh.hyde.timing + 'ms' : ''})`);
 
+    // 검색 스팬 종료
+    endSpan(searchSpan, {
+      output: { sourcesCount: sources.length, hops: searchResult.hops },
+    });
+
     if (sources.length === 0) {
+      await finalizeTrace(trace, { output: '관련 문서 없음' });
       return res.json({
         question: question.trim(),
         answer: '관련된 문서를 찾을 수 없습니다. 먼저 관련 법령이나 문서를 임포트해주세요.',
@@ -134,12 +157,13 @@ ${historyText}
 --- 현재 질문 ---
 ${question.trim()}`;
 
-    // 3) LLM 호출 옵션
+    // 3) LLM 호출 옵션 (LangFuse 트레이스 컨텍스트 포함)
     const callOpts = {
       provider,
       temperature: llmOptions.temperature ?? 0.3,
       maxTokens: llmOptions.maxTokens ?? 3072,
       _endpoint: 'rag',
+      _langfuseParent: trace,  // LangFuse: LLM 호출을 이 트레이스 아래에 기록
     };
     if (llmOptions.model) callOpts.model = llmOptions.model;
     if (llmOptions.thinkingBudget) callOpts.thinkingBudget = llmOptions.thinkingBudget;
@@ -187,6 +211,7 @@ ${question.trim()}`;
         const parsed = parseRAGOutput(accumulated, sources);
         sseWrite(res, { type: 'parsed', parsed });
         sseWrite(res, { type: 'done' });
+        await finalizeTrace(trace, { output: parsed.conclusion || accumulated.substring(0, 300) });
       } catch (streamErr) {
         console.warn(`[RAG] 스트리밍 실패, 일반 모드로 fallback:`, streamErr.message);
         // 스트리밍 실패 시 일반 호출로 fallback
@@ -207,6 +232,12 @@ ${question.trim()}`;
       const parsed = parseRAGOutput(answer, sources);
       console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자, ${searchResult.hops}홉, 파싱: ${parsed.format}${parsed.warnings.length > 0 ? ', 경고: ' + parsed.warnings.length : ''})`);
 
+      // LangFuse 트레이스 종료
+      await finalizeTrace(trace, {
+        output: parsed.conclusion || answer.substring(0, 300),
+        metadata: { hops: searchResult.hops, sourcesCount: sources.length, format: parsed.format },
+      });
+
       res.json({
         question: question.trim(),
         answer: parsed.raw,
@@ -219,6 +250,7 @@ ${question.trim()}`;
       });
     }
   } catch (err) {
+    await finalizeTrace(trace, { output: `ERROR: ${err.message}` });
     sendError(res, err, '[RAG]');
   }
 };

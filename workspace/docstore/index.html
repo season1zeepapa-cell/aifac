@@ -7555,6 +7555,7 @@
         { id: 'deidentify', label: '비식별화' },
         { id: 'categories', label: '카테고리' },
         { id: 'chunk-presets', label: '분할 설정' },
+        { id: 'observability', label: '관측성' },
       ];
 
       const ocrStatusBadge = (engine) => {
@@ -8103,6 +8104,165 @@
           {/* ════════ 분할 설정 탭 ════════ */}
           {subTab === 'chunk-presets' && (
             <ChunkPresetPanel />
+          )}
+
+          {/* ════════ 관측성 (LangFuse) 탭 ════════ */}
+          {subTab === 'observability' && (
+            <ObservabilityPanel />
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 관측성 (LangFuse) 패널
+    // ========================================
+    function ObservabilityPanel() {
+      // LangFuse 상태 확인
+      const [status, setStatus] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      // 상태 조회
+      const checkStatus = useCallback(async () => {
+        setLoading(true);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/observability`);
+          if (res.ok) {
+            const data = await res.json();
+            setStatus(data);
+          } else {
+            setStatus({ enabled: false, error: '상태 조회 실패' });
+          }
+        } catch (err) {
+          setStatus({ enabled: false, error: err.message });
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => { checkStatus(); }, [checkStatus]);
+
+      return (
+        <div className="space-y-4">
+          {/* LangFuse 연동 상태 */}
+          <Card>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-text">LangFuse 관측성</h3>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    LLM 호출을 추적하고 시각화하는 외부 관측성 도구입니다.
+                  </p>
+                </div>
+                <button onClick={checkStatus} disabled={loading}
+                  className="text-xs px-2 py-1 rounded bg-border/50 hover:bg-border text-text-secondary">
+                  {loading ? '확인 중...' : '새로고침'}
+                </button>
+              </div>
+
+              {/* 연동 상태 표시 */}
+              {status && (
+                <div className={`p-3 rounded-lg border ${
+                  status.enabled
+                    ? 'bg-green-50 border-green-200'
+                    : 'bg-amber-50 border-amber-200'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${status.enabled ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+                    <span className={`text-sm font-medium ${status.enabled ? 'text-green-700' : 'text-amber-700'}`}>
+                      {status.enabled ? 'LangFuse 연동 활성' : 'LangFuse 미연동'}
+                    </span>
+                  </div>
+                  {status.enabled && status.baseUrl && (
+                    <p className="text-xs text-green-600 mt-1 ml-4">
+                      서버: {status.baseUrl}
+                    </p>
+                  )}
+                  {!status.enabled && (
+                    <p className="text-xs text-amber-600 mt-1 ml-4">
+                      환경변수를 설정하면 자동으로 활성화됩니다.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* 환경변수 안내 */}
+          <Card>
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold text-text">환경변수 설정</h3>
+              <p className="text-xs text-text-secondary">
+                Vercel 또는 .env 파일에 아래 환경변수를 추가하세요.
+                LangFuse Cloud(무료)는 <a href="https://cloud.langfuse.com" target="_blank"
+                  className="text-primary underline">cloud.langfuse.com</a>에서 가입 후 키를 발급받을 수 있습니다.
+              </p>
+              <div className="bg-gray-900 rounded-lg p-3 text-xs font-mono space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-green-400">LANGFUSE_PUBLIC_KEY</span>
+                  <span className="text-gray-500">=</span>
+                  <span className="text-amber-300">pk-lf-...</span>
+                  {status?.keys?.public && <span className="text-green-500 text-[10px]">(설정됨)</span>}
+                  {!status?.keys?.public && <span className="text-red-400 text-[10px]">(미설정)</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-green-400">LANGFUSE_SECRET_KEY</span>
+                  <span className="text-gray-500">=</span>
+                  <span className="text-amber-300">sk-lf-...</span>
+                  {status?.keys?.secret && <span className="text-green-500 text-[10px]">(설정됨)</span>}
+                  {!status?.keys?.secret && <span className="text-red-400 text-[10px]">(미설정)</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-green-400">LANGFUSE_BASE_URL</span>
+                  <span className="text-gray-500">=</span>
+                  <span className="text-amber-300">https://cloud.langfuse.com</span>
+                  <span className="text-gray-500 text-[10px]">(선택, 기본값)</span>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* 추적 대상 안내 */}
+          <Card>
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold text-text">추적 대상</h3>
+              <p className="text-xs text-text-secondary">
+                LangFuse가 활성화되면 아래 AI 호출이 자동으로 추적됩니다.
+              </p>
+              <div className="space-y-2">
+                {[
+                  { name: 'RAG 질의응답', desc: '검색 → LLM 답변 전체 파이프라인', icon: '🔍' },
+                  { name: 'LLM 호출', desc: 'Gemini, OpenAI, Claude 모든 프로바이더', icon: '🤖' },
+                  { name: '임베딩 생성', desc: 'OpenAI, Upstage, Cohere 임베딩', icon: '📊' },
+                  { name: '쿼리 강화', desc: '쿼리 리라이팅 + HyDE 가상 문서 생성', icon: '✨' },
+                ].map(item => (
+                  <div key={item.name} className="flex items-start gap-2 p-2 rounded-lg bg-bg">
+                    <span className="text-sm mt-0.5">{item.icon}</span>
+                    <div>
+                      <p className="text-xs font-medium text-text">{item.name}</p>
+                      <p className="text-[11px] text-text-secondary">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          {/* LangFuse 대시보드 링크 */}
+          {status?.enabled && (
+            <Card>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-text">LangFuse 대시보드</h3>
+                  <p className="text-xs text-text-secondary">트레이스, 비용, 지연시간을 시각적으로 확인하세요.</p>
+                </div>
+                <a href={status.baseUrl || 'https://cloud.langfuse.com'}
+                  target="_blank" rel="noopener noreferrer"
+                  className="px-3 py-1.5 text-xs font-medium bg-primary text-white rounded-lg hover:bg-primary/90">
+                  대시보드 열기 →
+                </a>
+              </div>
+            </Card>
           )}
         </div>
       );

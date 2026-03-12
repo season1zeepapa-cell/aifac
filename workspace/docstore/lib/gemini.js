@@ -4,6 +4,7 @@
 // callLLM/callLLMStream 호출 시 api-tracker를 통해 자동으로 사용량 DB 기록
 const https = require('https');
 const { trackUsage, isCreditError, updateKeyStatus } = require('./api-tracker');
+const { trackLLMCall } = require('./langfuse');
 
 // ── 프로바이더별 모델 설정 ──
 const GEMINI_MODEL = 'gemini-2.5-flash';
@@ -240,6 +241,15 @@ async function callLLM(prompt, options = {}) {
   const usage = {};
   options._usage = usage;
 
+  // LangFuse 트레이스 연동 — options._langfuseParent가 있으면 해당 스팬 아래에 기록
+  const lf = trackLLMCall(options._langfuseParent || null, {
+    name: endpoint,
+    model: `${provider}/${model}`,
+    provider,
+    input: prompt.substring(0, 500) + (prompt.length > 500 ? '...' : ''),
+    modelParameters: { temperature: options.temperature, maxTokens: options.maxTokens },
+  });
+
   try {
     let result;
     switch (provider) {
@@ -257,6 +267,13 @@ async function callLLM(prompt, options = {}) {
       status: 'success',
     }).catch(() => {});
 
+    // LangFuse 기록
+    lf.end({
+      output: result.substring(0, 500) + (result.length > 500 ? '...' : ''),
+      tokensIn: usage.tokensIn || 0,
+      tokensOut: usage.tokensOut || 0,
+    });
+
     return result;
   } catch (err) {
     // 에러 시에도 기록
@@ -271,6 +288,9 @@ async function callLLM(prompt, options = {}) {
     if (creditExhausted) {
       updateKeyStatus(provider, { isActive: false, lastError: err.message }).catch(() => {});
     }
+
+    // LangFuse 에러 기록
+    lf.end({ error: err.message });
 
     throw err;
   }
@@ -503,6 +523,15 @@ async function callLLMStream(prompt, options = {}, onToken) {
   const endpoint = options._endpoint || 'llm-stream';
   const startTime = Date.now();
 
+  // LangFuse 트레이스 연동
+  const lf = trackLLMCall(options._langfuseParent || null, {
+    name: `${endpoint}-stream`,
+    model: `${provider}/${model}`,
+    provider,
+    input: prompt.substring(0, 500) + (prompt.length > 500 ? '...' : ''),
+    modelParameters: { temperature: options.temperature, maxTokens: options.maxTokens, stream: true },
+  });
+
   // 출력 토큰 추정용 — 콜백을 감싸서 글자 수 집계
   let outputChars = 0;
   const wrappedOnToken = (token) => {
@@ -528,6 +557,9 @@ async function callLLMStream(prompt, options = {}, onToken) {
       tokensOut: estimatedOut,
       status: 'success',
     }).catch(() => {});
+
+    // LangFuse 기록
+    lf.end({ tokensIn: estimatedIn, tokensOut: estimatedOut });
   } catch (err) {
     const creditExhausted = isCreditError(err);
     trackUsage({
@@ -539,6 +571,9 @@ async function callLLMStream(prompt, options = {}, onToken) {
     if (creditExhausted) {
       updateKeyStatus(provider, { isActive: false, lastError: err.message }).catch(() => {});
     }
+
+    // LangFuse 에러 기록
+    lf.end({ error: err.message });
 
     throw err;
   }

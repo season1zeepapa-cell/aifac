@@ -12,6 +12,7 @@ const OpenAI = require('openai');
 const { smartChunk } = require('./text-splitters');
 const { trackUsage } = require('./api-tracker');
 const { buildMorphemeTsvector } = require('./korean-tokenizer');
+const { trackEmbeddingCall } = require('./langfuse');
 
 // ── 임베딩 모델 정의 ──
 const EMBEDDING_MODELS = {

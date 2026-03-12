@@ -80,6 +80,10 @@ app.get('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
 app.post('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
 app.delete('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
 
+// ── /api/observability (GET) — LangFuse 관측성 상태 확인 ──
+const observabilityHandler = require('./api/observability');
+app.get('/api/observability', (req, res) => observabilityHandler(req, res));
+
 // ── /api/cross-references (GET, POST) — 교차 참조 매트릭스 ──
 const crossRefHandler = require('./api/cross-references');
 app.get('/api/cross-references', (req, res) => crossRefHandler(req, res));
