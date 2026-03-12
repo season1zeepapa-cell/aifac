@@ -10,17 +10,19 @@ const { query } = require('../lib/db');
 const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { sendError } = require('../lib/error-handler');
-const { checkConnection, runCypher } = require('../lib/neo4j');
-const {
-  buildKnowledgeGraphNeo4j,
-  getEntityGraphNeo4j,
-  findShortestPath,
-  findNeighbors,
-} = require('../lib/knowledge-graph-neo4j');
-const {
-  buildKnowledgeGraph,
-  getEntityGraph,
-} = require('../lib/knowledge-graph');
+const { buildKnowledgeGraph, getEntityGraph } = require('../lib/knowledge-graph');
+
+// Neo4j 모듈은 neo4j-driver 설치 실패 시 graceful 처리
+let neo4jMod, kgNeo4jMod, neo4jLoadError;
+try {
+  neo4jMod = require('../lib/neo4j');
+  kgNeo4jMod = require('../lib/knowledge-graph-neo4j');
+} catch (e) {
+  console.warn('[KG Neo4j] neo4j 모듈 로드 실패:', e.message);
+  neo4jLoadError = e.message;
+  neo4jMod = null;
+  kgNeo4jMod = null;
+}
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'GET, POST, DELETE, OPTIONS' })) return;
@@ -35,12 +37,16 @@ module.exports = async (req, res) => {
 
       // Neo4j 연결 상태 확인
       if (status === 'true') {
-        const connStatus = await checkConnection();
+        if (!neo4jMod) {
+          return res.json({ connected: false, message: `Neo4j 모듈 로드 실패: ${neo4jLoadError || '알 수 없음'}` });
+        }
+        const connStatus = await neo4jMod.checkConnection();
         return res.json(connStatus);
       }
 
       // Neo4j 그래프 조회
-      const graph = await getEntityGraphNeo4j({
+      if (!kgNeo4jMod) return res.json({ nodes: [], links: [], stats: {}, error: 'Neo4j 미설정' });
+      const graph = await kgNeo4jMod.getEntityGraphNeo4j({
         documentId: docId ? parseInt(docId, 10) : undefined,
         search: search || undefined,
       });
@@ -55,13 +61,15 @@ module.exports = async (req, res) => {
 
       // 최단 경로 탐색
       if (pathMode && from && to) {
-        const result = await findShortestPath(from, to, id);
+        if (!kgNeo4jMod) return res.json({ found: false, error: 'Neo4j 미설정' });
+        const result = await kgNeo4jMod.findShortestPath(from, to, id);
         return res.json(result);
       }
 
       // 이웃 탐색
       if (neighbors) {
-        const result = await findNeighbors(neighbors, id, hops || 2);
+        if (!kgNeo4jMod) return res.json({ nodes: [], error: 'Neo4j 미설정' });
+        const result = await kgNeo4jMod.findNeighbors(neighbors, id, hops || 2);
         return res.json(result);
       }
 
@@ -77,8 +85,9 @@ module.exports = async (req, res) => {
         // Neo4j 구축 (타이밍)
         let neo4jStats, neo4jTiming, neo4jError;
         try {
+          if (!kgNeo4jMod) throw new Error('Neo4j 모듈 미설정');
           const neo4jStart = Date.now();
-          neo4jStats = await buildKnowledgeGraphNeo4j(query, id);
+          neo4jStats = await kgNeo4jMod.buildKnowledgeGraphNeo4j(query, id);
           neo4jTiming = Date.now() - neo4jStart;
         } catch (err) {
           neo4jError = err.message;
@@ -93,8 +102,9 @@ module.exports = async (req, res) => {
         // Neo4j 조회 타이밍
         let neo4jGraph, neo4jQueryTiming;
         try {
+          if (!kgNeo4jMod) throw new Error('Neo4j 모듈 미설정');
           const neo4jQueryStart = Date.now();
-          neo4jGraph = await getEntityGraphNeo4j({ documentId: id });
+          neo4jGraph = await kgNeo4jMod.getEntityGraphNeo4j({ documentId: id });
           neo4jQueryTiming = Date.now() - neo4jQueryStart;
         } catch (err) {
           neo4jGraph = { nodes: [], links: [], stats: {} };
@@ -122,8 +132,9 @@ module.exports = async (req, res) => {
       }
 
       // Neo4j 단독 구축
+      if (!kgNeo4jMod) return res.status(500).json({ error: 'Neo4j 모듈 미설정' });
       console.log(`[KG Neo4j] 트리플 구축 시작: 문서 ${id}`);
-      const stats = await buildKnowledgeGraphNeo4j(query, id);
+      const stats = await kgNeo4jMod.buildKnowledgeGraphNeo4j(query, id);
       console.log(`[KG Neo4j] 완료: 엔티티 ${stats.entities.total}개, 트리플 ${stats.triples.total}개 (${stats.timing}ms)`);
 
       return res.json({ success: true, documentId: id, stats });
@@ -135,7 +146,8 @@ module.exports = async (req, res) => {
       if (!docId) return res.status(400).json({ error: 'docId가 필요합니다.' });
 
       const id = parseInt(docId, 10);
-      await runCypher(
+      if (!neo4jMod) return res.status(500).json({ error: 'Neo4j 모듈 미설정' });
+      await neo4jMod.runCypher(
         'MATCH (e:Entity {documentId: $docId}) DETACH DELETE e',
         { docId: id }
       );
