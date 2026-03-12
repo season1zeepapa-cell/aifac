@@ -1,8 +1,9 @@
 // 멀티홉 RAG 검색 엔진
-// 1차 하이브리드 검색 → 참조 추출 → 2차 벡터 검색 → 병합/중복제거/재순위화(Cohere Rerank)
+// 쿼리 리라이팅 → HyDE → 1차 하이브리드 검색 → 참조 추출 → 2차 벡터 검색 → 병합/중복제거/재순위화
 const { generateEmbedding } = require('./embeddings');
-const { hybridSearch } = require('./hybrid-search');
+const { hybridSearch, vectorSearch: hvVectorSearch, ftsSearch } = require('./hybrid-search');
 const { rerankResults } = require('./reranker');
+const { rewriteQuery, generateHyDE, blendEmbeddings } = require('./query-enhancer');
 
 /**
  * 청크 텍스트에서 법령 교차 참조를 추출
@@ -40,31 +41,108 @@ function extractCrossReferences(chunks) {
 }
 
 /**
- * 멀티홉 RAG 검색
+ * 멀티홉 RAG 검색 (쿼리 리라이팅 + HyDE 통합)
  * @param {Function} dbQuery - DB 쿼리 함수
  * @param {string} question - 사용자 질문
- * @param {Object} options - { topK, docIds }
- * @returns {{ sources: Array, hops: number }}
+ * @param {Object} options - { topK, docIds, orgId, useQueryRewrite, useHyDE, provider, history, onProgress }
+ * @returns {{ sources: Array, hops: number, enhancement: Object }}
  */
 async function multiHopSearch(dbQuery, question, options = {}) {
-  const { topK = 5, docIds = [], orgId = null } = options;
+  const {
+    topK = 5, docIds = [], orgId = null,
+    useQueryRewrite = true, useHyDE = true,
+    provider = 'gemini', history = [],
+    onProgress = null,
+  } = options;
 
-  // ── 1차 검색: 하이브리드 검색 (벡터 + 전문검색 + RRF, 조직별 격리) ──
-  let hop1Chunks;
+  const enhancement = {
+    queryRewrite: null,
+    hyde: null,
+  };
+
+  // ── Phase 0: 쿼리 강화 (리라이팅 + HyDE 병렬 실행) ──
+  let searchQueries = [question]; // 검색에 사용할 쿼리 목록
+  let hydeEmbedding = null;       // HyDE 가상 문서 임베딩
+
+  const enhanceTasks = [];
+
+  if (useQueryRewrite) {
+    enhanceTasks.push(
+      rewriteQuery(question, { provider, history })
+        .then(result => {
+          enhancement.queryRewrite = result;
+          searchQueries = result.queries;
+          console.log(`[RAG Agent] 쿼리 리라이팅 (${result.timing}ms): "${question}" → ${result.queries.length}개 쿼리`);
+          if (onProgress) onProgress({ type: 'queryRewrite', data: result });
+        })
+    );
+  }
+
+  if (useHyDE) {
+    enhanceTasks.push(
+      generateHyDE(question, { provider })
+        .then(result => {
+          enhancement.hyde = result;
+          hydeEmbedding = result.embedding;
+          console.log(`[RAG Agent] HyDE (${result.timing}ms): 가상 문서 ${result.hypotheticalDoc ? result.hypotheticalDoc.length + '자' : '실패'}`);
+          if (onProgress) onProgress({ type: 'hyde', data: { timing: result.timing, docLength: result.hypotheticalDoc?.length || 0 } });
+        })
+    );
+  }
+
+  // 쿼리 리라이팅 + HyDE 병렬 실행
+  if (enhanceTasks.length > 0) {
+    await Promise.all(enhanceTasks);
+  }
+
+  // ── Phase 1: 1차 검색 (확장된 쿼리들로 검색) ──
+  let hop1Chunks = [];
+
   try {
-    hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds, orgId });
+    // 메인 쿼리: HyDE 임베딩이 있으면 블렌드, 없으면 원본
+    if (hydeEmbedding) {
+      // HyDE 블렌드 임베딩으로 벡터 검색 + 원본 질문으로 FTS 동시
+      const blendedEmbedding = await blendEmbeddings(question, hydeEmbedding);
+      const [vecResults, ftsResults] = await Promise.all([
+        hvVectorSearch(dbQuery, blendedEmbedding, { topK: topK * 2, docIds, orgId }),
+        ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId }),
+      ]);
+
+      // RRF 합산
+      const { rrfFusion } = require('./hybrid-search');
+      hop1Chunks = rrfFusion(vecResults, ftsResults, topK * 2);
+    } else {
+      // HyDE 없으면 기존 하이브리드 검색
+      hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds, orgId });
+    }
   } catch (err) {
-    // FTS 컬럼 미생성 등의 경우 기존 벡터 검색으로 fallback
-    console.warn('[RAG Agent] 하이브리드 검색 실패, 벡터 검색으로 fallback:', err.message);
-    const embedding = await generateEmbedding(question.trim());
+    console.warn('[RAG Agent] 1차 검색 실패, 벡터 검색 fallback:', err.message);
+    const embedding = hydeEmbedding || await generateEmbedding(question.trim());
     hop1Chunks = await vectorSearch(dbQuery, embedding, { topK, docIds });
   }
 
-  if (hop1Chunks.length === 0) {
-    return { sources: [], hops: 1 };
+  // 리라이팅된 추가 쿼리들로 보충 검색 (원본 질문 외 추가 쿼리가 있을 때)
+  if (searchQueries.length > 1) {
+    const additionalQueries = searchQueries.filter(q => q !== question).slice(0, 2);
+    for (const sq of additionalQueries) {
+      try {
+        const sqEmbedding = await generateEmbedding(sq);
+        const sqResults = await vectorSearch(dbQuery, sqEmbedding, {
+          topK: 3,
+          docIds,
+        });
+        hop1Chunks.push(...sqResults);
+      } catch (err) {
+        console.warn(`[RAG Agent] 추가 쿼리 검색 실패 (${sq}):`, err.message);
+      }
+    }
   }
 
-  // ── 참조 추출 ──
+  if (hop1Chunks.length === 0) {
+    return { sources: [], hops: 1, enhancement };
+  }
+
+  // ── Phase 2: 참조 추출 ──
   const crossRefs = extractCrossReferences(hop1Chunks);
 
   // ── DB 교차 참조 테이블에서 관련 섹션 가져오기 ──
@@ -81,13 +159,11 @@ async function multiHopSearch(dbQuery, question, options = {}) {
   }
 
   if (crossRefs.length === 0 && dbCrossRefChunks.length === 0) {
-    // 참조가 없어도 1차 결과에 Rerank 적용
     const reranked = await deduplicateAndRerank(hop1Chunks, question, topK);
-    return { sources: formatSources(reranked), hops: 1 };
+    return { sources: formatSources(reranked), hops: 1, enhancement };
   }
 
-  // ── 2차 검색: 추출된 참조를 쿼리로 추가 검색 ──
-  // 참조 쿼리 최대 3개 (토큰 절약)
+  // ── Phase 3: 2차 검색 (참조 추적) ──
   const refQueries = crossRefs.slice(0, 3);
   const hop2Chunks = [];
 
@@ -96,7 +172,7 @@ async function multiHopSearch(dbQuery, question, options = {}) {
       const refEmbedding = await generateEmbedding(refQuery);
       const results = await vectorSearch(dbQuery, refEmbedding, {
         topK: 3,
-        docIds: [], // 2차 검색은 전체 문서 대상 (타 법령 참조 대응)
+        docIds: [],
       });
       hop2Chunks.push(...results);
     } catch (err) {
@@ -104,7 +180,7 @@ async function multiHopSearch(dbQuery, question, options = {}) {
     }
   }
 
-  // ── 병합 + 중복 제거 + Cohere Rerank 재순위화 ──
+  // ── Phase 4: 병합 + 중복 제거 + Rerank ──
   const merged = await deduplicateAndRerank(
     [...hop1Chunks, ...hop2Chunks, ...dbCrossRefChunks],
     question,
@@ -115,6 +191,7 @@ async function multiHopSearch(dbQuery, question, options = {}) {
     sources: formatSources(merged),
     hops: 2,
     crossRefs: refQueries,
+    enhancement,
   };
 }
 

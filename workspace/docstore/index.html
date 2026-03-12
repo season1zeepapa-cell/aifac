@@ -6126,6 +6126,10 @@
       const [filterDocIds, setFilterDocIds] = useState([]);
       const [docList, setDocList] = useState([]);
       const [showSettings, setShowSettings] = useState(false);
+      // 쿼리 강화 옵션
+      const [useQueryRewrite, setUseQueryRewrite] = useState(true);
+      const [useHyDE, setUseHyDE] = useState(true);
+      const [enhancementInfo, setEnhancementInfo] = useState(null);
       // 근거자료 접기/펼치기 (메시지 인덱스별)
       const [expandedSources, setExpandedSources] = useState({});
       // F17: 대화 히스토리
@@ -6192,9 +6196,11 @@
           const history = chatMessages.map(m => ({ role: m.role, content: m.content }));
           // llmSettings에서 현재 프로바이더 설정을 가져와 전달
           const providerSettings = llmSettings[llmProvider] || {};
+          setEnhancementInfo(null);
           const body = {
             question: text, topK: 5, provider: llmProvider, history,
             stream: true,
+            useQueryRewrite, useHyDE,
             llmOptions: {
               model: providerSettings.model,
               temperature: providerSettings.temperature,
@@ -6232,12 +6238,17 @@
           setChatMessages(prev => [...prev, placeholderMsg]);
 
           for await (const event of parseSSE(res)) {
-            if (event.type === 'sources') {
+            if (event.type === 'enhancement') {
+              // 쿼리 강화 과정 실시간 수신
+              setEnhancementInfo(prev => ({ ...prev, [event.data?.type || event.type]: event.data || event }));
+            } else if (event.type === 'sources') {
               // 검색 결과 수신
               streamSources = event.sources || [];
               streamProvider = event.provider || llmProvider;
               streamHops = event.hops || 1;
               streamCrossRefs = event.crossRefs || [];
+              const streamEnhancement = event.enhancement || {};
+              if (event.enhancement) setEnhancementInfo(prev => ({ ...prev, ...event.enhancement }));
               // sources 정보 업데이트
               setChatMessages(prev => {
                 const updated = [...prev];
@@ -6246,6 +6257,7 @@
                 last.provider = streamProvider;
                 last.hops = streamHops;
                 last.crossRefs = streamCrossRefs;
+                last.enhancement = streamEnhancement;
                 updated[updated.length - 1] = last;
                 return updated;
               });
@@ -6469,6 +6481,28 @@
                   options={docList.map(d => ({ value: String(d.id), label: d.title }))}
                   placeholder="전체 문서"
                 />
+                {/* 쿼리 강화 옵션 */}
+                <div>
+                  <p className="text-xs text-text-secondary mb-2">검색 강화</p>
+                  <div className="flex flex-col gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <div className={`relative w-9 h-5 rounded-full transition-colors ${useQueryRewrite ? 'bg-primary' : 'bg-border'}`}
+                        onClick={() => setUseQueryRewrite(v => !v)}>
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useQueryRewrite ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-xs text-text">쿼리 리라이팅</span>
+                      <span className="text-[10px] text-text-secondary">(질문을 검색에 최적화)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <div className={`relative w-9 h-5 rounded-full transition-colors ${useHyDE ? 'bg-primary' : 'bg-border'}`}
+                        onClick={() => setUseHyDE(v => !v)}>
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useHyDE ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-xs text-text">HyDE</span>
+                      <span className="text-[10px] text-text-secondary">(가상 답변으로 검색 정확도 향상)</span>
+                    </label>
+                  </div>
+                </div>
               </div>
             </Card>
           )}
@@ -6523,6 +6557,18 @@
                           {msg.crossRefs && msg.crossRefs.length > 0 && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
                               교차참조 {msg.crossRefs.length}건
+                            </span>
+                          )}
+                          {msg.enhancement?.queryRewrite && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium"
+                              title={`리라이팅: ${(msg.enhancement.queryRewrite.queries || []).join(', ')}`}>
+                              리라이팅 {msg.enhancement.queryRewrite.timing}ms
+                            </span>
+                          )}
+                          {msg.enhancement?.hyde && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium"
+                              title={msg.enhancement.hyde.hypotheticalDoc ? `가상문서: ${msg.enhancement.hyde.hypotheticalDoc.substring(0, 100)}...` : ''}>
+                              HyDE {msg.enhancement.hyde.timing}ms
                             </span>
                           )}
                         </div>
@@ -6592,6 +6638,21 @@
                     </div>
                     <span className="text-xs text-text-secondary">답변 생성 중...</span>
                   </div>
+                  {enhancementInfo && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {enhancementInfo.queryRewrite && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">
+                          리라이팅 완료 ({enhancementInfo.queryRewrite.timing}ms)
+                          {enhancementInfo.queryRewrite.queries && `: ${enhancementInfo.queryRewrite.queries.slice(0, 2).join(', ')}`}
+                        </span>
+                      )}
+                      {enhancementInfo.hyde && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
+                          HyDE 완료 ({enhancementInfo.hyde.timing}ms)
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

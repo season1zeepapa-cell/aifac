@@ -29,7 +29,11 @@ module.exports = async (req, res) => {
 
   if (await checkRateLimit(req, res, 'rag')) return;
 
-  const { question, topK = 5, docId, docIds, provider = 'gemini', history = [], llmOptions = {}, stream = false } = req.body;
+  const {
+    question, topK = 5, docId, docIds,
+    provider = 'gemini', history = [], llmOptions = {}, stream = false,
+    useQueryRewrite = true, useHyDE = true,
+  } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
   }
@@ -40,16 +44,27 @@ module.exports = async (req, res) => {
       ? docIds.map(id => parseInt(id, 10))
       : docId ? [parseInt(docId, 10)] : [];
 
-    // 1) 멀티홉 검색
-    console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..." (${provider})`);
+    // SSE 스트리밍일 때 쿼리 강화 과정을 실시간 전송하는 콜백
+    const onProgress = stream ? (progress) => {
+      try { sseWrite(res, { type: 'enhancement', ...progress }); } catch {}
+    } : null;
+
+    // 1) 멀티홉 검색 (쿼리 리라이팅 + HyDE 포함)
+    console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..." (${provider}, rewrite:${useQueryRewrite}, hyde:${useHyDE})`);
     const searchResult = await multiHopSearch(query, question.trim(), {
       topK: Math.min(parseInt(topK, 10) || 5, 10),
       docIds: resolvedDocIds,
       orgId,
+      useQueryRewrite,
+      useHyDE,
+      provider,
+      history,
+      onProgress,
     });
 
     const sources = searchResult.sources;
-    console.log(`[RAG] ${sources.length}개 근거 자료 검색 (${searchResult.hops}홉${searchResult.crossRefs ? ', 교차참조: ' + searchResult.crossRefs.length + '건' : ''})`);
+    const enh = searchResult.enhancement || {};
+    console.log(`[RAG] ${sources.length}개 근거 자료 검색 (${searchResult.hops}홉${searchResult.crossRefs ? ', 교차참조: ' + searchResult.crossRefs.length + '건' : ''}${enh.queryRewrite ? ', 리라이팅: ' + enh.queryRewrite.timing + 'ms' : ''}${enh.hyde ? ', HyDE: ' + enh.hyde.timing + 'ms' : ''})`);
 
     if (sources.length === 0) {
       return res.json({
@@ -156,6 +171,7 @@ ${question.trim()}`;
         sources: sourcesData,
         hops: searchResult.hops,
         crossRefs: searchResult.crossRefs || [],
+        enhancement: searchResult.enhancement || {},
         provider,
       });
 
@@ -197,6 +213,7 @@ ${question.trim()}`;
         provider,
         hops: searchResult.hops,
         crossRefs: searchResult.crossRefs || [],
+        enhancement: searchResult.enhancement || {},
         sources: sourcesData,
       });
     }
