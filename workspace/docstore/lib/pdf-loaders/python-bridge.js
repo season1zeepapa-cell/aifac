@@ -100,9 +100,12 @@ function callPythonDirect(loaderId, pdfPath) {
  */
 async function callPythonViaApi(loaderId, pdfBuffer) {
   // Vercel 내부 호출 — 같은 배포 내의 Python 함수 호출
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3001';
+  // VERCEL_PROJECT_PRODUCTION_URL 사용 (Deployment Protection 우회)
+  // VERCEL_URL은 프리뷰 URL이라 Protection이 걸릴 수 있음
+  const host = process.env.VERCEL_PROJECT_PRODUCTION_URL
+    || process.env.VERCEL_URL
+    || null;
+  const baseUrl = host ? `https://${host}` : 'http://localhost:3001';
 
   const FormData = (await import('formdata-node')).FormData;
   const { Blob } = (await import('buffer'));
