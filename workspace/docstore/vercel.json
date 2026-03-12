@@ -25,6 +25,7 @@
     "api/pdf-loaders.js": { "maxDuration": 10 },
     "api/settings.js": { "maxDuration": 10 },
     "api/upload-url.js": { "maxDuration": 10 },
+    "api/split-preview.js": { "maxDuration": 10 },
     "api/pdf-python.py": { "runtime": "@vercel/python@4.6.0", "maxDuration": 300 }
   },
   "headers": [

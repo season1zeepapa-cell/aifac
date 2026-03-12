@@ -122,6 +122,10 @@ app.post('/api/settings', (req, res) => settingsHandler(req, res));
 const pdfLoadersHandler = require('./api/pdf-loaders');
 app.get('/api/pdf-loaders', (req, res) => pdfLoadersHandler(req, res));
 
+// ── POST /api/split-preview — 청크 분할 미리보기 ──
+const splitPreviewHandler = require('./api/split-preview');
+app.post('/api/split-preview', (req, res) => splitPreviewHandler(req, res));
+
 // ── POST /api/crawl — 사이트 게시판 크롤링 실행 ──
 const crawlHandler = require('./api/crawl');
 app.post('/api/crawl', (req, res) => crawlHandler(req, res));

@@ -171,7 +171,7 @@ function buildEnrichedText({
  * @param {string[]} docContext.tags - 태그 배열
  * @param {string[]} docContext.keywords - 키워드 배열
  */
-async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onProgress = null, chunkStrategy = 'sentence') {
+async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onProgress = null, chunkStrategy = 'sentence', chunkOptions = {}) {
   const { title = '', summary = '', category = '', tags = [], keywords = [] } = docContext;
 
   // 1) 문서의 모든 섹션 조회
@@ -194,8 +194,8 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
       const sectionMeta = section.metadata || {};
       const sectionSummary = section.summary || '';
 
-      // 2) 전략에 따라 원문 청크 분할
-      const chunks = await smartChunk(section.raw_text, chunkStrategy);
+      // 2) 전략에 따라 원문 청크 분할 (사용자 설정 chunkSize/overlap 반영)
+      const chunks = await smartChunk(section.raw_text, chunkStrategy, chunkOptions);
       if (chunks.length === 0) return [];
 
       // 3) 각 청크에 맥락 정보 추가 → enriched text 생성
@@ -284,7 +284,7 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
  * @param {string} [label] - 로그 라벨 (예: 'Upload', 'URL Import')
  * @returns {Promise<{ status: string, totalChunks?: number, error?: string }>}
  */
-async function createEmbeddingsForDocument(db, documentId, label = 'Embed', chunkStrategy = 'sentence') {
+async function createEmbeddingsForDocument(db, documentId, label = 'Embed', chunkStrategy = 'sentence', chunkOptions = {}) {
   try {
     let totalChunks = 0;
     const savedSections = await db.query(
@@ -295,8 +295,8 @@ async function createEmbeddingsForDocument(db, documentId, label = 'Embed', chun
     for (const section of savedSections.rows) {
       if (!section.raw_text || section.raw_text.trim().length === 0) continue;
 
-      // 전략에 따라 청크 분할 (smartChunk는 async)
-      const chunks = await smartChunk(section.raw_text, chunkStrategy);
+      // 전략에 따라 청크 분할 (사용자 설정 chunkSize/overlap 반영)
+      const chunks = await smartChunk(section.raw_text, chunkStrategy, chunkOptions);
       if (chunks.length === 0) continue;
 
       const embeddings = await generateEmbeddings(chunks);

@@ -1055,9 +1055,55 @@
       const [dragOver, setDragOver] = useState(false);
       const [deidentify, setDeidentify] = useState(false); // 비식별화 토글
       const [chunkStrategy, setChunkStrategy] = useState('sentence'); // 청크 분할 전략
+      const [chunkSize, setChunkSize] = useState(500); // 청크 크기 (자)
+      const [chunkOverlap, setChunkOverlap] = useState(100); // 청크 겹침 (자)
+      const [splitPreview, setSplitPreview] = useState(null); // 분할 미리보기 결과
+      const [previewLoading, setPreviewLoading] = useState(false); // 미리보기 로딩
       const [pdfLoader, setPdfLoader] = useState('pdf-parse'); // PDF 로더 선택
       const [pdfLoaders, setPdfLoaders] = useState([]); // 사용 가능한 PDF 로더 목록
       const fileInputRef = useRef(null);
+
+      // ── 카테고리별 청크 프리셋 ──
+      const CHUNK_PRESETS = {
+        '법령':   { strategy: 'law-article', chunkSize: 800, overlap: 0 },
+        '규정':   { strategy: 'law-article', chunkSize: 800, overlap: 0 },
+        '기출':   { strategy: 'sentence',    chunkSize: 400, overlap: 50 },
+        '크롤링': { strategy: 'recursive',   chunkSize: 600, overlap: 100 },
+        '기타':   { strategy: 'recursive',   chunkSize: 500, overlap: 100 },
+      };
+
+      // 파일 확장자별 프리셋
+      const EXT_PRESETS = {
+        '.md':  { strategy: 'markdown',  chunkSize: 600, overlap: 50 },
+        '.csv': { strategy: 'sentence',  chunkSize: 300, overlap: 0 },
+        '.json': { strategy: 'sentence', chunkSize: 400, overlap: 0 },
+        '.xlsx': { strategy: 'sentence', chunkSize: 400, overlap: 0 },
+      };
+
+      // 카테고리 변경 시 프리셋 자동 적용
+      const applyCategoryPreset = useCallback((cat) => {
+        setCategory(cat);
+        // 저장된 프리셋 확인 (관리 탭에서 설정한 것 우선)
+        const saved = window.__chunkPresets?.[cat];
+        const preset = saved || CHUNK_PRESETS[cat];
+        if (preset) {
+          setChunkStrategy(preset.strategy);
+          setChunkSize(preset.chunkSize);
+          setChunkOverlap(preset.overlap);
+        }
+      }, []);
+
+      // 파일 변경 시 확장자별 프리셋 적용
+      useEffect(() => {
+        if (!file) return;
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        const extPreset = EXT_PRESETS[ext];
+        if (extPreset) {
+          setChunkStrategy(extPreset.strategy);
+          setChunkSize(extPreset.chunkSize);
+          setChunkOverlap(extPreset.overlap);
+        }
+      }, [file]);
 
       // ── 법령 검색 모드 state ──
       const [lawQuery, setLawQuery] = useState('');
@@ -1365,6 +1411,8 @@
             if (deidentify) metadata.deidentify = 'true';
             if (chunkStrategy && chunkStrategy !== 'sentence') metadata.chunkStrategy = chunkStrategy;
             if (pdfLoader && pdfLoader !== 'pdf-parse') metadata.pdfLoader = pdfLoader;
+            if (chunkSize !== 500) metadata.chunkSize = chunkSize;
+            if (chunkOverlap !== 100) metadata.chunkOverlap = chunkOverlap;
 
             data = await uploadProgress.uploadLarge(file, metadata, token);
           } else {
@@ -1381,6 +1429,8 @@
             if (deidentify) formData.append('deidentify', 'true');
             if (chunkStrategy && chunkStrategy !== 'sentence') formData.append('chunkStrategy', chunkStrategy);
             if (pdfLoader && pdfLoader !== 'pdf-parse') formData.append('pdfLoader', pdfLoader);
+            if (chunkSize !== 500) formData.append('chunkSize', String(chunkSize));
+            if (chunkOverlap !== 100) formData.append('chunkOverlap', String(chunkOverlap));
             data = await uploadProgress.upload(`${API_BASE_URL}/upload`, formData, token);
           }
 
@@ -1399,13 +1449,14 @@
         } finally {
           setUploading(false);
         }
-      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, deidentify, chunkStrategy, pdfLoader, onUploadComplete]);
+      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, deidentify, chunkStrategy, chunkSize, chunkOverlap, pdfLoader, onUploadComplete]);
 
       const handleReset = useCallback(() => {
         setFile(null); setFileType(null); setTitle(''); setCategory('기타');
         setSectionType('full'); setCustomDelimiter(''); setContentColumn('');
         setContentField(''); setContentType('general'); setPreviewInfo(null);
-        setDeidentify(false); setChunkStrategy('sentence'); setError(null); setResult(null);
+        setDeidentify(false); setChunkStrategy('sentence'); setChunkSize(500); setChunkOverlap(100);
+        setSplitPreview(null); setError(null); setResult(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }, []);
 
@@ -1575,7 +1626,7 @@
                     <Input label="제목" value={title} onChange={e => setTitle(e.target.value)} placeholder="문서 제목을 입력하세요" />
 
                     {/* 카테고리 */}
-                    <Select label="카테고리" value={category} onChange={e => setCategory(e.target.value)} options={catList} />
+                    <Select label="카테고리" value={category} onChange={e => applyCategoryPreset(e.target.value)} options={catList} />
 
                     {/* 형식별 추출 단위 (옵션이 2개 이상일 때만 표시) */}
                     {currentConfig.sectionOptions.length > 1 && (
@@ -1678,7 +1729,7 @@
                 </Card>
               )}
 
-              {/* 청크 분할 전략 선택 */}
+              {/* 청크 분할 전략 + 파라미터 설정 */}
               {file && (
                 <Card>
                   <div className="space-y-3">
@@ -1690,6 +1741,7 @@
                         { value: 'sentence', label: '문장 단위 — 마침표 기준 분할 (기본)' },
                         { value: 'recursive', label: '재귀적 분할 — 문단→줄→문장 계층 분할 (범용)' },
                         { value: 'law-article', label: '법령 조문 — 제N조/항/호 단위 (법령용)' },
+                        { value: 'markdown', label: 'Markdown 헤딩 — #/##/### 계층 분할 (MD용)' },
                         { value: 'semantic', label: 'AI 의미 분할 — 주제 변화 감지 (느림, AI 비용 발생)' },
                       ]}
                     />
@@ -1697,7 +1749,95 @@
                       {chunkStrategy === 'sentence' && '마침표·느낌표·물음표를 기준으로 문장을 묶어 분할합니다.'}
                       {chunkStrategy === 'recursive' && '문단 → 줄바꿈 → 문장 → 단어 순서로 계층적으로 분할합니다. 일반 문서에 가장 적합합니다.'}
                       {chunkStrategy === 'law-article' && '제N조, 제N조의N 패턴을 감지하여 조문 단위로 분할합니다. 법령/규정 문서에 최적화되어 있습니다.'}
+                      {chunkStrategy === 'markdown' && '#, ##, ### 헤딩 계층을 파싱하여 분할합니다. 각 청크에 상위 헤딩 컨텍스트가 포함됩니다.'}
                       {chunkStrategy === 'semantic' && '⚠️ AI(Gemini Flash)가 텍스트의 주제 변화를 감지하여 의미 단위로 분할합니다. 처리 시간이 길고 API 비용이 발생합니다.'}
+                    </div>
+
+                    {/* 청크 크기 슬라이더 */}
+                    <div>
+                      <label className="block text-xs font-medium text-text-primary mb-1">
+                        청크 크기: <span className="text-primary font-bold">{chunkSize}자</span>
+                      </label>
+                      <input type="range" min="200" max="2000" step="50" value={chunkSize}
+                        onChange={e => setChunkSize(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-border rounded-full appearance-none cursor-pointer accent-primary" />
+                      <div className="flex justify-between text-[10px] text-text-secondary mt-0.5">
+                        <span>200</span><span>500</span><span>1000</span><span>2000</span>
+                      </div>
+                    </div>
+
+                    {/* 겹침 크기 슬라이더 */}
+                    <div>
+                      <label className="block text-xs font-medium text-text-primary mb-1">
+                        겹침(overlap): <span className="text-primary font-bold">{chunkOverlap}자</span>
+                      </label>
+                      <input type="range" min="0" max="500" step="25" value={chunkOverlap}
+                        onChange={e => setChunkOverlap(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-border rounded-full appearance-none cursor-pointer accent-primary" />
+                      <div className="flex justify-between text-[10px] text-text-secondary mt-0.5">
+                        <span>0</span><span>100</span><span>250</span><span>500</span>
+                      </div>
+                    </div>
+
+                    {/* 분할 미리보기 버튼 + 결과 */}
+                    <div className="pt-1 border-t border-border">
+                      <button
+                        onClick={async () => {
+                          if (!file) return;
+                          setPreviewLoading(true);
+                          setSplitPreview(null);
+                          try {
+                            const text = await file.text();
+                            const res = await authFetch(`${API_BASE_URL}/split-preview`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                text: text.slice(0, 5000),
+                                strategy: chunkStrategy,
+                                chunkSize,
+                                overlap: chunkOverlap,
+                              }),
+                            });
+                            const data = await res.json();
+                            setSplitPreview(data);
+                          } catch (err) {
+                            console.error('[미리보기]', err);
+                          } finally {
+                            setPreviewLoading(false);
+                          }
+                        }}
+                        disabled={previewLoading}
+                        className="text-xs px-3 py-1.5 rounded-full bg-border hover:bg-primary hover:text-white text-text-secondary transition-colors"
+                      >
+                        {previewLoading ? '분석 중...' : '&#128065; 분할 미리보기'}
+                      </button>
+
+                      {splitPreview && (
+                        <div className="mt-2 space-y-2">
+                          <div className="flex gap-3 text-xs">
+                            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                              {splitPreview.totalChunks}개 청크
+                            </span>
+                            {splitPreview.distribution && (
+                              <>
+                                <span className="text-text-secondary">
+                                  평균 {splitPreview.distribution.avg}자
+                                </span>
+                                <span className="text-text-secondary">
+                                  {splitPreview.distribution.min}~{splitPreview.distribution.max}자
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {splitPreview.preview?.map((p, i) => (
+                            <div key={i} className="text-[11px] bg-bg p-2 rounded border border-border">
+                              <span className="text-primary font-medium">#{p.index + 1}</span>
+                              <span className="text-text-secondary ml-1">({p.length}자)</span>
+                              <p className="text-text mt-1 whitespace-pre-wrap break-all">{p.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -5917,6 +6057,151 @@
     // ========================================
     // 카테고리 관리 패널
     // ========================================
+    // ========================================
+    // 카테고리별 분할 프리셋 관리 패널
+    // ========================================
+    function ChunkPresetPanel() {
+      const { categories } = React.useContext(CategoriesContext);
+      const [presets, setPresets] = useState({});
+      const [loading, setLoading] = useState(true);
+      const [saving, setSaving] = useState(false);
+      const [message, setMessage] = useState(null);
+
+      const STRATEGY_OPTIONS = [
+        { value: 'sentence', label: '문장 단위' },
+        { value: 'recursive', label: '재귀적 분할' },
+        { value: 'law-article', label: '법령 조문' },
+        { value: 'markdown', label: 'Markdown 헤딩' },
+        { value: 'semantic', label: 'AI 의미 분할' },
+      ];
+
+      // 기본 프리셋
+      const DEFAULT_PRESETS = {
+        '법령':   { strategy: 'law-article', chunkSize: 800, overlap: 0 },
+        '규정':   { strategy: 'law-article', chunkSize: 800, overlap: 0 },
+        '기출':   { strategy: 'sentence',    chunkSize: 400, overlap: 50 },
+        '크롤링': { strategy: 'recursive',   chunkSize: 600, overlap: 100 },
+        '기타':   { strategy: 'recursive',   chunkSize: 500, overlap: 100 },
+      };
+
+      // 서버에서 저장된 프리셋 로드
+      const fetchPresets = useCallback(async () => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/settings?key=chunk_presets`);
+          const data = await res.json();
+          const saved = data.value || {};
+          // 각 카테고리별로 저장된 값 또는 기본값 사용
+          const merged = {};
+          for (const cat of categories) {
+            merged[cat.value] = saved[cat.value] || DEFAULT_PRESETS[cat.value] || { strategy: 'recursive', chunkSize: 500, overlap: 100 };
+          }
+          setPresets(merged);
+          // 전역 변수에도 저장 (UploadTab에서 참조)
+          window.__chunkPresets = merged;
+        } catch (err) {
+          console.error('[분할 프리셋]', err);
+        } finally {
+          setLoading(false);
+        }
+      }, [categories]);
+
+      useEffect(() => { fetchPresets(); }, [fetchPresets]);
+
+      // 개별 카테고리 프리셋 변경
+      const updatePreset = (catValue, field, value) => {
+        setPresets(prev => ({
+          ...prev,
+          [catValue]: { ...prev[catValue], [field]: value },
+        }));
+      };
+
+      // 전체 저장
+      const handleSave = async () => {
+        setSaving(true);
+        setMessage(null);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'chunk_presets', value: presets }),
+          });
+          if (!res.ok) throw new Error('저장 실패');
+          window.__chunkPresets = presets;
+          setMessage({ type: 'success', text: '분할 설정이 저장되었습니다.' });
+        } catch (err) {
+          setMessage({ type: 'error', text: err.message });
+        } finally {
+          setSaving(false);
+          setTimeout(() => setMessage(null), 3000);
+        }
+      };
+
+      if (loading) return <div className="text-center py-8 text-text-secondary text-sm">로딩 중...</div>;
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-text">카테고리별 기본 분할 설정</h3>
+              <p className="text-xs text-text-secondary mt-0.5">업로드 시 카테고리를 선택하면 이 설정이 자동 적용됩니다</p>
+            </div>
+            <button onClick={handleSave} disabled={saving}
+              className="px-4 py-2 rounded-lg text-xs font-medium bg-primary text-white hover:bg-primary/90 disabled:opacity-50 transition-colors">
+              {saving ? '저장 중...' : '전체 저장'}
+            </button>
+          </div>
+
+          {message && (
+            <div className={`text-xs px-3 py-2 rounded-lg ${message.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'}`}>
+              {message.text}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {categories.map(cat => {
+              const preset = presets[cat.value] || {};
+              return (
+                <Card key={cat.value} className="border-border">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-text">{cat.label}</span>
+                      <span className="text-[10px] text-text-secondary bg-border px-2 py-0.5 rounded-full">
+                        {preset.strategy || 'recursive'} / {preset.chunkSize || 500}자 / 겹침 {preset.overlap ?? 100}자
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-text-secondary mb-0.5">전략</label>
+                        <select value={preset.strategy || 'recursive'}
+                          onChange={e => updatePreset(cat.value, 'strategy', e.target.value)}
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-border bg-bg text-text">
+                          {STRATEGY_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-text-secondary mb-0.5">청크 크기</label>
+                        <input type="number" min="200" max="2000" step="50"
+                          value={preset.chunkSize || 500}
+                          onChange={e => updatePreset(cat.value, 'chunkSize', parseInt(e.target.value) || 500)}
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-border bg-bg text-text" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-text-secondary mb-0.5">겹침</label>
+                        <input type="number" min="0" max="500" step="25"
+                          value={preset.overlap ?? 100}
+                          onChange={e => updatePreset(cat.value, 'overlap', parseInt(e.target.value) || 0)}
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-border bg-bg text-text" />
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
     function CategoryPanel() {
       const { categories, reload } = React.useContext(CategoriesContext);
       const [items, setItems] = useState([]);
@@ -6327,6 +6612,7 @@
         { id: 'ocr', label: 'OCR 설정' },
         { id: 'deidentify', label: '비식별화' },
         { id: 'categories', label: '카테고리' },
+        { id: 'chunk-presets', label: '분할 설정' },
       ];
 
       const ocrStatusBadge = (engine) => {
@@ -6865,6 +7151,11 @@
           {/* ════════ 카테고리 관리 탭 ════════ */}
           {subTab === 'categories' && (
             <CategoryPanel />
+          )}
+
+          {/* ════════ 분할 설정 탭 ════════ */}
+          {subTab === 'chunk-presets' && (
+            <ChunkPresetPanel />
           )}
         </div>
       );

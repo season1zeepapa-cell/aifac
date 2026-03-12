@@ -1,10 +1,11 @@
 // Text Splitter 엔진 모듈
-// 4가지 청크 분할 전략을 제공합니다.
+// 5가지 청크 분할 전략을 제공합니다.
 //
 // 1) sentence   — 기존 문장 단위 분할 (기본값)
 // 2) recursive  — LangChain 스타일 재귀적 문자 분할
 // 3) law-article — 법령 조/항/호 단위 분할
 // 4) semantic   — AI 기반 의미 단위 분할 (Gemini Flash 사용)
+// 5) markdown   — Markdown 헤딩(#) 계층 구조 기반 분할
 
 const { callLLM } = require('./gemini');
 
@@ -299,6 +300,91 @@ ${text}
 }
 
 // ============================================================
+// 5) Markdown 헤딩 기반 분할 (MarkdownHeaderTextSplitter)
+//    #, ##, ### 등 헤딩 계층을 파싱하여 분할하고,
+//    각 청크에 상위 헤딩 메타데이터를 부착합니다.
+//    → Enriched 임베딩에서 [장][절][조항] 메타데이터로 활용됨
+// ============================================================
+function markdownHeaderChunk(text, chunkSize = 600, overlap = 50) {
+  if (!text || text.trim().length === 0) return [];
+
+  // 헤딩 패턴: # ~ ####
+  const lines = text.split('\n');
+  const sections = [];
+  let currentHeaders = {}; // { 1: 'h1 텍스트', 2: 'h2 텍스트', ... }
+  let currentContent = [];
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+
+    if (headingMatch) {
+      // 이전 섹션 저장
+      if (currentContent.length > 0) {
+        const contentText = currentContent.join('\n').trim();
+        if (contentText) {
+          sections.push({
+            text: contentText,
+            metadata: { ...currentHeaders },
+          });
+        }
+        currentContent = [];
+      }
+
+      // 헤딩 레벨 업데이트
+      const level = headingMatch[1].length;
+      const headerText = headingMatch[2].trim();
+      currentHeaders[level] = headerText;
+
+      // 하위 레벨 헤딩 초기화 (상위 헤딩이 바뀌면 하위도 리셋)
+      for (let l = level + 1; l <= 4; l++) {
+        delete currentHeaders[l];
+      }
+    } else {
+      currentContent.push(line);
+    }
+  }
+
+  // 마지막 섹션 저장
+  if (currentContent.length > 0) {
+    const contentText = currentContent.join('\n').trim();
+    if (contentText) {
+      sections.push({
+        text: contentText,
+        metadata: { ...currentHeaders },
+      });
+    }
+  }
+
+  // 헤딩이 감지되지 않으면 → 재귀 분할로 fallback
+  if (sections.length <= 1 && Object.keys(sections[0]?.metadata || {}).length === 0) {
+    return recursiveChunk(text, chunkSize, overlap);
+  }
+
+  // 각 섹션을 chunkSize 이내로 분할 (큰 섹션은 재귀 분할)
+  const chunks = [];
+  for (const section of sections) {
+    // 헤딩 컨텍스트를 접두어로 생성
+    const headerPrefix = Object.keys(section.metadata)
+      .sort((a, b) => a - b)
+      .map(level => section.metadata[level])
+      .join(' > ');
+    const prefix = headerPrefix ? `[${headerPrefix}]\n` : '';
+
+    if (section.text.length + prefix.length <= chunkSize) {
+      chunks.push(prefix + section.text);
+    } else {
+      // 큰 섹션은 재귀 분할 후 각 청크에 헤딩 접두어 부착
+      const subChunks = recursiveChunk(section.text, chunkSize - prefix.length, overlap);
+      for (const sub of subChunks) {
+        chunks.push(prefix + sub);
+      }
+    }
+  }
+
+  return chunks;
+}
+
+// ============================================================
 // 전략 디스패처: 전략 이름에 따라 적절한 분할 함수를 호출
 // ============================================================
 
@@ -324,6 +410,9 @@ async function smartChunk(text, strategy = 'sentence', options = {}) {
 
     case 'semantic':
       return semanticChunk(text, chunkSize || 800);
+
+    case 'markdown':
+      return markdownHeaderChunk(text, chunkSize || 600, overlap);
 
     case 'sentence':
     default:
@@ -359,6 +448,12 @@ const STRATEGIES = {
     icon: 'AI',
     aiRequired: true,
   },
+  markdown: {
+    name: 'Markdown 헤딩',
+    description: '#/##/### 헤딩 계층 구조를 유지하며 분할합니다. Markdown 문서에 최적화되어 있습니다.',
+    icon: 'MD',
+    aiRequired: false,
+  },
 };
 
 module.exports = {
@@ -366,6 +461,7 @@ module.exports = {
   recursiveChunk,
   lawArticleChunk,
   semanticChunk,
+  markdownHeaderChunk,
   smartChunk,
   STRATEGIES,
 };

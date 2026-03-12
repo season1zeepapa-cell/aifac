@@ -837,6 +837,7 @@ workspace/docstore/
 | 2026-03-12 | ANALYSIS2.md 최신화 — 크롤링 기능/DB/테스트/파일구조/환경변수 반영 |
 | 2026-03-12 | PDF 로더 플러그인 시스템 구현 계획 추가 |
 | 2026-03-12 | LangChain 기준 평가 코드베이스 진단 — 9개 항목 코드 근거 분석, Callbacks 상향(★2→★3), HNSW 인덱스 DB 실존 확인, 종합 4.0→4.1 상향, 12개 개선 로드맵 추가 |
+| 2026-03-12 | Text Splitters 튜닝 개선 계획 추가 — 5가지 개선안 (슬라이더/자동프리셋/MarkdownHeader/미리보기/관리탭), ★4→★5 로드맵 |
 
 ---
 
@@ -993,3 +994,225 @@ extracted = await extractFromPdf(fileBuffer, {
 2. **API**: `GET /api/pdf-loaders` → 목록 + 가용성 확인
 3. **Vercel**: `npx vercel --prod` → Node.js 로더 정상 동작, Python 로더 `/api/pdf-python` 경유 확인
 4. **폴백**: Python 미설치 시 "미설치" 에러, API 키 없을 때 "키 필요" 상태 표시 확인
+
+---
+
+## 11. Text Splitters 튜닝 개선 계획
+
+> 작성일: 2026-03-12
+> 목적: 사용자가 문서 종류에 따라 텍스트 분할을 **직접 튜닝**할 수 있도록 UI/API 확장 + MarkdownHeader 전략 추가
+
+### 11-1. 현재 상태 진단
+
+| 항목 | 현재 | 문제점 |
+|------|------|--------|
+| **chunkSize** | 하드코딩 500/800 | 유저가 조절 불가 |
+| **overlap** | 하드코딩 100/0 | 유저가 조절 불가 |
+| **전략 선택** | 업로드 시 수동 4개 중 택1 | 문서 유형별 자동 추천 없음 |
+| **Markdown 분할** | 헤딩 기반 분할은 있으나 계층 메타데이터 미전달 | MarkdownHeaderTextSplitter 미구현 |
+| **미리보기** | 없음 | 분할 결과를 확인 못하고 업로드 |
+
+#### 현재 코드 (lib/text-splitters.js)
+
+```javascript
+// 4가지 전략 — 파라미터가 기본값으로 고정됨
+sentenceChunk(text, chunkSize=500, overlap=100)     // 마침표 기준
+recursiveChunk(text, chunkSize=500, overlap=100)     // 구분자 계층
+lawArticleChunk(text, chunkSize=800, overlap=0)      // 제N조 패턴
+semanticChunk(text, chunkSize=800)                   // AI 분할
+
+// smartChunk() 디스패처 — options.chunkSize, options.overlap 수신 가능하나 UI에서 전달 안 함
+async function smartChunk(text, strategy = 'sentence', options = {}) {
+  const { chunkSize = 500, overlap = 100 } = options;
+  // ...
+}
+```
+
+#### 현재 UI (index.html UploadTab)
+
+```javascript
+// 청크 전략 드롭다운만 존재 — chunkSize/overlap 조절 UI 없음
+const [chunkStrategy, setChunkStrategy] = useState('sentence');
+// formData.append('chunkStrategy', chunkStrategy) → api/upload.js 전달
+```
+
+---
+
+### 11-2. 개선안 5가지
+
+#### 개선안 ①: 업로드 UI에 파라미터 조절 슬라이더 추가
+
+가장 즉각적인 효과. 기존 `smartChunk()`의 `options`에 값을 전달하면 되므로 **백엔드 변경 최소**.
+
+```
+[청크 전략] ▼ 재귀적 분할
+[청크 크기] ━━━━━●━━━━━ 500자  (범위: 200~2000, step 50)
+[겹침 크기] ━━●━━━━━━━━ 100자  (범위: 0~500, step 25)
+[미리보기] 👁 클릭하면 첫 3개 청크 미리보기
+```
+
+**구현 범위:**
+- `index.html` UploadTab: 슬라이더 2개 (`chunkSize`, `overlap`) + 상태 변수
+- `api/upload.js`: `req.body.chunkSize`, `req.body.overlap` 수신 → `smartChunk()` 전달
+- `lib/embeddings.js`: `chunkStrategy`에 더해 `chunkOptions` 전달
+
+**수정 파일:** `index.html`, `api/upload.js`, `lib/embeddings.js`
+
+---
+
+#### 개선안 ②: 문서 유형별 자동 프리셋
+
+카테고리/파일 확장자에 따라 **최적 기본값을 자동 선택**하고, 유저가 오버라이드 가능.
+
+```javascript
+// 프론트엔드 프리셋 (index.html)
+const CHUNK_PRESETS = {
+  '법령':   { strategy: 'law-article', chunkSize: 800, overlap: 0 },
+  '규정':   { strategy: 'law-article', chunkSize: 800, overlap: 0 },
+  '기출':   { strategy: 'sentence',    chunkSize: 400, overlap: 50 },
+  '크롤링': { strategy: 'recursive',   chunkSize: 600, overlap: 100 },
+  '기타':   { strategy: 'recursive',   chunkSize: 500, overlap: 100 },
+};
+
+// 파일 확장자별 프리셋
+const EXT_PRESETS = {
+  '.md':  { strategy: 'markdown',  chunkSize: 600, overlap: 50 },
+  '.csv': { strategy: 'sentence',  chunkSize: 300, overlap: 0 },
+};
+```
+
+**동작 흐름:**
+1. 유저가 카테고리 선택 → 프리셋 자동 적용 (슬라이더 값 변경)
+2. 파일 드롭 시 확장자 감지 → 해당 프리셋으로 세팅
+3. 유저가 원하면 수동으로 오버라이드 가능 (슬라이더 직접 조작)
+
+**수정 파일:** `index.html` (프론트엔드만)
+
+---
+
+#### 개선안 ③: MarkdownHeaderTextSplitter 구현 (5번째 전략)
+
+Markdown 문서를 **헤딩(#, ##, ###) 계층 구조를 유지**하며 분할.
+
+```javascript
+// lib/text-splitters.js — 신규 함수
+function markdownHeaderChunk(text, chunkSize = 600, overlap = 50) {
+  // 헤딩 패턴 감지: #, ##, ###, ####
+  const headingPattern = /^(#{1,4})\s+(.+)$/gm;
+
+  // 각 청크에 상위 헤딩 메타데이터 부착
+  // 예: { text: "조문 내용...", metadata: { h1: "개인정보보호법", h2: "제1장 총칙", h3: "제1조(목적)" } }
+}
+```
+
+**입력 예시:**
+```markdown
+# 개인정보보호법
+## 제1장 총칙
+### 제1조(목적)
+이 법은 개인정보의 처리 및 보호에 관한 사항을...
+### 제2조(정의)
+"개인정보"란 살아 있는 개인에 관한 정보로서...
+## 제2장 개인정보 보호정책의 수립 등
+### 제7조(개인정보 보호위원회)
+```
+
+**출력 예시:**
+```
+청크 1: {
+  text: "제1조(목적)\n이 법은 개인정보의 처리 및 보호에 관한 사항을...",
+  metadata: { h1: "개인정보보호법", h2: "제1장 총칙", h3: "제1조(목적)" }
+}
+청크 2: {
+  text: "제2조(정의)\n\"개인정보\"란 살아 있는 개인에 관한 정보로서...",
+  metadata: { h1: "개인정보보호법", h2: "제1장 총칙", h3: "제2조(정의)" }
+}
+```
+
+**핵심 가치:** 검색 시 "이 청크가 어느 장/절/조에 속하는지" 메타데이터 → Enriched 임베딩에 자동 반영 → RAG 정확도 향상
+
+**수정 파일:** `lib/text-splitters.js`, `lib/embeddings.js` (메타데이터 활용), `index.html` (전략 옵션 추가)
+
+---
+
+#### 개선안 ④: 분할 미리보기 API
+
+업로드 전에 "이 설정으로 나누면 어떻게 되는지" 확인하는 기능.
+
+```
+POST /api/split-preview
+Body: { text: "...(첫 2000자)", strategy: "recursive", chunkSize: 500, overlap: 100 }
+Response: {
+  totalChunks: 12,
+  avgChunkSize: 423,
+  preview: ["청크1 내용...", "청크2 내용...", "청크3 내용..."],
+  distribution: { min: 120, max: 498, avg: 423 }
+}
+```
+
+**UI 연동:**
+- 업로드 폼에서 파라미터 변경 시 디바운스(500ms) 후 미리보기 API 호출
+- 결과를 업로드 폼 옆에 패널로 표시 (청크 수 + 평균 크기 + 미리보기 3개)
+- 유저가 파라미터를 **조절하면서 실시간으로 결과 확인** 가능
+
+**수정 파일:** `api/split-preview.js` (신규), `server.js`, `vercel.json`, `index.html`
+
+---
+
+#### 개선안 ⑤: 관리 탭에서 카테고리별 프리셋 저장
+
+현재 카테고리 관리 패널(CategoryPanel)처럼, **카테고리별 기본 분할 설정을 관리 탭에서 저장**.
+
+```
+[관리] > [분할 설정]
+┌─────────────────────────────────────┐
+│ 카테고리: 법령                        │
+│ 기본 전략: 법령 조문 단위  ▼           │
+│ 청크 크기: 800자                      │
+│ 겹침: 0자                            │
+│ [저장]                               │
+├─────────────────────────────────────┤
+│ 카테고리: 크롤링                      │
+│ 기본 전략: 재귀적 분할  ▼              │
+│ 청크 크기: 600자                      │
+│ 겹침: 100자                          │
+│ [저장]                               │
+└─────────────────────────────────────┘
+```
+
+**저장소:** 기존 `app_settings` 테이블에 `key='chunk_presets'`로 저장 (settings API 재사용)
+
+```javascript
+// 저장 형식 예시
+{
+  "법령":   { "strategy": "law-article", "chunkSize": 800, "overlap": 0 },
+  "규정":   { "strategy": "law-article", "chunkSize": 800, "overlap": 0 },
+  "기출":   { "strategy": "sentence",    "chunkSize": 400, "overlap": 50 },
+  "크롤링": { "strategy": "recursive",   "chunkSize": 600, "overlap": 100 },
+  "기타":   { "strategy": "recursive",   "chunkSize": 500, "overlap": 100 }
+}
+```
+
+**수정 파일:** `index.html` (ChunkPresetPanel 컴포넌트), `api/settings.js` (이미 구현됨, 재사용)
+
+---
+
+### 11-3. 구현 우선순위
+
+| 순서 | 개선안 | 난이도 | 효과 | 수정 파일 수 |
+|------|--------|--------|------|-------------|
+| **1** | ① 파라미터 슬라이더 | 낮음 | **높음** | 3개 |
+| **2** | ② 자동 프리셋 | 낮음 | **높음** | 1개 (프론트만) |
+| **3** | ④ 분할 미리보기 | 중간 | **높음** | 4개 |
+| **4** | ③ MarkdownHeader | 중간 | 중간 | 3개 |
+| **5** | ⑤ 관리 탭 프리셋 저장 | 낮음 | 중간 | 1개 |
+
+**최소 구현 (①+② 만으로 핵심 목표 달성):** 유저가 문서 종류에 따라 청크 크기/겹침/전략을 직접 조절 가능 + 카테고리 선택 시 최적값 자동 추천
+
+### 11-4. LangChain 대비 개선 후 예상 등급
+
+| 항목 | 현재 | 개선 후 |
+|------|------|---------|
+| Text Splitters | ★★★★☆ | ★★★★★ |
+
+**★5 달성 조건:** MarkdownHeaderTextSplitter 구현 + 사용자 튜닝 UI + 카테고리별 프리셋 자동 적용

@@ -101,6 +101,8 @@ module.exports = async function handler(req, res) {
 
         if (req.body.chunkStrategy) extraOptions.chunkStrategy = req.body.chunkStrategy;
         if (req.body.pdfLoader) extraOptions.pdfLoader = req.body.pdfLoader;
+        if (req.body.chunkSize) extraOptions.chunkSize = parseInt(req.body.chunkSize) || undefined;
+        if (req.body.chunkOverlap) extraOptions.chunkOverlap = parseInt(req.body.chunkOverlap);
         if (req.body.contentColumn) extraOptions.contentColumn = req.body.contentColumn;
         if (req.body.contentField) extraOptions.contentField = req.body.contentField;
         if (req.body.contentType) extraOptions.contentType = req.body.contentType;
@@ -129,6 +131,8 @@ module.exports = async function handler(req, res) {
 
       if (req.body.chunkStrategy) extraOptions.chunkStrategy = req.body.chunkStrategy;
       if (req.body.pdfLoader) extraOptions.pdfLoader = req.body.pdfLoader;
+      if (req.body.chunkSize) extraOptions.chunkSize = parseInt(req.body.chunkSize) || undefined;
+      if (req.body.chunkOverlap !== undefined) extraOptions.chunkOverlap = parseInt(req.body.chunkOverlap);
       if (req.body.contentColumn) extraOptions.contentColumn = req.body.contentColumn;
       if (req.body.contentField) extraOptions.contentField = req.body.contentField;
       if (req.body.contentType) extraOptions.contentType = req.body.contentType;
@@ -241,10 +245,13 @@ module.exports = async function handler(req, res) {
 
     console.log(`[Upload] 저장 완료: 문서 ID ${documentId}, ${sections.length}개 섹션`);
 
-    // 3) 임베딩 생성 (청크 분할 전략 전달)
+    // 3) 임베딩 생성 (청크 분할 전략 + 크기/겹침 옵션 전달)
     const chunkStrategy = extraOptions.chunkStrategy || 'sentence';
-    console.log(`[Upload] 청크 전략: ${chunkStrategy}`);
-    const embeddingResult = await createEmbeddingsForDocument({ query }, documentId, 'Upload', chunkStrategy);
+    const chunkOptions = {};
+    if (extraOptions.chunkSize) chunkOptions.chunkSize = extraOptions.chunkSize;
+    if (extraOptions.chunkOverlap !== undefined) chunkOptions.overlap = extraOptions.chunkOverlap;
+    console.log(`[Upload] 청크 전략: ${chunkStrategy}, 옵션: ${JSON.stringify(chunkOptions)}`);
+    const embeddingResult = await createEmbeddingsForDocument({ query }, documentId, 'Upload', chunkStrategy, chunkOptions);
 
     // 임시 Storage 파일 정리 (대용량 업로드 시)
     if (tempStoragePath) {
