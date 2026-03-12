@@ -107,22 +107,14 @@ async function callPythonViaApi(loaderId, pdfBuffer) {
     || null;
   const baseUrl = host ? `https://${host}` : 'http://localhost:3001';
 
-  const FormData = (await import('formdata-node')).FormData;
-  const { Blob } = (await import('buffer'));
-
+  // Node.js 18+ 내장 FormData/Blob 사용 (formdata-node는 Content-Type 미설정 이슈)
+  const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
   const formData = new FormData();
-  formData.set('file', new Blob([pdfBuffer], { type: 'application/pdf' }), 'document.pdf');
-  formData.set('loader', loaderId);
-
-  // Vercel Deployment Protection 우회 (내부 함수 간 호출)
-  const headers = {};
-  if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
-    headers['x-vercel-protection-bypass'] = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
-  }
+  formData.append('file', blob, 'document.pdf');
+  formData.append('loader', loaderId);
 
   const response = await fetch(`${baseUrl}/api/pdf-python`, {
     method: 'POST',
-    headers,
     body: formData,
   });
 
