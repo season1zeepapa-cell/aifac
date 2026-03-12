@@ -80,10 +80,12 @@ async function createTables() {
         raw_text TEXT,
         image_url TEXT,
         summary TEXT,
-        fts_vector tsvector
+        fts_vector tsvector,
+        fts_morpheme_vector tsvector
       )
     `);
     await query(`CREATE INDEX IF NOT EXISTS idx_sections_fts ON document_sections USING GIN (fts_vector)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_sections_fts_morpheme ON document_sections USING GIN (fts_morpheme_vector) WHERE fts_morpheme_vector IS NOT NULL`);
     console.log('   완료!\n');
 
     // ════════════════════════════════════════
@@ -98,10 +100,12 @@ async function createTables() {
         embedding vector(1536),
         chunk_index INT DEFAULT 0,
         enriched_text TEXT,
-        fts_vector tsvector
+        fts_vector tsvector,
+        fts_morpheme_vector tsvector
       )
     `);
     await query(`CREATE INDEX IF NOT EXISTS idx_chunks_fts ON document_chunks USING GIN (fts_vector)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_chunks_fts_morpheme ON document_chunks USING GIN (fts_morpheme_vector) WHERE fts_morpheme_vector IS NOT NULL`);
     try {
       await query(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)`);
     } catch (e) { /* 벡터 인덱스 생성 실패 무시 */ }
@@ -403,8 +407,111 @@ async function createTables() {
     console.log('   완료!\n');
 
     // ════════════════════════════════════════
+    // 14. api_usage + api_key_status (API 사용량 추적)
+    // ════════════════════════════════════════
+    console.log('14. api_usage / api_key_status 테이블 생성...');
+    await query(`
+      CREATE TABLE IF NOT EXISTS api_usage (
+        id SERIAL PRIMARY KEY,
+        provider VARCHAR(30) NOT NULL,
+        model VARCHAR(50) NOT NULL,
+        endpoint VARCHAR(100) NOT NULL,
+        tokens_in INT DEFAULT 0,
+        tokens_out INT DEFAULT 0,
+        cost_estimate NUMERIC(10,6) DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'success',
+        error_message TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_api_usage_created ON api_usage(created_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_api_usage_provider ON api_usage(provider, created_at)`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS api_key_status (
+        provider VARCHAR(30) PRIMARY KEY,
+        is_active BOOLEAN DEFAULT true,
+        last_checked TIMESTAMPTZ,
+        last_error TEXT,
+        daily_limit INT DEFAULT 0,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`
+      INSERT INTO api_key_status (provider, daily_limit) VALUES
+        ('openai', 500), ('anthropic', 50), ('gemini', 300)
+      ON CONFLICT (provider) DO NOTHING
+    `);
+    console.log('   완료!\n');
+
+    // ════════════════════════════════════════
+    // 15. app_settings (앱 설정 키-값)
+    // ════════════════════════════════════════
+    console.log('15. app_settings 테이블 생성...');
+    await query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('   완료!\n');
+
+    // ════════════════════════════════════════
+    // 16. ocr_engine_config (OCR 엔진 설정)
+    // ════════════════════════════════════════
+    console.log('16. ocr_engine_config 테이블 생성...');
+    await query(`
+      CREATE TABLE IF NOT EXISTS ocr_engine_config (
+        id SERIAL PRIMARY KEY,
+        engine_id VARCHAR(50) NOT NULL UNIQUE,
+        display_name VARCHAR(100) NOT NULL,
+        provider VARCHAR(50) NOT NULL,
+        is_enabled BOOLEAN DEFAULT true,
+        priority_order INT DEFAULT 99,
+        config JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`
+      INSERT INTO ocr_engine_config (engine_id, display_name, provider, is_enabled, priority_order) VALUES
+        ('upstage-ocr', 'Upstage OCR', 'upstage', true, 1),
+        ('gemini-vision', 'Gemini Vision', 'gemini', true, 2),
+        ('claude-vision', 'Claude Vision', 'anthropic', true, 3)
+      ON CONFLICT (engine_id) DO NOTHING
+    `);
+    console.log('   완료!\n');
+
+    // ════════════════════════════════════════
+    // 17. deidentify_words (비식별화 키워드)
+    // ════════════════════════════════════════
+    console.log('17. deidentify_words 테이블 생성...');
+    await query(`
+      CREATE TABLE IF NOT EXISTS deidentify_words (
+        id SERIAL PRIMARY KEY,
+        keyword TEXT NOT NULL UNIQUE,
+        replacement TEXT DEFAULT '***',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('   완료!\n');
+
+    // ════════════════════════════════════════
+    // 18. rate_limits (API 요청 제한)
+    // ════════════════════════════════════════
+    console.log('18. rate_limits 테이블 생성...');
+    await query(`
+      CREATE TABLE IF NOT EXISTS rate_limits (
+        key VARCHAR(255) PRIMARY KEY,
+        count INT DEFAULT 1,
+        window_start TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('   완료!\n');
+
+    // ════════════════════════════════════════
     console.log('══════════════════════════════════════');
-    console.log('모든 테이블 + 인덱스 + 트리거 생성 완료!');
+    console.log('전체 18개 테이블 + 인덱스 + 트리거 생성 완료!');
     console.log('══════════════════════════════════════');
   } catch (err) {
     console.error('테이블 생성 실패:', err.message);
