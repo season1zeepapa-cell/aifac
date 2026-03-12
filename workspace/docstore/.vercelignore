@@ -1,0 +1,14 @@
+# 테스트 관련
+tests/
+test-results/
+playwright-report/
+playwright.config.js
+
+# 문서/분석
+ANALYSIS.md
+ANALYSIS2.md
+BRIEF.md
+BRIEF-CRAWL.md
+
+# 스크립트 (배포에 불필요)
+scripts/
