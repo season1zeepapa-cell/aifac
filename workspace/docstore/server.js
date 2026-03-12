@@ -113,6 +113,11 @@ app.delete('/api/crawl-keywords', (req, res) => crawlKeywordsHandler(req, res));
 const naverNewsHandler = require('./api/naver-news');
 app.post('/api/naver-news', (req, res) => naverNewsHandler(req, res));
 
+// ── /api/settings (GET, POST) — 앱 설정 (카테고리 등) ──
+const settingsHandler = require('./api/settings');
+app.get('/api/settings', (req, res) => settingsHandler(req, res));
+app.post('/api/settings', (req, res) => settingsHandler(req, res));
+
 // ── GET /api/pdf-loaders — PDF 로더 목록 ──
 const pdfLoadersHandler = require('./api/pdf-loaders');
 app.get('/api/pdf-loaders', (req, res) => pdfLoadersHandler(req, res));
