@@ -76,6 +76,9 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    // 형태소 분석 사용 여부 (morpheme=true)
+    const useMorpheme = req.query.morpheme === 'true';
+
     if (type === 'hybrid') {
       // ── 하이브리드 검색 (벡터 + 전문검색 + RRF 합산) ──
       const resolvedIds = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
@@ -83,6 +86,7 @@ module.exports = async function handler(req, res) {
         topK: limit,
         docIds: resolvedIds,
         orgId,
+        useMorpheme,
       });
 
       // chapter/tag 필터는 후처리 (hybrid-search 내부에서는 docIds만 처리)

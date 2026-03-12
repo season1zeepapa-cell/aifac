@@ -32,7 +32,7 @@ module.exports = async (req, res) => {
   const {
     question, topK = 5, docId, docIds,
     provider = 'gemini', history = [], llmOptions = {}, stream = false,
-    useQueryRewrite = true, useHyDE = true,
+    useQueryRewrite = true, useHyDE = true, useMorpheme = false,
   } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
@@ -57,6 +57,7 @@ module.exports = async (req, res) => {
       orgId,
       useQueryRewrite,
       useHyDE,
+      useMorpheme,
       provider,
       history,
       onProgress,

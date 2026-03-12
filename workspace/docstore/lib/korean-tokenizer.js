@@ -183,10 +183,128 @@ function analyzeQuery(queryText) {
   };
 }
 
+// ── 형태소 분석 API 연동 ──
+// kiwipiepy 기반 Python 서버리스 함수 호출
+// Vercel 환경: /api/tokenize-ko 엔드포인트
+// 로컬 환경: http://localhost:3001/api/tokenize-ko (프록시)
+
+// 형태소 분석 API URL (환경에 따라 결정)
+function getMorphemeApiUrl() {
+  // Vercel 환경에서는 VERCEL_URL 사용
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}/api/tokenize-ko`;
+  }
+  // 로컬 개발 환경
+  return `http://localhost:3001/api/tokenize-ko`;
+}
+
+/**
+ * 형태소 분석 API를 호출하여 텍스트를 토큰화
+ *
+ * @param {string[]} texts - 분석할 텍스트 배열
+ * @param {string} mode - 'tokens' (전체 유용한 품사) | 'nouns' (명사만)
+ * @returns {Promise<Array<{tokens: string[], tsvector_text: string}>>}
+ */
+async function tokenizeMorpheme(texts, mode = 'tokens') {
+  if (!texts || texts.length === 0) return [];
+
+  try {
+    const url = getMorphemeApiUrl();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texts, mode }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`형태소 분석 API 오류: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.results || [];
+  } catch (err) {
+    console.warn(`[형태소] API 호출 실패, N-gram 폴백 사용: ${err.message}`);
+    // 폴백: 기존 N-gram 방식으로 토큰 생성
+    return texts.map(text => {
+      const words = text.split(/\s+/).filter(w => w.length >= 2);
+      const tokens = new Set();
+      for (const w of words) {
+        tokens.add(w);
+        for (const ng of generateNgrams(w, 2, 3)) {
+          tokens.add(ng);
+        }
+      }
+      const unique = [...tokens];
+      return { tokens: unique, tsvector_text: unique.join(' ') };
+    });
+  }
+}
+
+/**
+ * 형태소 분석 결과로 tsvector용 텍스트 생성
+ * (DB에 저장할 때 사용)
+ *
+ * @param {string} text - 원본 텍스트
+ * @returns {Promise<string>} 공백 구분된 형태소 토큰 문자열
+ */
+async function buildMorphemeTsvector(text) {
+  if (!text || !text.trim()) return '';
+  const results = await tokenizeMorpheme([text], 'tokens');
+  return results[0]?.tsvector_text || '';
+}
+
+/**
+ * 형태소 분석 기반 tsquery 생성
+ * 검색어를 형태소 분석하여 정확한 토큰으로 tsquery 구성
+ *
+ * @param {string} queryText - 검색어
+ * @param {Object} options - { mode, useSynonyms }
+ * @returns {Promise<{tsquery: string, morphemeTokens: string[]}>}
+ */
+async function buildMorphemeTsquery(queryText, options = {}) {
+  const { mode = 'or', useSynonyms = true } = options;
+
+  // 형태소 분석으로 토큰 추출
+  const results = await tokenizeMorpheme([queryText], 'tokens');
+  const morphTokens = results[0]?.tokens || [];
+
+  if (morphTokens.length === 0) {
+    // 형태소 분석 실패 시 기존 방식 폴백
+    return { ...buildTsquery(queryText, options), morphemeTokens: [] };
+  }
+
+  // 동의어 확장 (선택)
+  const allTokens = new Set(morphTokens);
+  if (useSynonyms) {
+    for (const token of morphTokens) {
+      const syns = expandSynonyms(token);
+      for (const syn of syns) {
+        allTokens.add(syn);
+        if (syn.includes(' ')) {
+          for (const part of syn.split(/\s+/)) {
+            if (part.length >= 2) allTokens.add(part);
+          }
+        }
+      }
+    }
+  }
+
+  // tsquery 생성 (접두사 매칭)
+  const tokenList = [...allTokens].map(t => `${t}:*`);
+  const operator = mode === 'and' ? ' & ' : ' | ';
+  const tsquery = tokenList.join(operator);
+
+  return { tsquery, morphemeTokens: morphTokens };
+}
+
 module.exports = {
   generateNgrams,
   expandSynonyms,
   buildTsquery,
   analyzeQuery,
   SYNONYM_DICT,
+  // 형태소 분석 함수
+  tokenizeMorpheme,
+  buildMorphemeTsvector,
+  buildMorphemeTsquery,
 };

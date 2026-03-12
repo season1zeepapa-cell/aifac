@@ -21,7 +21,7 @@
 
 const { generateEmbedding } = require('./embeddings');
 const { rerankResults } = require('./reranker');
-const { buildTsquery } = require('./korean-tokenizer');
+const { buildTsquery, buildMorphemeTsquery } = require('./korean-tokenizer');
 
 const RRF_K = 60; // RRF 상수 (값이 클수록 하위 순위의 영향이 커짐)
 
@@ -34,20 +34,32 @@ const RRF_K = 60; // RRF 상수 (값이 클수록 하위 순위의 영향이 커
  * @param {Object} options - { topK, docIds }
  * @returns {Array} 검색 결과 (chunk 배열)
  */
-async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [], orgId = null }) {
-  // 한국어 토크나이저로 검색어 확장 (n-gram + 동의어)
-  const { tsquery: tsqueryStr, expandedTerms } = buildTsquery(queryText, {
-    mode: 'or',
-    useNgrams: true,
-    useSynonyms: true,
-  });
-  if (!tsqueryStr) return [];
+async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [], orgId = null, useMorpheme = false }) {
+  // 형태소 분석 모드 vs 기존 N-gram 모드 선택
+  let tsqueryStr, expandedTerms = [];
+  let ftsColumn = 'dc.fts_vector'; // 기본: N-gram 기반 tsvector
 
-  if (expandedTerms.length > 0) {
-    console.log(`[FTS] 쿼리 확장: "${queryText}" → +${expandedTerms.length}개 동의어`);
+  if (useMorpheme) {
+    // 형태소 분석 기반 검색
+    const morphResult = await buildMorphemeTsquery(queryText, { mode: 'or', useSynonyms: true });
+    tsqueryStr = morphResult.tsquery;
+    if (morphResult.morphemeTokens.length > 0) {
+      ftsColumn = 'dc.fts_morpheme_vector'; // 형태소 tsvector 컬럼 사용
+      console.log(`[FTS 형태소] "${queryText}" → 토큰: ${morphResult.morphemeTokens.join(', ')}`);
+    }
+  } else {
+    // 기존 N-gram + 동의어 방식
+    const result = buildTsquery(queryText, { mode: 'or', useNgrams: true, useSynonyms: true });
+    tsqueryStr = result.tsquery;
+    expandedTerms = result.expandedTerms;
+    if (expandedTerms.length > 0) {
+      console.log(`[FTS] 쿼리 확장: "${queryText}" → +${expandedTerms.length}개 동의어`);
+    }
   }
 
-  let filterClause = `dc.fts_vector IS NOT NULL`;
+  if (!tsqueryStr) return [];
+
+  let filterClause = `${ftsColumn} IS NOT NULL`;
   const params = [tsqueryStr];
   let paramIdx = 2;
 
@@ -77,7 +89,7 @@ async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [], orgId = n
        ds.document_id,
        d.title AS document_title,
        d.category,
-       ts_rank_cd(dc.fts_vector, to_tsquery('simple', $1), 32) AS fts_score,
+       ts_rank_cd(${ftsColumn}, to_tsquery('simple', $1), 32) AS fts_score,
        ts_headline('simple', dc.chunk_text, to_tsquery('simple', $1),
          'StartSel=<mark>, StopSel=</mark>, MaxWords=60, MinWords=20, MaxFragments=2'
        ) AS headline
@@ -85,7 +97,7 @@ async function ftsSearch(dbQuery, queryText, { topK = 20, docIds = [], orgId = n
      JOIN document_sections ds ON dc.section_id = ds.id
      JOIN documents d ON ds.document_id = d.id
      WHERE ${filterClause}
-       AND dc.fts_vector @@ to_tsquery('simple', $1)
+       AND ${ftsColumn} @@ to_tsquery('simple', $1)
        AND d.deleted_at IS NULL
      ORDER BY fts_score DESC
      LIMIT $${paramIdx}`,
@@ -222,7 +234,7 @@ function rrfFusion(vectorResults, ftsResults, topK = 10) {
  * @returns {Array} RRF 점수 순 결과
  */
 async function hybridSearch(dbQuery, question, options = {}) {
-  const { topK = 10, docIds = [], orgId = null } = options;
+  const { topK = 10, docIds = [], orgId = null, useMorpheme = false } = options;
 
   // 임베딩 생성
   const embedding = await generateEmbedding(question.trim());
@@ -230,7 +242,7 @@ async function hybridSearch(dbQuery, question, options = {}) {
   // 벡터 검색과 전문 검색을 병렬 실행 (성능 최적화, 조직별 격리)
   const [vecResults, ftsResults] = await Promise.all([
     vectorSearch(dbQuery, embedding, { topK: topK * 2, docIds, orgId }),
-    ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId }),
+    ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId, useMorpheme }),
   ]);
 
   // RRF로 두 결과를 합산하여 최종 순위 결정

@@ -2,6 +2,7 @@
 const OpenAI = require('openai');
 const { smartChunk } = require('./text-splitters');
 const { trackUsage } = require('./api-tracker');
+const { buildMorphemeTsvector } = require('./korean-tokenizer');
 
 // OpenAI 클라이언트 (싱글턴)
 let client;
@@ -213,12 +214,25 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
       // 4) enriched text로 임베딩 생성 (배치)
       const embeddings = await generateEmbeddings(enrichedTexts);
 
+      // 형태소 분석 tsvector 텍스트 생성 (실패해도 무시)
+      let morphTexts = [];
+      try {
+        const morphResults = await Promise.all(
+          chunks.map(chunk => buildMorphemeTsvector(chunk))
+        );
+        morphTexts = morphResults;
+      } catch (e) {
+        console.warn('[Embeddings] 형태소 tsvector 생성 건너뜀:', e.message);
+        morphTexts = chunks.map(() => '');
+      }
+
       return chunks.map((chunk, i) => ({
         sectionId: section.id,
         chunkText: chunk,
         enrichedText: enrichedTexts[i],
         embedding: embeddings[i],
         chunkIndex: i,
+        morphemeText: morphTexts[i] || '',
       }));
     }));
 
@@ -229,15 +243,25 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
       const DB_BATCH = 10;
       for (let di = 0; di < allRows.length; di += DB_BATCH) {
         const dbBatch = allRows.slice(di, di + DB_BATCH);
+        const hasMorpheme = dbBatch.some(r => r.morphemeText);
         const values = [];
         const params = [];
+        const colsPerRow = hasMorpheme ? 6 : 5;
         dbBatch.forEach((row, idx) => {
-          const base = idx * 5;
-          values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}::vector, $${base + 5})`);
-          params.push(row.sectionId, row.chunkText, row.enrichedText, `[${row.embedding.join(',')}]`, row.chunkIndex);
+          const base = idx * colsPerRow;
+          if (hasMorpheme) {
+            values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}::vector, $${base + 5}, to_tsvector('simple', $${base + 6}))`);
+            params.push(row.sectionId, row.chunkText, row.enrichedText, `[${row.embedding.join(',')}]`, row.chunkIndex, row.morphemeText || '');
+          } else {
+            values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}::vector, $${base + 5})`);
+            params.push(row.sectionId, row.chunkText, row.enrichedText, `[${row.embedding.join(',')}]`, row.chunkIndex);
+          }
         });
+        const cols = hasMorpheme
+          ? 'section_id, chunk_text, enriched_text, embedding, chunk_index, fts_morpheme_vector'
+          : 'section_id, chunk_text, enriched_text, embedding, chunk_index';
         await db.query(
-          `INSERT INTO document_chunks (section_id, chunk_text, enriched_text, embedding, chunk_index)
+          `INSERT INTO document_chunks (${cols})
            VALUES ${values.join(', ')}`,
           params
         );

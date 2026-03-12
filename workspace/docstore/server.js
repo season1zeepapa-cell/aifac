@@ -97,6 +97,31 @@ app.get('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));
 app.post('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));
 app.delete('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));
 
+// ── /api/tokenize-ko (POST, GET) — 한국어 형태소 분석 (로컬 프록시) ──
+// Vercel에서는 Python 서버리스 함수로 직접 실행됨
+// 로컬 개발 시에는 kiwipiepy가 없으므로 N-gram 폴백 제공
+app.post('/api/tokenize-ko', (req, res) => {
+  const { texts = [], mode = 'tokens' } = req.body;
+  if (!texts.length) return res.status(400).json({ error: 'texts 배열이 필요합니다.' });
+  const { generateNgrams } = require('./lib/korean-tokenizer');
+  // 로컬 폴백: 간단한 공백 + N-gram 토큰화
+  const results = texts.map(text => {
+    if (!text || !text.trim()) return { tokens: [], tsvector_text: '' };
+    const words = text.split(/\s+/).filter(w => w.length >= 2);
+    const tokens = new Set();
+    for (const w of words) {
+      tokens.add(w);
+      for (const ng of generateNgrams(w, 2, 3)) tokens.add(ng);
+    }
+    const unique = [...tokens];
+    return { tokens: unique, tsvector_text: unique.join(' ') };
+  });
+  res.json({ results, count: results.length, mode, engine: 'ngram-fallback' });
+});
+app.get('/api/tokenize-ko', (req, res) => {
+  res.json({ status: 'ok', engine: 'ngram-fallback (local)', hint: 'Vercel 배포 시 kiwipiepy 사용' });
+});
+
 // ── /api/organizations (GET, POST) — 조직 관리 (슈퍼 어드민 전용) ──
 const organizationsHandler = require('./api/organizations');
 app.get('/api/organizations', (req, res) => organizationsHandler(req, res));

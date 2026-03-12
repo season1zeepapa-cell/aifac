@@ -50,7 +50,7 @@ function extractCrossReferences(chunks) {
 async function multiHopSearch(dbQuery, question, options = {}) {
   const {
     topK = 5, docIds = [], orgId = null,
-    useQueryRewrite = true, useHyDE = true,
+    useQueryRewrite = true, useHyDE = true, useMorpheme = false,
     provider = 'gemini', history = [],
     onProgress = null,
   } = options;
@@ -105,7 +105,7 @@ async function multiHopSearch(dbQuery, question, options = {}) {
       const blendedEmbedding = await blendEmbeddings(question, hydeEmbedding);
       const [vecResults, ftsResults] = await Promise.all([
         hvVectorSearch(dbQuery, blendedEmbedding, { topK: topK * 2, docIds, orgId }),
-        ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId }),
+        ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId, useMorpheme }),
       ]);
 
       // RRF 합산
@@ -113,7 +113,7 @@ async function multiHopSearch(dbQuery, question, options = {}) {
       hop1Chunks = rrfFusion(vecResults, ftsResults, topK * 2);
     } else {
       // HyDE 없으면 기존 하이브리드 검색
-      hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds, orgId });
+      hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds, orgId, useMorpheme });
     }
   } catch (err) {
     console.warn('[RAG Agent] 1차 검색 실패, 벡터 검색 fallback:', err.message);
