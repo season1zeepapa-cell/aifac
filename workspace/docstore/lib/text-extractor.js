@@ -1,5 +1,5 @@
 // 멀티포맷 텍스트 추출 엔진
-// 지원 형식: TXT, MD, DOCX, XLSX, CSV, JSON, 이미지(JPG/PNG)
+// 지원 형식: TXT, MD, DOCX, XLSX, CSV, JSON, HWP, HWPX, 이미지(JPG/PNG)
 //
 // 각 형식별로 텍스트를 추출하고 섹션으로 분할하여 반환
 // 반환 형식: { sections: [{ sectionType, sectionIndex, text, metadata }], totalItems }
@@ -24,6 +24,8 @@ const EXTENSION_MAP = {
   '.gif': 'image',
   '.webp': 'image',
   '.pdf': 'pdf',
+  '.hwp': 'hwp',
+  '.hwpx': 'hwpx',
 };
 
 // 지원하는 MIME 타입
@@ -40,6 +42,10 @@ const MIME_MAP = {
   'image/gif': 'image',
   'image/webp': 'image',
   'application/pdf': 'pdf',
+  'application/x-hwp': 'hwp',
+  'application/haansofthwp': 'hwp',
+  'application/vnd.hancom.hwp': 'hwp',
+  'application/vnd.hancom.hwpx': 'hwpx',
 };
 
 /**
@@ -62,7 +68,7 @@ function detectFileType(filename, mimetype) {
 /**
  * 파일 형식별 허용 확장자 목록 (프론트 accept 속성용)
  */
-const ACCEPTED_EXTENSIONS = '.pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.json,.jpg,.jpeg,.png,.gif,.webp';
+const ACCEPTED_EXTENSIONS = '.pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.json,.hwp,.hwpx,.jpg,.jpeg,.png,.gif,.webp';
 
 /**
  * 텍스트 파일 추출 (.txt)
@@ -372,6 +378,242 @@ function extractJson(buffer, options = {}) {
 }
 
 /**
+ * HWP 파일 추출 (.hwp)
+ * hwp.js 라이브러리로 한글 문서 파싱
+ * HWP는 한컴오피스에서 사용하는 한국 공공문서 표준 형식
+ */
+async function extractHwp(buffer, options = {}) {
+  const { sectionType = 'paragraph' } = options;
+
+  try {
+    const { parse: hwpParse } = require('hwp.js');
+    const doc = hwpParse(buffer);
+
+    // HWPDocument 구조: doc.sections[].content[] (paragraph 배열)
+    // paragraph.content[] = HWPChar 배열 (type: 'Char'|'Inline'|'Extened')
+    const allParagraphs = [];
+
+    for (let si = 0; si < doc.sections.length; si++) {
+      const section = doc.sections[si];
+      for (const paragraph of (section.content || [])) {
+        // paragraph.content에서 텍스트 문자만 추출
+        let text = '';
+        for (const ch of (paragraph.content || [])) {
+          if (ch.value !== undefined && ch.value !== null) {
+            // 문자인 경우
+            if (typeof ch.value === 'string') {
+              text += ch.value;
+            } else if (typeof ch.value === 'number') {
+              // 제어 문자(10=줄바꿈, 13=캐리지리턴 등) 처리
+              if (ch.value === 10 || ch.value === 13) {
+                text += '\n';
+              } else if (ch.value > 31) {
+                text += String.fromCharCode(ch.value);
+              }
+            }
+          }
+        }
+        text = text.trim();
+        if (text.length > 0) {
+          allParagraphs.push({ text, sectionNumber: si });
+        }
+      }
+    }
+
+    if (allParagraphs.length === 0) {
+      // 텍스트 추출 실패 시 CFB PrvText 스트림에서 폴백 시도
+      return extractHwpFallback(buffer, options);
+    }
+
+    if (sectionType === 'section') {
+      // HWP 섹션(페이지) 단위로 분할
+      const grouped = {};
+      for (const p of allParagraphs) {
+        if (!grouped[p.sectionNumber]) grouped[p.sectionNumber] = [];
+        grouped[p.sectionNumber].push(p.text);
+      }
+      const sections = Object.entries(grouped).map(([num, texts], i) => ({
+        sectionType: 'section',
+        sectionIndex: i,
+        text: texts.join('\n\n'),
+        metadata: { hwpSection: parseInt(num, 10) + 1 },
+      }));
+      return { sections, totalItems: sections.length };
+    }
+
+    if (sectionType === 'paragraph') {
+      return {
+        sections: allParagraphs.map((p, i) => ({
+          sectionType: 'paragraph',
+          sectionIndex: i,
+          text: p.text,
+          metadata: { paragraphNumber: i + 1, hwpSection: p.sectionNumber + 1 },
+        })),
+        totalItems: allParagraphs.length,
+      };
+    }
+
+    // 전체를 하나의 섹션으로
+    const fullText = allParagraphs.map(p => p.text).join('\n\n');
+    return {
+      sections: [{
+        sectionType: 'full',
+        sectionIndex: 0,
+        text: fullText,
+        metadata: { format: 'hwp', charCount: fullText.length, paragraphCount: allParagraphs.length },
+      }],
+      totalItems: 1,
+    };
+  } catch (err) {
+    console.warn('[HWP] hwp.js 파싱 실패, CFB 폴백 시도:', err.message);
+    return extractHwpFallback(buffer, options);
+  }
+}
+
+/**
+ * HWP 폴백: CFB 컨테이너에서 PrvText 스트림 추출
+ * PrvText는 HWP 파일에 포함된 텍스트 미리보기 (대부분의 HWP 파일에 존재)
+ */
+function extractHwpFallback(buffer, options = {}) {
+  const CFB = require('cfb');
+  const container = CFB.read(buffer);
+
+  // PrvText 스트림 찾기 (UTF-16LE 인코딩)
+  const prvText = CFB.find(container, 'PrvText');
+  if (prvText && prvText.content && prvText.content.length > 0) {
+    // PrvText는 UTF-16LE로 인코딩됨
+    const textBuf = Buffer.from(prvText.content);
+    let text = '';
+    for (let i = 0; i < textBuf.length - 1; i += 2) {
+      const code = textBuf.readUInt16LE(i);
+      if (code === 0) break; // null 종료
+      text += String.fromCharCode(code);
+    }
+    text = text.trim();
+
+    if (text.length > 0) {
+      const paragraphs = text.split(/\r?\n\s*\r?\n/).filter(p => p.trim());
+      return {
+        sections: paragraphs.map((p, i) => ({
+          sectionType: 'paragraph',
+          sectionIndex: i,
+          text: p.trim(),
+          metadata: { paragraphNumber: i + 1, method: 'prvtext-fallback' },
+        })),
+        totalItems: paragraphs.length,
+      };
+    }
+  }
+
+  throw new Error('HWP 파일에서 텍스트를 추출할 수 없습니다. 파일이 손상되었거나 암호화되어 있을 수 있습니다.');
+}
+
+/**
+ * HWPX 파일 추출 (.hwpx)
+ * HWPX는 ZIP 기반 XML 형식 (DOCX와 유사한 구조)
+ * Contents/section0.xml, section1.xml ... 에서 텍스트 추출
+ */
+async function extractHwpx(buffer, options = {}) {
+  const { sectionType = 'paragraph' } = options;
+
+  // HWPX는 ZIP 파일 → JSZip이나 직접 ZIP 파싱
+  // cfb 패키지는 ZIP도 읽을 수 있음 (cfb.read가 ZIP 감지)
+  const CFB = require('cfb');
+  const container = CFB.read(buffer);
+
+  // HWPX 구조: Contents/section0.xml, Contents/section1.xml, ...
+  const sectionFiles = [];
+  for (const entry of container.FileIndex) {
+    if (entry.name && /Contents\/section\d+\.xml/i.test(entry.name)) {
+      sectionFiles.push(entry);
+    }
+  }
+
+  // 섹션 번호순 정렬
+  sectionFiles.sort((a, b) => {
+    const numA = parseInt(a.name.match(/section(\d+)/)?.[1] || '0', 10);
+    const numB = parseInt(b.name.match(/section(\d+)/)?.[1] || '0', 10);
+    return numA - numB;
+  });
+
+  if (sectionFiles.length === 0) {
+    throw new Error('HWPX 파일에서 섹션을 찾을 수 없습니다.');
+  }
+
+  const allParagraphs = [];
+
+  for (let si = 0; si < sectionFiles.length; si++) {
+    const entry = sectionFiles[si];
+    const xml = Buffer.from(entry.content).toString('utf-8');
+
+    // XML에서 텍스트 노드 추출 (정규식 방식 — 경량, 외부 라이브러리 불필요)
+    // <hp:t>텍스트</hp:t> 또는 <t>텍스트</t> 패턴
+    const textMatches = xml.match(/<(?:hp:)?t[^>]*>([^<]*)<\/(?:hp:)?t>/g) || [];
+    let currentParagraph = '';
+
+    for (const match of textMatches) {
+      const text = match.replace(/<[^>]+>/g, '').trim();
+      if (text) currentParagraph += text;
+    }
+
+    // <hp:p> 또는 <p> 태그 기준으로 단락 구분
+    const paraMatches = xml.split(/<(?:hp:)?p[\s>]/);
+    for (const paraXml of paraMatches) {
+      const texts = (paraXml.match(/<(?:hp:)?t[^>]*>([^<]*)<\/(?:hp:)?t>/g) || [])
+        .map(m => m.replace(/<[^>]+>/g, '').trim())
+        .filter(t => t.length > 0);
+
+      if (texts.length > 0) {
+        allParagraphs.push({ text: texts.join(''), sectionNumber: si });
+      }
+    }
+  }
+
+  if (allParagraphs.length === 0) {
+    throw new Error('HWPX 파일에서 텍스트를 추출할 수 없습니다.');
+  }
+
+  if (sectionType === 'section') {
+    const grouped = {};
+    for (const p of allParagraphs) {
+      if (!grouped[p.sectionNumber]) grouped[p.sectionNumber] = [];
+      grouped[p.sectionNumber].push(p.text);
+    }
+    const sections = Object.entries(grouped).map(([num, texts], i) => ({
+      sectionType: 'section',
+      sectionIndex: i,
+      text: texts.join('\n\n'),
+      metadata: { hwpxSection: parseInt(num, 10) + 1 },
+    }));
+    return { sections, totalItems: sections.length };
+  }
+
+  if (sectionType === 'paragraph') {
+    return {
+      sections: allParagraphs.map((p, i) => ({
+        sectionType: 'paragraph',
+        sectionIndex: i,
+        text: p.text,
+        metadata: { paragraphNumber: i + 1, hwpxSection: p.sectionNumber + 1 },
+      })),
+      totalItems: allParagraphs.length,
+    };
+  }
+
+  // 전체
+  const fullText = allParagraphs.map(p => p.text).join('\n\n');
+  return {
+    sections: [{
+      sectionType: 'full',
+      sectionIndex: 0,
+      text: fullText,
+      metadata: { format: 'hwpx', charCount: fullText.length, paragraphCount: allParagraphs.length },
+    }],
+    totalItems: 1,
+  };
+}
+
+/**
  * OCR 프롬프트 생성 (플러그인에서도 사용)
  */
 function getOcrPrompt(contentType) {
@@ -428,6 +670,10 @@ async function extractFromFile(buffer, fileType, options = {}) {
       return extractCsv(buffer, options);
     case 'json':
       return extractJson(buffer, options);
+    case 'hwp':
+      return extractHwp(buffer, options);
+    case 'hwpx':
+      return extractHwpx(buffer, options);
     case 'image':
       return extractImage(buffer, options);
     default:

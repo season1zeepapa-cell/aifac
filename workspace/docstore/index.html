@@ -689,6 +689,28 @@
         ],
         hasFieldSelect: true,
       },
+      hwp: {
+        label: 'HWP',
+        icon: '📃',
+        color: 'primary',
+        accept: '.hwp',
+        sectionOptions: [
+          { value: 'paragraph', label: '단락별' },
+          { value: 'section', label: '섹션(페이지)별' },
+          { value: 'full', label: '문서 전체' },
+        ],
+      },
+      hwpx: {
+        label: 'HWPX',
+        icon: '📃',
+        color: 'primary',
+        accept: '.hwpx',
+        sectionOptions: [
+          { value: 'paragraph', label: '단락별' },
+          { value: 'section', label: '섹션(페이지)별' },
+          { value: 'full', label: '문서 전체' },
+        ],
+      },
       image: {
         label: '이미지',
         icon: '🖼️',
@@ -707,14 +729,15 @@
       const map = {
         '.pdf': 'pdf', '.txt': 'text', '.md': 'markdown', '.markdown': 'markdown',
         '.docx': 'docx', '.xlsx': 'xlsx', '.xls': 'xlsx', '.csv': 'csv',
-        '.json': 'json', '.jpg': 'image', '.jpeg': 'image', '.png': 'image',
+        '.json': 'json', '.hwp': 'hwp', '.hwpx': 'hwpx',
+        '.jpg': 'image', '.jpeg': 'image', '.png': 'image',
         '.gif': 'image', '.webp': 'image',
       };
       return map[ext] || 'unknown';
     }
 
     // 모든 지원 확장자
-    const ALL_ACCEPTED = '.pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.json,.jpg,.jpeg,.png,.gif,.webp';
+    const ALL_ACCEPTED = '.pdf,.txt,.md,.markdown,.docx,.xlsx,.xls,.csv,.json,.hwp,.hwpx,.jpg,.jpeg,.png,.gif,.webp';
 
     // ========================================
     // 유틸 함수
