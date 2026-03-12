@@ -1150,6 +1150,7 @@
       const [newExclusion, setNewExclusion] = useState('');
       // 크롤링 결과 탭 필터 ('all' | 'naver' | 'board')
       const [crawlResultFilter, setCrawlResultFilter] = useState('all');
+      const [crawlVisibleCount, setCrawlVisibleCount] = useState(10);
 
       // 크롤링 데이터 로드
       const loadCrawlData = useCallback(async () => {
@@ -2241,7 +2242,7 @@
                             { id: 'naver', label: `뉴스 (${naverResults.length})` },
                             { id: 'board', label: `게시판 (${boardResults.length})` },
                           ].map(tab => (
-                            <button key={tab.id} onClick={() => setCrawlResultFilter(tab.id)}
+                            <button key={tab.id} onClick={() => { setCrawlResultFilter(tab.id); setCrawlVisibleCount(10); }}
                               className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
                                 crawlResultFilter === tab.id ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-text'
                               }`}
@@ -2284,14 +2285,14 @@
                         </div>
                       )}
 
-                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                      <div className="space-y-2">
                         {filteredResults.length === 0 && (
                           <p className="text-sm text-text-secondary text-center py-4">
                             {crawlResultFilter === 'naver' ? '네이버 뉴스 결과가 없습니다.' :
                              crawlResultFilter === 'board' ? '사이트 게시판 결과가 없습니다.' : '수집 결과가 없습니다.'}
                           </p>
                         )}
-                        {filteredResults.map(item => (
+                        {filteredResults.slice(0, crawlVisibleCount).map(item => (
                           <div key={item.id} className={`p-3 rounded-lg border transition-colors ${
                             item.is_ingested ? 'border-green-200 bg-green-50/30 opacity-60' :
                             selectedCrawlIds.has(item.id) ? 'border-primary bg-primary/5' : 'border-border bg-card-bg'
@@ -2345,6 +2346,15 @@
                             </div>
                           </div>
                         ))}
+                        {/* 더보기 버튼 */}
+                        {filteredResults.length > crawlVisibleCount && (
+                          <button
+                            onClick={() => setCrawlVisibleCount(prev => prev + 10)}
+                            className="w-full py-2.5 text-sm font-medium text-primary bg-primary/5 border border-primary/20 rounded-lg hover:bg-primary/10 transition-colors"
+                          >
+                            더보기 ({filteredResults.length - crawlVisibleCount}건 남음)
+                          </button>
+                        )}
                       </div>
                     </div>
                     );
