@@ -4045,7 +4045,8 @@
       const loadData = async () => {
         try {
           setLoading(true);
-          const res = await fetchAPI(`/api/knowledge-graph?docId=${documentId}`);
+          const resp = await authFetch(`${API_BASE_URL}/knowledge-graph?docId=${documentId}`);
+          const res = await resp.json();
           setData(res);
         } catch (e) {
           setError(e.message);
@@ -4057,7 +4058,8 @@
       // Neo4j 연결 상태 확인
       const checkNeo4j = async () => {
         try {
-          const res = await fetchAPI('/api/knowledge-graph-neo4j?status=true');
+          const resp = await authFetch(`${API_BASE_URL}/knowledge-graph-neo4j?status=true`);
+          const res = await resp.json();
           setNeo4jStatus(res);
         } catch {
           setNeo4jStatus({ connected: false, message: 'API 호출 실패' });
@@ -4070,8 +4072,9 @@
       const handleBuild = async () => {
         try {
           setBuilding(true);
-          await fetchAPI('/api/knowledge-graph', {
+          await authFetch(`${API_BASE_URL}/knowledge-graph`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ docId: documentId }),
           });
           await loadData();
@@ -4087,10 +4090,12 @@
         try {
           setComparing(true);
           setCompareData(null);
-          const res = await fetchAPI('/api/knowledge-graph-neo4j', {
+          const resp = await authFetch(`${API_BASE_URL}/knowledge-graph-neo4j`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ docId: documentId, compare: true }),
           });
+          const res = await resp.json();
           setCompareData(res.comparison);
           // PG 데이터도 갱신
           await loadData();
@@ -4105,8 +4110,9 @@
       const handlePathFind = async () => {
         if (!pathQuery.from || !pathQuery.to) return;
         try {
-          const res = await fetchAPI('/api/knowledge-graph-neo4j', {
+          const resp = await authFetch(`${API_BASE_URL}/knowledge-graph-neo4j`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               docId: documentId,
               path: true,
@@ -4114,6 +4120,7 @@
               to: pathQuery.to,
             }),
           });
+          const res = await resp.json();
           setPathResult(res);
         } catch (e) {
           setPathResult({ found: false, error: e.message });
