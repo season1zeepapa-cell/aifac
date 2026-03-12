@@ -18,6 +18,7 @@ const { multiHopSearch } = require('../lib/rag-agent');
 const { parseRAGOutput } = require('../lib/output-parser');
 const { createTrace, createSpan, endSpan, finalizeTrace } = require('../lib/langfuse');
 const { setDbQuery, buildPrompt } = require('../lib/prompt-manager');
+const { createRagTracer } = require('../lib/rag-tracer');
 
 // 프롬프트 매니저에 DB 쿼리 함수 연결
 setDbQuery(query);
@@ -79,6 +80,15 @@ module.exports = async (req, res) => {
     tags: ['rag', provider],
   });
 
+  // RAG 자체 트레이서 생성
+  const tracer = createRagTracer(query, {
+    question: question.trim(),
+    userId: user,
+    provider,
+    model: llmOptions.model || null,
+    options: { topK, stream, useQueryRewrite, useHyDE, useMorpheme, useVerify },
+  });
+
   try {
     // 문서 필터: docIds(배열) 우선, docId(단일) 하위 호환
     const resolvedDocIds = Array.isArray(docIds) && docIds.length > 0
@@ -98,6 +108,7 @@ module.exports = async (req, res) => {
     });
 
     // 1) 멀티홉 검색 (쿼리 리라이팅 + HyDE 포함)
+    tracer.startSearch();
     console.log(`[RAG] 질문: "${question.trim().substring(0, 50)}..." (${provider}, rewrite:${useQueryRewrite}, hyde:${useHyDE})`);
     const searchResult = await multiHopSearch(query, question.trim(), {
       topK: Math.min(parseInt(topK, 10) || 5, 10),
@@ -113,6 +124,12 @@ module.exports = async (req, res) => {
 
     const sources = searchResult.sources;
     const enh = searchResult.enhancement || {};
+
+    // 트레이서: 쿼리 강화 + 검색 결과 기록
+    tracer.setQueryRewrite(enh.queryRewrite || null);
+    tracer.setHyDE(enh.hyde || null);
+    tracer.setSearchResults(sources, searchResult);
+
     console.log(`[RAG] ${sources.length}개 근거 자료 검색 (${searchResult.hops}홉${searchResult.crossRefs ? ', 교차참조: ' + searchResult.crossRefs.length + '건' : ''}${enh.queryRewrite ? ', 리라이팅: ' + enh.queryRewrite.timing + 'ms' : ''}${enh.hyde ? ', HyDE: ' + enh.hyde.timing + 'ms' : ''})`);
 
     // 검색 스팬 종료
@@ -122,6 +139,8 @@ module.exports = async (req, res) => {
 
     if (sources.length === 0) {
       await finalizeTrace(trace, { output: '관련 문서 없음' });
+      tracer.setError({ message: '관련 문서 없음 (sources=0)' });
+      await tracer.save();
       return res.json({
         question: question.trim(),
         answer: '관련된 문서를 찾을 수 없습니다. 먼저 관련 법령이나 문서를 임포트해주세요.',
@@ -155,6 +174,7 @@ module.exports = async (req, res) => {
     });
 
     const prompt = promptResult.prompt;
+    tracer.setPromptInfo(promptResult, prompt);
     console.log(`[RAG] 프롬프트 템플릿: rag-answer/${promptResult.matchedCategory} (DB: ${promptResult.fromDb})`);
 
     // 3) LLM 호출 옵션 (템플릿 모델 파라미터 + 사용자 오버라이드)
@@ -203,11 +223,14 @@ module.exports = async (req, res) => {
 
       let accumulated = '';
       try {
+        tracer.startLLM();
         await callLLMStream(prompt, callOpts, (token) => {
           accumulated += token;
           sseWrite(res, { type: 'token', token });
         });
+        tracer.setStreamOutput(accumulated);
         const parsed = parseRAGOutput(accumulated, sources);
+        tracer.setParsedOutput(parsed);
         sseWrite(res, { type: 'parsed', parsed });
 
         // 4) 선택적 답변 검증 (프롬프트 체인)
@@ -227,8 +250,10 @@ module.exports = async (req, res) => {
             const verifyOutput = await callLLM(verifyResult.prompt, verifyOpts);
             try {
               const verification = JSON.parse(verifyOutput.replace(/```json\n?|```/g, '').trim());
+              tracer.setVerification(verification);
               sseWrite(res, { type: 'verification', verification });
             } catch {
+              tracer.setVerification({ raw: verifyOutput });
               sseWrite(res, { type: 'verification', verification: { raw: verifyOutput } });
             }
           } catch (verifyErr) {
@@ -236,6 +261,7 @@ module.exports = async (req, res) => {
           }
         }
 
+        await tracer.save();
         sseWrite(res, { type: 'done' });
         await finalizeTrace(trace, { output: parsed.conclusion || accumulated.substring(0, 300) });
       } catch (streamErr) {
@@ -253,8 +279,11 @@ module.exports = async (req, res) => {
       res.end();
     } else {
       // ── 기존 JSON 응답 모드 ──
+      tracer.startLLM();
       const answer = await callLLM(prompt, callOpts);
+      tracer.setLLMOutput(answer, null, null); // 토큰 수는 callLLM 내부에서 추정
       const parsed = parseRAGOutput(answer, sources);
+      tracer.setParsedOutput(parsed);
       console.log(`[RAG] 답변 생성 완료 (${provider}, ${answer.length}자, ${searchResult.hops}홉, 파싱: ${parsed.format}${parsed.warnings.length > 0 ? ', 경고: ' + parsed.warnings.length : ''}, 프롬프트: ${promptResult.matchedCategory})`);
 
       // 4) 선택적 답변 검증 (프롬프트 체인)
@@ -278,10 +307,14 @@ module.exports = async (req, res) => {
           } catch {
             verification = { raw: verifyOutput };
           }
+          tracer.setVerification(verification);
         } catch (verifyErr) {
           console.warn('[RAG] 검증 단계 실패:', verifyErr.message);
         }
       }
+
+      // 트레이서 저장
+      await tracer.save();
 
       // LangFuse 트레이스 종료
       await finalizeTrace(trace, {
@@ -303,6 +336,8 @@ module.exports = async (req, res) => {
       });
     }
   } catch (err) {
+    tracer.setError(err);
+    await tracer.save();
     await finalizeTrace(trace, { output: `ERROR: ${err.message}` });
     sendError(res, err, '[RAG]');
   }

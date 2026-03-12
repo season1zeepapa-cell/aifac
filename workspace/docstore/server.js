@@ -90,6 +90,11 @@ app.delete('/api/prompts', (req, res) => promptsHandler(req, res));
 const observabilityHandler = require('./api/observability');
 app.get('/api/observability', (req, res) => observabilityHandler(req, res));
 
+// ── /api/rag-traces (GET, DELETE) — RAG 자체 트레이싱 조회/삭제 ──
+const ragTracesHandler = require('./api/rag-traces');
+app.get('/api/rag-traces', (req, res) => ragTracesHandler(req, res));
+app.delete('/api/rag-traces', (req, res) => ragTracesHandler(req, res));
+
 // ── /api/cross-references (GET, POST) — 교차 참조 매트릭스 ──
 const crossRefHandler = require('./api/cross-references');
 app.get('/api/cross-references', (req, res) => crossRefHandler(req, res));
