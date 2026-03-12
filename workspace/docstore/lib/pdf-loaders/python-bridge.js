@@ -111,8 +111,15 @@ async function callPythonViaApi(loaderId, pdfBuffer) {
   formData.set('file', new Blob([pdfBuffer], { type: 'application/pdf' }), 'document.pdf');
   formData.set('loader', loaderId);
 
+  // Vercel Deployment Protection 우회 (내부 함수 간 호출)
+  const headers = {};
+  if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
+    headers['x-vercel-protection-bypass'] = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  }
+
   const response = await fetch(`${baseUrl}/api/pdf-python`, {
     method: 'POST',
+    headers,
     body: formData,
   });
 
