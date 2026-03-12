@@ -75,6 +75,11 @@ module.exports = async function handler(req, res) {
 
     const contentType = req.headers['content-type'] || '';
 
+    // Vercel에서 JSON body가 문자열로 올 수 있으므로 수동 파싱
+    if (contentType.includes('application/json') && typeof req.body === 'string') {
+      try { req.body = JSON.parse(req.body); } catch {}
+    }
+
     if (contentType.includes('multipart/form-data')) {
       // ── 방법 1: multipart/form-data (기존 방식, 4.5MB 이하) ──
       await new Promise((resolve, reject) => {
