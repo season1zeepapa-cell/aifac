@@ -2,13 +2,10 @@
 Vercel Python 서버리스 함수 — Python PDF 로더 실행기
 
 Node.js 서버에서 이 함수를 HTTP로 호출하여 Python PDF 로더를 실행한다.
-multipart/form-data로 PDF 수신 + loader 파라미터 → JSON 결과 반환
 
-사용법:
-  POST /api/pdf-python
-  Content-Type: multipart/form-data
-  - file: PDF 파일
-  - loader: pymupdf | pypdf | pdfplumber | unstructured | docling
+지원 형식:
+  1. multipart/form-data — file + loader (소용량, 4.5MB 이하)
+  2. application/json — { loader, downloadUrl } (대용량, URL로 다운로드)
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -16,9 +13,9 @@ import json
 import tempfile
 import os
 import cgi
+import urllib.request
 
 
-# bridge.py의 로더 함수들을 직접 임포트
 def extract_pymupdf(pdf_path):
     import pymupdf
     doc = pymupdf.open(pdf_path)
@@ -84,38 +81,66 @@ class handler(BaseHTTPRequestHandler):
         try:
             content_type = self.headers.get('Content-Type', '')
 
-            if 'multipart/form-data' not in content_type:
-                self._send_json(400, {"error": "multipart/form-data 형식이 필요합니다."})
-                return
+            if 'application/json' in content_type:
+                # JSON 방식: { loader, downloadUrl } — 대용량 파일
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length)
+                data = json.loads(body)
 
-            # multipart 파싱
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': content_type}
-            )
+                loader_id = data.get('loader', 'pymupdf')
+                download_url = data.get('downloadUrl')
 
-            loader_id = form.getfirst('loader', 'pymupdf')
-            file_item = form['file']
+                if not download_url:
+                    self._send_json(400, {"error": "downloadUrl이 필요합니다."})
+                    return
 
-            if not file_item.file:
-                self._send_json(400, {"error": "PDF 파일이 필요합니다."})
-                return
+                if loader_id not in LOADERS:
+                    self._send_json(400, {"error": f"알 수 없는 로더: {loader_id}"})
+                    return
 
-            if loader_id not in LOADERS:
-                self._send_json(400, {"error": f"알 수 없는 로더: {loader_id}"})
-                return
+                # URL에서 PDF 다운로드 → 임시 파일 저장
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                    with urllib.request.urlopen(download_url) as response:
+                        tmp.write(response.read())
+                    tmp_path = tmp.name
 
-            # 임시 파일로 저장
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-                tmp.write(file_item.file.read())
-                tmp_path = tmp.name
+                try:
+                    result = LOADERS[loader_id](tmp_path)
+                    self._send_json(200, result)
+                finally:
+                    os.unlink(tmp_path)
 
-            try:
-                result = LOADERS[loader_id](tmp_path)
-                self._send_json(200, result)
-            finally:
-                os.unlink(tmp_path)
+            elif 'multipart/form-data' in content_type:
+                # multipart 방식: file + loader — 소용량 파일
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': content_type}
+                )
+
+                loader_id = form.getfirst('loader', 'pymupdf')
+                file_item = form['file']
+
+                if not file_item.file:
+                    self._send_json(400, {"error": "PDF 파일이 필요합니다."})
+                    return
+
+                if loader_id not in LOADERS:
+                    self._send_json(400, {"error": f"알 수 없는 로더: {loader_id}"})
+                    return
+
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                    tmp.write(file_item.file.read())
+                    tmp_path = tmp.name
+
+                try:
+                    result = LOADERS[loader_id](tmp_path)
+                    self._send_json(200, result)
+                finally:
+                    os.unlink(tmp_path)
+
+            else:
+                self._send_json(400, {"error": "application/json 또는 multipart/form-data 형식이 필요합니다."})
 
         except ImportError as e:
             self._send_json(500, {"error": f"패키지 미설치: {str(e)}"})

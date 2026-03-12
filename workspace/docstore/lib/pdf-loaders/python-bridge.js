@@ -100,35 +100,52 @@ function callPythonDirect(loaderId, pdfPath) {
  */
 async function callPythonViaApi(loaderId, pdfBuffer) {
   // Vercel 내부 호출 — 같은 배포 내의 Python 함수 호출
-  // VERCEL_PROJECT_PRODUCTION_URL 사용 (Deployment Protection 우회)
-  // VERCEL_URL은 프리뷰 URL이라 Protection이 걸릴 수 있음
   const host = process.env.VERCEL_PROJECT_PRODUCTION_URL
     || process.env.VERCEL_URL
     || null;
   const baseUrl = host ? `https://${host}` : 'http://localhost:3001';
 
-  // Node.js 18+ 내장 FormData/Blob 사용 (formdata-node는 Content-Type 미설정 이슈)
-  const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
-  const formData = new FormData();
-  formData.append('file', blob, 'document.pdf');
-  formData.append('loader', loaderId);
+  // Vercel 서버리스 body 4.5MB 제한 → signed URL로 파일 전달
+  // 1. PDF를 임시 Storage에 업로드
+  const { ensureBucket } = require('../../lib/storage');
+  const { createClient } = require('@supabase/supabase-js');
+  const client = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  await ensureBucket();
+  const tmpPath = `temp-python/${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`;
+  const { error: upErr } = await client.storage
+    .from('docstore-files')
+    .upload(tmpPath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+  if (upErr) throw new Error(`Python 임시 파일 업로드 실패: ${upErr.message}`);
 
-  const response = await fetch(`${baseUrl}/api/pdf-python`, {
-    method: 'POST',
-    body: formData,
-  });
+  // 2. signed download URL 생성 (5분 유효)
+  const { data: urlData, error: urlErr } = await client.storage
+    .from('docstore-files')
+    .createSignedUrl(tmpPath, 300);
+  if (urlErr) throw new Error(`Signed URL 발급 실패: ${urlErr.message}`);
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Python API 호출 실패 (${response.status}): ${text.slice(0, 200)}`);
+  try {
+    // 3. JSON으로 Python 함수 호출 (URL만 전달하므로 body 크기 문제 없음)
+    const response = await fetch(`${baseUrl}/api/pdf-python`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ loader: loaderId, downloadUrl: urlData.signedUrl }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Python API 호출 실패 (${response.status}): ${text.slice(0, 200)}`);
+    }
+
+    const result = await response.json();
+    if (result.error) {
+      throw new Error(`Python 로더(${loaderId}): ${result.error}`);
+    }
+
+    return normalizeResult(result, loaderId);
+  } finally {
+    // 4. 임시 Storage 파일 정리
+    client.storage.from('docstore-files').remove([tmpPath]).catch(() => {});
   }
-
-  const result = await response.json();
-  if (result.error) {
-    throw new Error(`Python 로더(${loaderId}): ${result.error}`);
-  }
-
-  return normalizeResult(result, loaderId);
 }
 
 /**
