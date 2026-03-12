@@ -6,7 +6,7 @@
 // 2. 사용 가능한 로더 목록 조회 (UI용)
 // 3. 선택된 로더로 PDF 텍스트 추출 실행
 
-// ── 로더 레지스트리 (8개 플러그인 로드) ──
+// ── 로더 레지스트리 (6개 플러그인 로드) ──
 const ALL_LOADERS = {
   'pdf-parse': require('./pdf-parse'),
   'pdfjs': require('./pdfjs'),
@@ -14,8 +14,6 @@ const ALL_LOADERS = {
   'pymupdf': require('./pymupdf'),
   'pypdf': require('./pypdf'),
   'pdfplumber': require('./pdfplumber'),
-  'unstructured': require('./unstructured'),
-  'docling': require('./docling'),
 };
 
 // 기본 로더: 항상 사용 가능한 pdf-parse

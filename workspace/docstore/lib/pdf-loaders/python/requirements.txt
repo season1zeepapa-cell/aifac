@@ -1,7 +1,4 @@
 # PDF 로더 Python 의존성
-# 필요한 것만 선택적으로 설치 가능
 pymupdf>=1.24.0
 pypdf>=4.0.0
 pdfplumber>=0.11.0
-unstructured[pdf]>=0.16.0
-docling>=2.0.0

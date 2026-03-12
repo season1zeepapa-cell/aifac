@@ -106,68 +106,11 @@ def extract_pdfplumber(pdf_path):
     }
 
 
-def extract_unstructured(pdf_path):
-    """Unstructured — 레이아웃/요소 분석 기반 정교한 추출"""
-    from unstructured.partition.pdf import partition_pdf
-    elements = partition_pdf(pdf_path)
-
-    # 요소를 페이지별로 그룹핑
-    page_map = {}
-    for el in elements:
-        page_num = el.metadata.page_number if hasattr(el.metadata, 'page_number') else 1
-        if page_num not in page_map:
-            page_map[page_num] = []
-        page_map[page_num].append(str(el))
-
-    pages = []
-    all_text = []
-    for page_num in sorted(page_map.keys()):
-        text = "\n".join(page_map[page_num])
-        pages.append({
-            "pageNumber": page_num,
-            "text": text.strip(),
-        })
-        all_text.append(text)
-
-    return {
-        "pages": pages,
-        "totalPages": len(pages),
-        "fullText": "\n\n".join(all_text),
-    }
-
-
-def extract_docling(pdf_path):
-    """Docling (IBM) — 문서 이해 AI 기반 구조화 추출"""
-    from docling.document_converter import DocumentConverter
-    converter = DocumentConverter()
-    result = converter.convert(pdf_path)
-
-    # Docling 결과에서 텍스트 추출
-    full_text = result.document.export_to_markdown()
-
-    # 페이지 구분이 있으면 분리, 없으면 전체를 1페이지로
-    raw_pages = full_text.split('\f') if '\f' in full_text else [full_text]
-    pages = []
-    for i, text in enumerate(raw_pages):
-        pages.append({
-            "pageNumber": i + 1,
-            "text": text.strip(),
-        })
-
-    return {
-        "pages": pages,
-        "totalPages": len(pages),
-        "fullText": full_text,
-    }
-
-
 # 로더 매핑
 LOADERS = {
     "pymupdf": extract_pymupdf,
     "pypdf": extract_pypdf,
     "pdfplumber": extract_pdfplumber,
-    "unstructured": extract_unstructured,
-    "docling": extract_docling,
 }
 
 

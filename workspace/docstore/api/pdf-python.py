@@ -72,40 +72,10 @@ def extract_pdfplumber(pdf_path):
     return {"pages": pages, "totalPages": len(pages), "fullText": "\n\n".join(all_text)}
 
 
-def extract_unstructured(pdf_path):
-    from unstructured.partition.pdf import partition_pdf
-    elements = partition_pdf(pdf_path)
-    page_map = {}
-    for el in elements:
-        page_num = el.metadata.page_number if hasattr(el.metadata, 'page_number') else 1
-        if page_num not in page_map:
-            page_map[page_num] = []
-        page_map[page_num].append(str(el))
-    pages = []
-    all_text = []
-    for page_num in sorted(page_map.keys()):
-        text = "\n".join(page_map[page_num])
-        pages.append({"pageNumber": page_num, "text": text.strip()})
-        all_text.append(text)
-    return {"pages": pages, "totalPages": len(pages), "fullText": "\n\n".join(all_text)}
-
-
-def extract_docling(pdf_path):
-    from docling.document_converter import DocumentConverter
-    converter = DocumentConverter()
-    result = converter.convert(pdf_path)
-    full_text = result.document.export_to_markdown()
-    raw_pages = full_text.split('\f') if '\f' in full_text else [full_text]
-    pages = [{"pageNumber": i + 1, "text": t.strip()} for i, t in enumerate(raw_pages)]
-    return {"pages": pages, "totalPages": len(pages), "fullText": full_text}
-
-
 LOADERS = {
     "pymupdf": extract_pymupdf,
     "pypdf": extract_pypdf,
     "pdfplumber": extract_pdfplumber,
-    "unstructured": extract_unstructured,
-    "docling": extract_docling,
 }
 
 
