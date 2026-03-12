@@ -239,6 +239,8 @@ module.exports = async function handler(req, res) {
       results,
     });
   } catch (err) {
-    sendError(res, err, '[Crawl]');
+    console.error('[Crawl] 에러:', err);
+    const msg = err.message || '크롤링 실패';
+    return res.status(500).json({ error: `크롤링 실패: ${msg}` });
   }
 };

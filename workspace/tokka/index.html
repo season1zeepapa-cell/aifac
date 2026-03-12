@@ -1692,7 +1692,8 @@
                   {rooms.map(room => {
                     const avatar = getRoomAvatar(room);
                     const displayName = getRoomDisplayName(room);
-                    const lastMsg = room.last_message || room.lastMessage;
+                    const lastMsgText = room.last_message || '';
+                    const lastMsgAt = room.last_message_at || null;
                     return (
                       <div
                         key={room.id}
@@ -1715,14 +1716,14 @@
                                 <span className="text-[9px] px-1 py-0.5 rounded bg-pink-main/10 text-pink-main font-semibold flex-shrink-0">AI</span>
                               )}
                             </div>
-                            {lastMsg && (
+                            {lastMsgAt && (
                               <span className="text-xs flex-shrink-0 ml-2 font-medium" style={{ color: 'var(--theme-main)' }}>
-                                {formatTime(lastMsg.created_at || lastMsg.createdAt)}
+                                {formatTime(lastMsgAt)}
                               </span>
                             )}
                           </div>
                           <p className="text-sm text-gray-400 dark:text-gray-500 truncate mt-0.5">
-                            {lastMsg?.content || '메시지가 없습니다'}
+                            {lastMsgText || '메시지가 없습니다'}
                           </p>
                         </div>
                         {room.unread_count > 0 && (
@@ -2397,7 +2398,7 @@
         try {
           await apiFetch(`/rooms/${roomId}/invite`, {
             method: 'POST',
-            body: JSON.stringify({ userIds: selectedIds }),
+            body: JSON.stringify({ memberIds: selectedIds }),
           });
           showToast('멤버를 초대했습니다!', 'success');
           onClose();

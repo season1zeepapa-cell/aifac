@@ -1,11 +1,9 @@
 // 네이버 뉴스 검색 API 프록시
 // POST /api/naver-news { keyword, maxResults, titleWeight, contentWeight }
 // → 네이버 검색 API 호출 → 점수 계산 → 결과 반환 + crawl_results 임시 저장
-const https = require('https');
 const { query } = require('../lib/db');
 const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
-const { sendError } = require('../lib/error-handler');
 
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID;
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET;
@@ -21,38 +19,27 @@ function stripHtml(str) {
     .trim();
 }
 
-// 네이버 검색 API 호출
-function naverSearch(keyword, display = 20) {
-  return new Promise((resolve, reject) => {
-    const params = new URLSearchParams({
-      query: keyword,
-      display: Math.min(display, 100).toString(),
-      sort: 'date',
-    });
-    const options = {
-      hostname: 'openapi.naver.com',
-      path: `/v1/search/news.json?${params}`,
-      method: 'GET',
-      headers: {
-        'X-Naver-Client-Id': NAVER_CLIENT_ID,
-        'X-Naver-Client-Secret': NAVER_CLIENT_SECRET,
-      },
-    };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch (e) {
-          reject(new Error('네이버 API 응답 파싱 실패'));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('네이버 API 타임아웃')); });
-    req.end();
+// 네이버 검색 API 호출 (fetch 기반)
+async function naverSearch(keyword, display = 20) {
+  const params = new URLSearchParams({
+    query: keyword,
+    display: Math.min(display, 100).toString(),
+    sort: 'date',
   });
+  const url = `https://openapi.naver.com/v1/search/news.json?${params}`;
+  const resp = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'X-Naver-Client-Id': NAVER_CLIENT_ID,
+      'X-Naver-Client-Secret': NAVER_CLIENT_SECRET,
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`네이버 API 응답 에러 (${resp.status}): ${text}`);
+  }
+  return resp.json();
 }
 
 // 키워드 매칭 점수 계산
@@ -103,11 +90,17 @@ module.exports = async function handler(req, res) {
     const days = parseInt(recentDays) || 7;
 
     // 제외 패턴 로드
-    const exclResult = await query(
-      'SELECT url_pattern FROM crawl_exclusions WHERE org_id IS NULL OR org_id = $1',
-      [orgId]
-    );
-    const exclusions = exclResult.rows.map(r => r.url_pattern);
+    let exclusions = [];
+    try {
+      const exclResult = await query(
+        'SELECT url_pattern FROM crawl_exclusions WHERE org_id IS NULL OR org_id = $1',
+        [orgId]
+      );
+      exclusions = exclResult.rows.map(r => r.url_pattern);
+    } catch (dbErr) {
+      console.error('[NaverNews] 제외 패턴 로드 실패:', dbErr.message);
+      // 제외 패턴 없이 계속 진행
+    }
 
     // 네이버 검색 API 호출
     const naverData = await naverSearch(keyword, display);
@@ -182,6 +175,8 @@ module.exports = async function handler(req, res) {
       results,
     });
   } catch (err) {
-    sendError(res, err, '[NaverNews]');
+    console.error('[NaverNews] 에러:', err);
+    const msg = err.message || '네이버 뉴스 검색 실패';
+    return res.status(500).json({ error: `네이버 API 검색 실패: ${msg}` });
   }
 };
