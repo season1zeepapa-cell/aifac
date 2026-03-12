@@ -55,7 +55,11 @@ module.exports = async function handler(req, res) {
     }
 
     // 안전한 파일 경로 생성: temp-uploads/{orgId}/{timestamp}_{safeName}
-    const safeName = sanitizeFilename(filename);
+    // Supabase Storage는 영문+숫자+일부 특수문자만 허용 → 한글 등 비ASCII 제거
+    const ext = filename.includes('.') ? '.' + filename.split('.').pop() : '';
+    const nameOnly = filename.replace(/\.[^.]+$/, '');
+    const ascii = nameOnly.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    const safeName = (ascii || 'file') + ext;
     const storagePath = `temp-uploads/${orgId}/${Date.now()}_${safeName}`;
 
     const data = await createSignedUploadUrl(storagePath);
