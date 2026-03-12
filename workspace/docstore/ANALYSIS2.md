@@ -172,25 +172,361 @@ DocStore의 RAG 시스템을 업계 4대 표준 프레임워크 기준으로 비
 
 ---
 
-### 3-1. LangChain 기준 평가
+### 3-1. LangChain 기준 평가 (코드베이스 진단)
 
 > LangChain: 가장 널리 쓰이는 RAG 프레임워크. 모듈형 체인, 다양한 리트리버, 프롬프트 관리가 핵심.
+> 진단일: 2026-03-12 | 코드베이스 직접 분석 기반
 
-| LangChain 핵심 컴포넌트 | DocStore 구현 수준 | 상세 |
-|---|---|---|
-| **Document Loaders** | ★★★★★ | PDF, DOCX, XLSX, CSV, JSON, TXT, MD, 이미지, URL, 법령 API, 네이버 뉴스, 사이트 크롤링 — 12종 이상 로더 완비 |
-| **Text Splitters** | ★★★★☆ | 4가지 전략(sentence/recursive/law-article/semantic). LangChain의 RecursiveCharacterTextSplitter 패턴 구현. MarkdownHeaderTextSplitter 미구현 |
-| **Embeddings** | ★★★★☆ | OpenAI text-embedding-3-small + Enriched Text. 다만 모델 선택지가 1개 (LangChain은 20+ 모델 지원) |
-| **Vector Stores** | ★★★★☆ | pgvector + HNSW 인덱스. LangChain의 Chroma/Pinecone/Weaviate 등 전환 어려움 (직접 SQL) |
-| **Retrievers** | ★★★★★ | Hybrid (벡터+FTS+RRF), Cohere Rerank, MMR 다양성 — LangChain EnsembleRetriever와 동등 |
-| **Chains/Prompts** | ★★★☆☆ | 직접 프롬프트 관리. 체인 추상화 없음 (RetrievalQA, ConversationalRetrievalChain 패턴 미사용) |
-| **Memory** | ★★★★☆ | 채팅 세션 DB 저장/복원, 최근 20메시지 컨텍스트. ConversationBufferWindowMemory와 유사 |
-| **Output Parsers** | ★★★★☆ | JSON/마크다운 파싱 + 근거 검증(verified). StructuredOutputParser 패턴 부분 구현 |
-| **Callbacks/Tracing** | ★★☆☆☆ | console.log 수준. LangSmith 같은 관측성 도구 미연동 |
+| LangChain 핵심 컴포넌트 | DocStore 구현 수준 | 코드 근거 | 상세 |
+|---|---|---|---|
+| **Document Loaders** | ★★★★★ | `lib/text-extractor.js`, `lib/pdf-loaders/` (8개), `api/url-import.js`, `api/law-import.js`, `api/crawl.js`, `api/naver-news.js` | 14종 로더 — PDF 8종(플러그인), DOCX/XLSX/CSV/JSON/TXT/MD, 이미지(OCR 6엔진), URL, 법령API, 네이버뉴스, 사이트크롤링 |
+| **Text Splitters** | ★★★★☆ | `lib/text-splitters.js` — `sentenceChunk()`, `recursiveChunk()`, `lawArticleChunk()`, `semanticChunk()` | 4전략. recursive는 LangChain `RecursiveCharacterTextSplitter` 동일 패턴 (구분자 계층: `\n\n`→`\n`→`.`→` `→`''`). semantic은 Gemini Flash 활용. MarkdownHeaderTextSplitter 미구현 |
+| **Embeddings** | ★★★★☆ | `lib/embeddings.js` — `generateEmbeddings()`, `buildEnrichedText()`, 배치 CONCURRENCY=5 | OpenAI `text-embedding-3-small` (1536D) 단일 모델. Enriched Text가 차별점: `[문서][분류][태그][키워드][요약][장][절][조항]` 8개 메타필드 + 원문 결합 |
+| **Vector Stores** | ★★★★☆ | `lib/hybrid-search.js` — `dc.embedding <=> $1::vector` (코사인), `lib/db.js` — Pool max=2 | pgvector 코사인 거리 + **HNSW 인덱스 적용 확인** (m=16, ef=64). 코드(`create-tables.js`)에는 누락이나 DB에 실제 존재. GIN 인덱스(FTS)도 정상 |
+| **Retrievers** | ★★★★★ | `lib/hybrid-search.js` — `rrfFusion()` K=60, `lib/reranker.js` — Cohere v3.5, `lib/rag-agent.js` — `applyMMR()` λ=0.7 | 벡터+FTS 병렬→RRF합산→Cohere Rerank→MMR 다양성. 점수 가중합산 (벡터0.4+RRF0.3+Rerank0.3). 3-gram Jaccard 텍스트 유사도 |
+| **Chains/Prompts** | ★★★☆☆ | `api/rag.js` 라인 77~119 — JSON 강제 프롬프트, `lib/rag-agent.js` — `multiHopSearch()` | 프롬프트 하드코딩 (템플릿 변수화 없음). 체인 추상화 없이 순차 파이프라인. 멀티홉은 있으나 동적 라우팅 없음 |
+| **Memory** | ★★★★☆ | `api/chat-sessions.js` — JSONB `messages` 배열, `api/rag.js` — `history.slice(-20)` | DB 기반 세션 저장/복원, 최근 10턴(20메시지) 컨텍스트. LangChain `ConversationBufferWindowMemory` 동등. 요약 메모리(ConversationSummaryMemory) 미구현 |
+| **Output Parsers** | ★★★★☆ | `lib/output-parser.js` — `tryParseJSON()` → `parseMarkdownAnswer()` 2단계 폴백 | JSON 코드블록 추출→검증→정규화. 근거 번호 verified 검증. 마크다운 폴백 파서 (헤딩 기반 섹션 추출). LangChain `StructuredOutputParser` + `OutputFixingParser` 패턴 부분 구현 |
+| **Callbacks/Tracing** | ★★★☆☆ | `lib/api-tracker.js` — `trackUsage()`, `trackedApiCall()`, `checkDailyLimit()`, 비용 테이블 | console.log보다 진보: 토큰별 비용 추정, 크레딧 소진 자동 감지(`isCreditError`), 일일 한도, 키 비활성화. 다만 LangSmith급 체인별 추적/리플레이 없음 |
 
-**종합: ★★★★☆ (4.0/5)**
+**종합: ★★★★☆ (4.1/5)** (이전 4.0 → 4.1 상향: Callbacks 재평가 + 로더 확대)
 
-LangChain의 핵심 패턴(로더→분할→임베딩→검색→생성)을 프레임워크 의존 없이 직접 구현. 체인 추상화와 관측성(observability)이 부족하지만, 실질적 기능 수준은 LangChain 기반 프로젝트와 동등하다. Document Loaders는 크롤링 추가로 12종 이상으로 확대.
+**이전 평가 대비 변경점:**
+- Vector Stores: ★★★★☆ 유지 (코드에는 인덱스 생성 SQL 누락이나, DB에 HNSW 인덱스 실존 확인 — `idx_chunks_embedding_hnsw` m=16, ef=64)
+- Callbacks/Tracing: ★★☆☆☆ → **★★★☆☆** (상향: `api-tracker.js`의 비용 추적/크레딧 감지/일일 한도가 단순 console.log 이상)
+- Document Loaders: 12종 → **14종** (PDF 로더 플러그인 8개 반영)
+
+---
+
+#### 3-1-1. 항목별 코드 진단 상세
+
+##### (1) Document Loaders — ★★★★★
+
+**강점:** 프레임워크 없이 LangChain 수준의 로더 다양성 확보
+
+```
+텍스트 기반 (lib/text-extractor.js):
+  detectFileType() → EXTENSION_MAP 기반 분기
+  ├── text    → 전체/줄/구분자 분할
+  ├── markdown → 헤딩(#) 기준 섹션 분할
+  ├── docx   → mammoth 라이브러리 (단락 단위)
+  ├── xlsx   → 행 단위, 시트/컬럼 선택 가능
+  ├── csv    → 행 단위, 열 매핑
+  ├── json   → 배열(각 요소) 또는 객체(키별)
+  └── image  → OCR 엔진 매니저 위임 (6개 엔진)
+
+PDF 전용 (lib/pdf-loaders/ 플러그인):
+  index.js → ALL_LOADERS 레지스트리
+  ├── pdf-parse.js    (Node.js, 기본값)
+  ├── pdfjs.js        (Node.js, 좌표 기반)
+  ├── upstage-doc.js  (HTTP API, 한국어 특화)
+  ├── pymupdf.js      (Python 브릿지)
+  ├── pypdf.js        (Python 브릿지)
+  ├── pdfplumber.js   (Python 브릿지, 표 추출)
+  ├── unstructured.js (Python 브릿지)
+  └── docling.js      (Python 브릿지)
+
+외부 소스:
+  api/url-import.js   → 웹페이지 (charset 자동 감지)
+  api/law-import.js   → 법제처 API (조문별 구조화)
+  api/crawl.js        → 사이트 게시판 (CSS 선택자 기반)
+  api/naver-news.js   → 네이버 뉴스 검색 API
+```
+
+**미구현:** LangChain 대비 부족한 로더
+- Notion, Google Drive, Slack, Confluence 등 SaaS 연동
+- YouTube 자막 로더
+- 이메일 (IMAP/EML) 로더
+
+**개선안:**
+| 우선순위 | 로더 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 높음 | HWP/HWPX (한글 문서) | 중간 (hwp.js 라이브러리) | 한국 공공문서 대부분이 HWP 형식 |
+| 중간 | Google Drive | 중간 (OAuth + API) | 팀 문서 자동 연동 |
+| 낮음 | Notion | 높음 (API 페이지네이션) | 지식 베이스 통합 |
+
+---
+
+##### (2) Text Splitters — ★★★★☆
+
+**강점:** 4가지 전략이 용도별로 잘 분화됨
+
+```javascript
+// lib/text-splitters.js — 전략별 파라미터
+sentenceChunk(text, chunkSize=500, overlap=100)     // 마침표 기준, 범용
+recursiveChunk(text, chunkSize=500, overlap=100)     // 구분자 계층, LangChain 동일
+lawArticleChunk(text, chunkSize=800, overlap=0)      // 제N조 패턴, 항(①②③) 세분화
+semanticChunk(text, chunkSize=800)                   // Gemini Flash AI 분할
+```
+
+**발견된 이슈:**
+1. `recursiveChunk`의 기본 `overlap=100`이 문장 경계를 무시할 수 있음 (문장 중간에서 잘릴 위험)
+2. `semanticChunk`의 `MAX_INPUT=6000`자 제한 — 긴 문서에서 사전 분할이 의미 경계를 훼손할 수 있음
+3. 청크 크기 파라미터가 UI에서 조정 불가 (하드코딩)
+
+**개선안:**
+| 우선순위 | 항목 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 높음 | MarkdownHeaderTextSplitter | 낮음 | MD 문서의 구조 보존 (현재 헤딩 기반 분할은 있으나 계층 메타데이터 미전달) |
+| 높음 | 청크 크기 UI 설정 | 낮음 | 사용자가 문서 특성에 맞게 chunkSize/overlap 조정 |
+| 중간 | Parent Document Retriever | 중간 | 작은 청크로 검색 → 부모 섹션 컨텍스트 반환 (정확도↑) |
+| 낮음 | overlap 문장 경계 보정 | 낮음 | overlap이 문장 중간에서 잘리지 않도록 보정 |
+
+---
+
+##### (3) Embeddings — ★★★★☆
+
+**강점:** Enriched Text 전략이 LangChain의 `ContextualCompressionRetriever`보다 우수
+
+```javascript
+// lib/embeddings.js — buildEnrichedText() 결과 예시:
+// [문서] 개인정보 보호법
+// [분류] 법령
+// [태그] 개인정보, CCTV, 영상정보
+// [키워드] 영상정보처리기기, 설치제한
+// [문서요약] 개인정보 보호에 관한 기본법으로...
+// [장] 제5장 영상정보처리기기의 설치·운영 제한
+// [조항] 제25조
+// [조항제목] 영상정보처리기기의 설치·운영 제한
+// 영상정보처리기기운영자는 ... (원문)
+```
+
+**발견된 이슈:**
+1. 임베딩 모델이 `text-embedding-3-small` 하나뿐 — 한국어 특화 모델 부재
+2. 배치 크기가 CONCURRENCY=5로 고정 — API rate limit에 따라 동적 조절 불가
+3. 임베딩 캐싱 없음 — 동일 텍스트 재임베딩 시 비용 발생
+
+**개선안:**
+| 우선순위 | 항목 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 높음 | 임베딩 모델 선택지 추가 | 중간 (`api/settings.js` 활용) | Upstage Solar Embedding (한국어 1위), Cohere embed-v3 지원 |
+| 중간 | 임베딩 캐시 (해시 기반) | 중간 | 동일 텍스트 재임베딩 방지 → 비용 30~50% 절감 |
+| 낮음 | Late Chunking | 높음 | 전체 문서를 한 번에 임베딩 → 청크 경계 문맥 손실 방지 |
+
+---
+
+##### (4) Vector Stores — ★★★★☆
+
+**코드(`create-tables.js`)에는 벡터 인덱스 생성 SQL이 누락되어 있었으나, DB 실제 확인 결과 HNSW 인덱스가 존재**
+
+```sql
+-- DB 실제 인덱스 현황 (2026-03-12 확인):
+idx_chunks_embedding_hnsw  HNSW (embedding vector_cosine_ops) m=16, ef=64  ✅
+idx_chunks_fts             GIN (fts_vector)                                ✅
+document_chunks_pkey       btree (id)                                      ✅
+```
+
+```javascript
+// lib/hybrid-search.js — 벡터 검색 쿼리:
+ORDER BY dc.embedding <=> $1::vector  // 코사인 거리 → HNSW 인덱스 사용
+LIMIT 30
+```
+
+**현재 상태:** 752개 청크, HNSW 인덱스 정상 동작. 현 규모에서는 충분.
+
+**개선안 (향후 규모 확장 시):**
+| 우선순위 | 항목 | 설명 | 기대 효과 |
+|---------|------|------|----------|
+| 높음 | `create-tables.js`에 인덱스 SQL 추가 | 코드와 DB 상태 동기화 | 신규 환경 세팅 시 인덱스 누락 방지 |
+| 중간 | enriched_text 컬럼 추가 | `ALTER TABLE document_chunks ADD COLUMN enriched_text TEXT;` | 현재 enriched_text가 DB에 미저장 (매번 재생성) |
+| 낮음 | IVFFlat 전환 검토 | 데이터 10만건 이상 시 HNSW보다 메모리 효율적 | 대규모 확장 대비 |
+
+---
+
+##### (5) Retrievers — ★★★★★
+
+**DocStore의 최대 강점.** 5단계 파이프라인이 업계 최상위 수준:
+
+```
+질문 입력
+  ↓
+[1단계] 벡터 검색 ←→ FTS 검색 (병렬 실행)
+  │ vectorSearch(): dc.embedding <=> query::vector
+  │ ftsSearch(): dc.fts_vector @@ to_tsquery() + ts_rank_cd()
+  ↓
+[2단계] RRF 합산 (K=60)
+  │ rrfFusion(): 양쪽 매칭 시 보너스 합산
+  ↓
+[3단계] Cohere Rerank v3.5 (선택적)
+  │ rerankResults(): 최대 4096 토큰/문서
+  ↓
+[4단계] 점수 정규화 + 가중 합산
+  │ normalizeScores(): Min-Max 정규화
+  │ computeFinalScore(): 벡터(0.4) + RRF(0.3) + Rerank(0.3)
+  ↓
+[5단계] MMR 다양성 보장 (λ=0.7)
+  │ applyMMR(): 3-gram Jaccard 유사도로 중복 제거
+  ↓
+최종 결과 (topK건)
+```
+
+**개선안:**
+| 우선순위 | 항목 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 높음 | 쿼리 리라이팅 | 낮음 (LLM 1회 호출) | 모호한 질문 → 검색 최적화 쿼리 변환 (recall 20%↑) |
+| 높음 | HyDE (Hypothetical Document Embedding) | 낮음 | 가상 답변 생성→임베딩→검색 (벡터 recall 30%↑) |
+| 중간 | Parent Document Retriever | 중간 | 작은 청크 검색 → 부모 섹션 반환 (정확도+컨텍스트) |
+| 중간 | 형태소 분석기 (Mecab) | 높음 (서버 의존성) | 한국어 FTS 정확도 향상 (N-gram 한계 극복) |
+
+---
+
+##### (6) Chains/Prompts — ★★★☆☆
+
+**현재 구조:** 체인 추상화 없이 `api/rag.js`에 하드코딩
+
+```javascript
+// api/rag.js — 프롬프트가 코드에 직접 포함
+const prompt = `당신은 법령 및 규정 전문 AI 어시스턴트입니다...
+## 답변 형식
+반드시 아래 JSON 형식으로만 답변하세요...
+\`\`\`json
+{ "conclusion": "...", "evidenceChain": [...], ... }
+\`\`\`
+## 규칙
+- 근거 자료에 있는 내용만 바탕으로 답변하세요
+...
+--- 근거 자료 (총 ${sources.length}건) ---
+${contextText}
+${historyText}
+--- 현재 질문 ---
+${question.trim()}`;
+```
+
+**문제점:**
+1. 프롬프트가 코드에 직접 포함 → 수정 시 재배포 필요
+2. 프롬프트 버전 관리 없음
+3. 상황별 프롬프트 분기 없음 (법령 질문 vs 일반 문서 질문 동일 프롬프트)
+4. LangChain의 `PromptTemplate`, `ChatPromptTemplate`, `FewShotPromptTemplate` 등 템플릿 패턴 미사용
+
+**개선안:**
+| 우선순위 | 항목 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 높음 | 프롬프트 템플릿 분리 | 낮음 (별도 파일/DB) | 재배포 없이 프롬프트 수정 가능, A/B 테스트 |
+| 높음 | 카테고리별 프롬프트 | 낮음 | 법령/규정/기출/일반 각각 최적화된 프롬프트 |
+| 중간 | Few-shot 예시 | 낮음 | 출력 형식 준수율 향상 (현재 JSON 파싱 실패→마크다운 폴백 빈도 감소) |
+| 중간 | 프롬프트 체인 | 중간 | 쿼리 분석→검색→답변→검증 각 단계 독립 프롬프트 |
+
+---
+
+##### (7) Memory — ★★★★☆
+
+**현재 구조:** DB 기반 세션 관리, 최근 20메시지 포함
+
+```javascript
+// api/chat-sessions.js — chat_sessions 테이블
+// messages: JSONB 배열 [{role, content}, ...]
+// 제한: 최근 10턴(20메시지)만 프롬프트에 포함
+
+// api/rag.js — 히스토리 전달
+const recentHistory = Array.isArray(history) ? history.slice(-20) : [];
+const historyText = recentHistory.map(h =>
+  h.role === 'user' ? `사용자: ${h.content}` : `AI: ${h.content}`
+).join('\n\n');
+```
+
+**문제점:**
+1. 긴 대화에서 초반 맥락 유실 (20메시지 윈도우)
+2. 히스토리가 프롬프트에 직접 포함 → 토큰 소비 증가
+3. 대화 요약(ConversationSummaryMemory) 없음
+
+**개선안:**
+| 우선순위 | 항목 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 중간 | 대화 요약 메모리 | 중간 (LLM 1회 호출) | 오래된 대화를 요약하여 토큰 절약 + 맥락 유지 |
+| 낮음 | 엔티티 메모리 | 높음 | 대화에서 언급된 법률/조문을 추적 |
+
+---
+
+##### (8) Output Parsers — ★★★★☆
+
+**강점:** 2단계 폴백 + 근거 번호 검증이 LangChain `OutputFixingParser`보다 실용적
+
+```
+LLM 출력
+  ↓
+[1단계] tryParseJSON() — ```json 코드블록 추출 → JSON.parse → 검증
+  │ 성공 → validateAndNormalize() → sourceIndex 범위 검증 → verified 플래그
+  ↓ 실패
+[2단계] parseMarkdownAnswer() — 헤딩(##/###) 기준 섹션 분리
+  │ 결론, 근거체인, 교차참조, 주의사항 각각 추출
+  ↓
+구조화된 응답 { conclusion, evidenceChain[], crossReferences[], caveats, warnings[] }
+```
+
+**개선안:**
+| 우선순위 | 항목 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 중간 | 자동 재시도 (OutputFixingParser) | 낮음 | JSON 파싱 실패 시 LLM에 에러 메시지와 함께 재요청 |
+| 낮음 | Guardrails 입력 검증 | 중간 | 악의적 프롬프트 인젝션 방어 |
+
+---
+
+##### (9) Callbacks/Tracing — ★★★☆☆ (상향 조정)
+
+**이전 평가 ★★☆☆☆에서 상향.** `api-tracker.js`가 단순 로깅 이상의 기능 제공:
+
+```javascript
+// lib/api-tracker.js — 추적 기능 목록:
+trackUsage()         // 프로바이더/모델/엔드포인트별 토큰+비용 기록
+trackedApiCall()     // 래핑: 한도 체크→호출→기록→크레딧 감지
+checkDailyLimit()    // 일일 호출 한도 확인
+isCreditError()      // 크레딧 소진 패턴 6개 매칭
+updateKeyStatus()    // 키 비활성화/활성화 자동 전환
+
+// 비용 단가 테이블:
+COST_TABLE = {
+  'openai:text-embedding-3-small': { in: 0.02, out: 0 },
+  'openai:gpt-4o': { in: 5.0, out: 15.0 },
+  'anthropic:claude-opus-4-6': { in: 15.0, out: 75.0 },
+  ...
+}
+```
+
+**미구현 (LangSmith 대비):**
+- 체인 단계별 추적 (검색→리랭크→LLM 각 단계 시간/토큰)
+- 실행 리플레이 (동일 입력으로 재실행)
+- 평가 데이터셋 기반 자동 테스트
+- 피드백 수집 (사용자 답변 만족도)
+
+**개선안:**
+| 우선순위 | 항목 | 구현 난이도 | 기대 효과 |
+|---------|------|-----------|----------|
+| 높음 | RAG 파이프라인 단계별 타이밍 | 낮음 | 검색/리랭크/LLM 각 단계 병목 식별 |
+| 높음 | 답변 피드백 수집 (👍/👎) | 낮음 | RAG 품질 측정 지표 확보 |
+| 중간 | 자체 트레이싱 테이블 | 중간 | `rag_traces` 테이블: 질문→검색결과→LLM응답→파싱결과 전 과정 기록 |
+| 낮음 | LangSmith/LangFuse 연동 | 중간 | 외부 관측성 도구 활용 |
+
+---
+
+#### 3-1-2. 종합 개선 로드맵 (LangChain 기준)
+
+##### 즉시 적용 (1~2일)
+
+| # | 항목 | 대상 | 효과 |
+|---|------|------|------|
+| 1 | ~~HNSW 벡터 인덱스 생성~~ | ~~DB 마이그레이션~~ | ✅ 이미 적용 확인 (idx_chunks_embedding_hnsw) |
+| 2 | **RAG 파이프라인 타이밍 로그** | `api/rag.js` | 병목 구간 즉시 식별 |
+| 3 | **답변 피드백 UI** | `index.html` + API | 품질 측정 기반 확보 |
+| 4 | **create-tables.js 인덱스 동기화** | `scripts/create-tables.js` | 코드-DB 상태 일치 |
+
+##### 단기 (1~2주)
+
+| # | 항목 | 대상 | 효과 |
+|---|------|------|------|
+| 4 | **쿼리 리라이팅** | `lib/rag-agent.js` | 모호한 질문 검색 정확도 20%↑ |
+| 5 | **HyDE** | `lib/hybrid-search.js` | 벡터 검색 recall 30%↑ |
+| 6 | **프롬프트 템플릿 분리** | `lib/prompts/` 디렉토리 | 재배포 없이 프롬프트 튜닝 |
+| 7 | **카테고리별 프롬프트** | `lib/prompts/` | 법령/일반 각각 최적화 |
+| 8 | **임베딩 모델 선택** | `lib/embeddings.js` + UI | 한국어 특화 모델 지원 |
+
+##### 중기 (1~2개월)
+
+| # | 항목 | 대상 | 효과 |
+|---|------|------|------|
+| 9 | **Parent Document Retriever** | `lib/hybrid-search.js` | 검색 정확도 + 컨텍스트 품질 |
+| 10 | **대화 요약 메모리** | `api/rag.js` | 긴 대화에서 토큰 절약 + 맥락 유지 |
+| 11 | **자체 트레이싱 시스템** | `lib/rag-tracer.js` + DB | 체인별 추적/리플레이/평가 |
+| 12 | **HWP 로더** | `lib/text-extractor.js` | 한국 공공문서 지원 |
 
 ---
 
@@ -500,6 +836,7 @@ workspace/docstore/
 | 2026-03-11 | 설정 탭에 네이버 검색 API 관리 추가 |
 | 2026-03-12 | ANALYSIS2.md 최신화 — 크롤링 기능/DB/테스트/파일구조/환경변수 반영 |
 | 2026-03-12 | PDF 로더 플러그인 시스템 구현 계획 추가 |
+| 2026-03-12 | LangChain 기준 평가 코드베이스 진단 — 9개 항목 코드 근거 분석, Callbacks 상향(★2→★3), HNSW 인덱스 DB 실존 확인, 종합 4.0→4.1 상향, 12개 개선 로드맵 추가 |
 
 ---
 
