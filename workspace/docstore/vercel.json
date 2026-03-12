@@ -21,7 +21,9 @@
     "api/crawl-keywords.js": { "maxDuration": 10 },
     "api/naver-news.js": { "maxDuration": 30 },
     "api/crawl.js": { "maxDuration": 60 },
-    "api/crawl-ingest.js": { "maxDuration": 300 }
+    "api/crawl-ingest.js": { "maxDuration": 300 },
+    "api/pdf-loaders.js": { "maxDuration": 10 },
+    "api/pdf-python.py": { "runtime": "@vercel/python", "maxDuration": 300 }
   },
   "headers": [
     {

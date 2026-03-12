@@ -1,7 +1,7 @@
 // PDF 텍스트 추출 엔진
-// - 텍스트 PDF: pdf-parse 라이브러리로 추출
+// - 8개 PDF 로더 플러그인 중 선택하여 텍스트 추출
 // - 이미지/스캔 PDF: Claude Opus 4.6 비전 API로 OCR
-const pdfParse = require('pdf-parse');
+const { extractWithLoader } = require('./pdf-loaders');
 const Anthropic = require('@anthropic-ai/sdk').default;
 
 // Claude 클라이언트 (OCR용)
@@ -22,15 +22,14 @@ function getClaudeClient() {
  * @returns {Object} { pages: [...], sections: [...], totalPages, extractionMethod }
  */
 async function extractFromPdf(pdfBuffer, options = {}) {
-  const { sectionType = 'page', customDelimiter } = options;
+  const { sectionType = 'page', customDelimiter, pdfLoader = 'pdf-parse' } = options;
 
-  // 1단계: pdf-parse로 기본 추출
-  const parsed = await pdfParse(pdfBuffer);
-  const totalPages = parsed.numpages;
+  // 1단계: 선택된 PDF 로더로 텍스트 추출 (기존: pdf-parse 하드코딩 → 플러그인)
+  const loaderResult = await extractWithLoader(pdfLoader, pdfBuffer);
+  const totalPages = loaderResult.totalPages;
 
-  // 2단계: 페이지별 텍스트 추출
-  // pdf-parse는 전체 텍스트만 제공하므로, 페이지 구분을 위해 별도 처리
-  const pageTexts = await extractPageTexts(pdfBuffer, parsed);
+  // 2단계: 로더 결과를 페이지 배열로 변환
+  const pageTexts = loaderResult.pages;
 
   // 3단계: 각 페이지의 텍스트 품질 확인 → 빈 페이지는 OCR 시도
   const processedPages = await processPages(pageTexts, pdfBuffer);
@@ -46,10 +45,11 @@ async function extractFromPdf(pdfBuffer, options = {}) {
 
   return {
     totalPages,
-    fullText: parsed.text,
+    fullText: loaderResult.fullText,
     pages: processedPages,
     sections,
     sectionType,
+    pdfLoader,
   };
 }
 

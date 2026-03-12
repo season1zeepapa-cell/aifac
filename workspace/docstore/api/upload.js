@@ -92,6 +92,9 @@ module.exports = async function handler(req, res) {
       // 청크 분할 전략 (sentence, recursive, law-article, semantic)
       if (req.body.chunkStrategy) extraOptions.chunkStrategy = req.body.chunkStrategy;
 
+      // PDF 로더 선택 (pdf-parse, pdfjs, upstage-doc, pymupdf, pypdf, pdfplumber, unstructured, docling)
+      if (req.body.pdfLoader) extraOptions.pdfLoader = req.body.pdfLoader;
+
       // 형식별 추가 옵션 (프론트에서 전달)
       if (req.body.contentColumn) extraOptions.contentColumn = req.body.contentColumn;
       if (req.body.contentField) extraOptions.contentField = req.body.contentField;
@@ -122,7 +125,10 @@ module.exports = async function handler(req, res) {
     let extracted;
 
     if (fileType === 'pdf') {
-      extracted = await extractFromPdf(fileBuffer, { sectionType, customDelimiter });
+      extracted = await extractFromPdf(fileBuffer, {
+        sectionType, customDelimiter,
+        pdfLoader: extraOptions.pdfLoader || 'pdf-parse',
+      });
     } else {
       const options = {
         sectionType,

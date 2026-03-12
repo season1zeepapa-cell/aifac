@@ -488,6 +488,7 @@
         icon: '📄',
         color: 'red',
         accept: '.pdf',
+        hasPdfLoaderSelect: true,
         sectionOptions: [
           { value: 'page', label: '페이지별' },
           { value: 'full', label: '문서 전체' },
@@ -921,6 +922,8 @@
       const [dragOver, setDragOver] = useState(false);
       const [deidentify, setDeidentify] = useState(false); // 비식별화 토글
       const [chunkStrategy, setChunkStrategy] = useState('sentence'); // 청크 분할 전략
+      const [pdfLoader, setPdfLoader] = useState('pdf-parse'); // PDF 로더 선택
+      const [pdfLoaders, setPdfLoaders] = useState([]); // 사용 가능한 PDF 로더 목록
       const fileInputRef = useRef(null);
 
       // ── 법령 검색 모드 state ──
@@ -1104,6 +1107,20 @@
         } catch (err) { setCrawlError(err.message); }
       }, [newExclusion, loadCrawlData]);
 
+      // ── PDF 로더 목록 로드 (컴포넌트 마운트 시 1회) ──
+      useEffect(() => {
+        const token = getAuthToken();
+        if (!token) return;
+        fetch(`${API_BASE_URL}/pdf-loaders`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.loaders) setPdfLoaders(data.loaders);
+          })
+          .catch(() => {}); // 실패해도 기본값(pdf-parse) 사용
+      }, []);
+
       // ── 파일 선택 핸들러 (모든 형식 지원) ──
       const handleFileSelect = useCallback((selectedFile) => {
         if (!selectedFile) return;
@@ -1207,6 +1224,7 @@
           if (contentType) formData.append('contentType', contentType);
           if (deidentify) formData.append('deidentify', 'true');
           if (chunkStrategy && chunkStrategy !== 'sentence') formData.append('chunkStrategy', chunkStrategy);
+          if (pdfLoader && pdfLoader !== 'pdf-parse') formData.append('pdfLoader', pdfLoader);
 
           const token = getAuthToken();
           const data = await uploadProgress.upload(`${API_BASE_URL}/upload`, formData, token);
@@ -1225,7 +1243,7 @@
         } finally {
           setUploading(false);
         }
-      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, deidentify, chunkStrategy, onUploadComplete]);
+      }, [file, title, category, sectionType, customDelimiter, contentColumn, contentField, contentType, deidentify, chunkStrategy, pdfLoader, onUploadComplete]);
 
       const handleReset = useCallback(() => {
         setFile(null); setFileType(null); setTitle(''); setCategory('기타');
@@ -1413,6 +1431,39 @@
                     {/* 구분자 입력 (custom일 때) */}
                     {sectionType === 'custom' && (
                       <Input label="구분자" value={customDelimiter} onChange={e => setCustomDelimiter(e.target.value)} placeholder="예: --- 또는 ## 등" />
+                    )}
+
+                    {/* PDF: 추출 엔진 선택 */}
+                    {fileType === 'pdf' && pdfLoaders.length > 0 && (
+                      <div className="space-y-2">
+                        <Select
+                          label="PDF 추출 엔진"
+                          value={pdfLoader}
+                          onChange={e => setPdfLoader(e.target.value)}
+                          options={pdfLoaders.map(l => ({
+                            value: l.id,
+                            label: `${l.name}${!l.is_available ? ' (사용 불가)' : l.free ? '' : ' (유료)'}`,
+                            disabled: !l.is_available,
+                          }))}
+                        />
+                        {(() => {
+                          const selected = pdfLoaders.find(l => l.id === pdfLoader);
+                          return selected ? (
+                            <div className="flex flex-wrap gap-1.5 items-center">
+                              <span className="text-xs text-text-secondary">{selected.description}</span>
+                              {selected.bestFor?.map(tag => (
+                                <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-full">{tag}</span>
+                              ))}
+                              {selected.type === 'python' && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded-full">Python</span>
+                              )}
+                              {selected.type === 'api' && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-full">API</span>
+                              )}
+                            </div>
+                          ) : null;
+                        })()}
+                      </div>
                     )}
 
                     {/* CSV/XLSX: 열 선택 */}

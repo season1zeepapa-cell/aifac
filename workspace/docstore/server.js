@@ -109,6 +109,10 @@ app.delete('/api/crawl-keywords', (req, res) => crawlKeywordsHandler(req, res));
 const naverNewsHandler = require('./api/naver-news');
 app.post('/api/naver-news', (req, res) => naverNewsHandler(req, res));
 
+// ── GET /api/pdf-loaders — PDF 로더 목록 ──
+const pdfLoadersHandler = require('./api/pdf-loaders');
+app.get('/api/pdf-loaders', (req, res) => pdfLoadersHandler(req, res));
+
 // ── POST /api/crawl — 사이트 게시판 크롤링 실행 ──
 const crawlHandler = require('./api/crawl');
 app.post('/api/crawl', (req, res) => crawlHandler(req, res));

@@ -1,0 +1,159 @@
+"""
+Vercel Python 서버리스 함수 — Python PDF 로더 실행기
+
+Node.js 서버에서 이 함수를 HTTP로 호출하여 Python PDF 로더를 실행한다.
+multipart/form-data로 PDF 수신 + loader 파라미터 → JSON 결과 반환
+
+사용법:
+  POST /api/pdf-python
+  Content-Type: multipart/form-data
+  - file: PDF 파일
+  - loader: pymupdf | pypdf | pdfplumber | unstructured | docling
+"""
+
+from http.server import BaseHTTPRequestHandler
+import json
+import tempfile
+import os
+import cgi
+
+
+# bridge.py의 로더 함수들을 직접 임포트
+def extract_pymupdf(pdf_path):
+    import pymupdf
+    doc = pymupdf.open(pdf_path)
+    pages = []
+    all_text = []
+    for i, page in enumerate(doc):
+        text = page.get_text("text")
+        pages.append({"pageNumber": i + 1, "text": text.strip()})
+        all_text.append(text)
+    doc.close()
+    return {"pages": pages, "totalPages": len(pages), "fullText": "\n\n".join(all_text)}
+
+
+def extract_pypdf(pdf_path):
+    from pypdf import PdfReader
+    reader = PdfReader(pdf_path)
+    pages = []
+    all_text = []
+    for i, page in enumerate(reader.pages):
+        text = page.extract_text() or ""
+        pages.append({"pageNumber": i + 1, "text": text.strip()})
+        all_text.append(text)
+    return {"pages": pages, "totalPages": len(pages), "fullText": "\n\n".join(all_text)}
+
+
+def extract_pdfplumber(pdf_path):
+    import pdfplumber
+    pages = []
+    all_text = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for i, page in enumerate(pdf.pages):
+            tables = page.extract_tables()
+            if tables:
+                table_texts = []
+                for table in tables:
+                    if not table:
+                        continue
+                    header = table[0] if table else []
+                    rows = table[1:] if len(table) > 1 else []
+                    md = "| " + " | ".join(str(c or "") for c in header) + " |"
+                    md += "\n| " + " | ".join("---" for _ in header) + " |"
+                    for row in rows:
+                        md += "\n| " + " | ".join(str(c or "") for c in row) + " |"
+                    table_texts.append(md)
+                plain_text = page.extract_text() or ""
+                text = plain_text + "\n\n" + "\n\n".join(table_texts)
+            else:
+                text = page.extract_text() or ""
+            pages.append({"pageNumber": i + 1, "text": text.strip()})
+            all_text.append(text)
+    return {"pages": pages, "totalPages": len(pages), "fullText": "\n\n".join(all_text)}
+
+
+def extract_unstructured(pdf_path):
+    from unstructured.partition.pdf import partition_pdf
+    elements = partition_pdf(pdf_path)
+    page_map = {}
+    for el in elements:
+        page_num = el.metadata.page_number if hasattr(el.metadata, 'page_number') else 1
+        if page_num not in page_map:
+            page_map[page_num] = []
+        page_map[page_num].append(str(el))
+    pages = []
+    all_text = []
+    for page_num in sorted(page_map.keys()):
+        text = "\n".join(page_map[page_num])
+        pages.append({"pageNumber": page_num, "text": text.strip()})
+        all_text.append(text)
+    return {"pages": pages, "totalPages": len(pages), "fullText": "\n\n".join(all_text)}
+
+
+def extract_docling(pdf_path):
+    from docling.document_converter import DocumentConverter
+    converter = DocumentConverter()
+    result = converter.convert(pdf_path)
+    full_text = result.document.export_to_markdown()
+    raw_pages = full_text.split('\f') if '\f' in full_text else [full_text]
+    pages = [{"pageNumber": i + 1, "text": t.strip()} for i, t in enumerate(raw_pages)]
+    return {"pages": pages, "totalPages": len(pages), "fullText": full_text}
+
+
+LOADERS = {
+    "pymupdf": extract_pymupdf,
+    "pypdf": extract_pypdf,
+    "pdfplumber": extract_pdfplumber,
+    "unstructured": extract_unstructured,
+    "docling": extract_docling,
+}
+
+
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            content_type = self.headers.get('Content-Type', '')
+
+            if 'multipart/form-data' not in content_type:
+                self._send_json(400, {"error": "multipart/form-data 형식이 필요합니다."})
+                return
+
+            # multipart 파싱
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': content_type}
+            )
+
+            loader_id = form.getfirst('loader', 'pymupdf')
+            file_item = form['file']
+
+            if not file_item.file:
+                self._send_json(400, {"error": "PDF 파일이 필요합니다."})
+                return
+
+            if loader_id not in LOADERS:
+                self._send_json(400, {"error": f"알 수 없는 로더: {loader_id}"})
+                return
+
+            # 임시 파일로 저장
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                tmp.write(file_item.file.read())
+                tmp_path = tmp.name
+
+            try:
+                result = LOADERS[loader_id](tmp_path)
+                self._send_json(200, result)
+            finally:
+                os.unlink(tmp_path)
+
+        except ImportError as e:
+            self._send_json(500, {"error": f"패키지 미설치: {str(e)}"})
+        except Exception as e:
+            self._send_json(500, {"error": f"처리 오류: {str(e)}"})
+
+    def _send_json(self, status, data):
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
