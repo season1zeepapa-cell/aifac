@@ -29,6 +29,7 @@
     "api/upload-url.js": { "maxDuration": 10 },
     "api/split-preview.js": { "maxDuration": 10 },
     "api/observability.js": { "maxDuration": 10 },
+    "api/prompts.js": { "maxDuration": 10 },
     "api/pdf-python.py": { "runtime": "@vercel/python@4.6.0", "maxDuration": 300 },
     "api/tokenize-ko.py": { "runtime": "@vercel/python@4.6.0", "maxDuration": 30 }
   },

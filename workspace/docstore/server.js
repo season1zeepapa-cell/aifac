@@ -80,6 +80,12 @@ app.get('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
 app.post('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
 app.delete('/api/chat-sessions', (req, res) => chatSessionsHandler(req, res));
 
+// ── /api/prompts (GET, POST, DELETE) — 프롬프트 템플릿 관리 ──
+const promptsHandler = require('./api/prompts');
+app.get('/api/prompts', (req, res) => promptsHandler(req, res));
+app.post('/api/prompts', (req, res) => promptsHandler(req, res));
+app.delete('/api/prompts', (req, res) => promptsHandler(req, res));
+
 // ── /api/observability (GET) — LangFuse 관측성 상태 확인 ──
 const observabilityHandler = require('./api/observability');
 app.get('/api/observability', (req, res) => observabilityHandler(req, res));

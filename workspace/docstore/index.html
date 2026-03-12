@@ -7555,6 +7555,7 @@
         { id: 'deidentify', label: '비식별화' },
         { id: 'categories', label: '카테고리' },
         { id: 'chunk-presets', label: '분할 설정' },
+        { id: 'prompts', label: '프롬프트' },
         { id: 'observability', label: '관측성' },
       ];
 
@@ -8106,10 +8107,406 @@
             <ChunkPresetPanel />
           )}
 
+          {/* ════════ 프롬프트 관리 탭 ════════ */}
+          {subTab === 'prompts' && (
+            <PromptManagerPanel />
+          )}
+
           {/* ════════ 관측성 (LangFuse) 탭 ════════ */}
           {subTab === 'observability' && (
             <ObservabilityPanel />
           )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 프롬프트 템플릿 관리 패널
+    // ========================================
+    function PromptManagerPanel() {
+      const [templates, setTemplates] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [editing, setEditing] = useState(null); // 편집 중인 템플릿
+      const [message, setMessage] = useState(null);
+
+      // 템플릿 목록 로드
+      const fetchTemplates = useCallback(async () => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/prompts`);
+          if (res.ok) {
+            const data = await res.json();
+            setTemplates(data.templates || []);
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
+
+      // 편집할 템플릿 전체 로드
+      const handleEdit = useCallback(async (t) => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/prompts?name=${encodeURIComponent(t.name)}&category=${encodeURIComponent(t.category)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.template) {
+              setEditing({
+                ...data.template,
+                few_shot_examples: data.template.few_shot_examples || [],
+                model_params: data.template.model_params || {},
+              });
+            }
+          }
+        } catch (err) {
+          setMessage({ type: 'error', text: err.message });
+        }
+      }, []);
+
+      // 저장
+      const handleSave = useCallback(async () => {
+        if (!editing) return;
+        try {
+          const res = await authFetch(`${API_BASE_URL}/prompts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: editing.id,
+              name: editing.name,
+              category: editing.category,
+              stage: editing.stage,
+              template: editing.template,
+              few_shot_examples: editing.few_shot_examples,
+              model_params: editing.model_params,
+              description: editing.description,
+            }),
+          });
+          if (res.ok) {
+            setMessage({ type: 'success', text: '저장 완료! 캐시가 초기화되어 즉시 반영됩니다.' });
+            setEditing(null);
+            fetchTemplates();
+            setTimeout(() => setMessage(null), 3000);
+          }
+        } catch (err) {
+          setMessage({ type: 'error', text: err.message });
+        }
+      }, [editing, fetchTemplates]);
+
+      // 삭제
+      const handleDelete = useCallback(async (id) => {
+        if (!confirm('이 템플릿을 삭제하시겠습니까? 기본 폴백 프롬프트로 대체됩니다.')) return;
+        try {
+          await authFetch(`${API_BASE_URL}/prompts`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+          });
+          setMessage({ type: 'success', text: '삭제 완료' });
+          fetchTemplates();
+          setTimeout(() => setMessage(null), 2000);
+        } catch (err) {
+          setMessage({ type: 'error', text: err.message });
+        }
+      }, [fetchTemplates]);
+
+      // DB 기본 템플릿 초기화
+      const handleInitDefaults = useCallback(async () => {
+        setMessage({ type: 'info', text: '기본 템플릿 초기화는 서버에서 마이그레이션 스크립트를 실행하세요: node scripts/add-prompt-templates-table.js' });
+        setTimeout(() => setMessage(null), 5000);
+      }, []);
+
+      // 카테고리 색상
+      const catColor = (cat) => {
+        const colors = { '법령': 'blue', '규정': 'green', '기출': 'amber', 'default': 'gray' };
+        const c = colors[cat] || 'gray';
+        return `bg-${c}-50 text-${c}-700 border-${c}-200`;
+      };
+
+      // 스테이지 라벨
+      const stageLabel = (stage) => {
+        const labels = { 'main': '메인', 'query-analysis': '쿼리 분석', 'verify': '검증' };
+        return labels[stage] || stage;
+      };
+
+      if (loading) return <div className="text-center py-8 text-text-secondary text-sm">로딩 중...</div>;
+
+      // 편집 모드
+      if (editing) {
+        return (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-text">
+                프롬프트 편집: {editing.name} ({editing.category})
+              </h3>
+              <button onClick={() => setEditing(null)}
+                className="text-xs px-2 py-1 rounded bg-border/50 hover:bg-border text-text-secondary">
+                ← 목록으로
+              </button>
+            </div>
+
+            {message && (
+              <div className={`p-2 rounded text-xs ${message.type === 'success' ? 'bg-green-50 text-green-700' : message.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>
+                {message.text}
+              </div>
+            )}
+
+            <Card>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-text-secondary block mb-1">이름</label>
+                    <input value={editing.name} readOnly
+                      className="w-full px-2 py-1.5 text-xs rounded border border-border bg-bg text-text-secondary" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-text-secondary block mb-1">카테고리</label>
+                    <input value={editing.category} readOnly
+                      className="w-full px-2 py-1.5 text-xs rounded border border-border bg-bg text-text-secondary" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[11px] text-text-secondary block mb-1">설명</label>
+                  <input value={editing.description || ''}
+                    onChange={e => setEditing({...editing, description: e.target.value})}
+                    className="w-full px-2 py-1.5 text-xs rounded border border-border bg-bg text-text" />
+                </div>
+              </div>
+            </Card>
+
+            {/* 프롬프트 텍스트 편집 */}
+            <Card>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-text">프롬프트 템플릿</label>
+                  <span className="text-[10px] text-text-secondary">
+                    변수: {'{{question}} {{contextText}} {{historyText}} {{sourceCount}} {{fewShotBlock}} {{answer}}'}
+                  </span>
+                </div>
+                <textarea value={editing.template}
+                  onChange={e => setEditing({...editing, template: e.target.value})}
+                  rows={18}
+                  className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-border bg-bg text-text resize-y leading-relaxed"
+                  placeholder="프롬프트 템플릿을 입력하세요..." />
+                <p className="text-[10px] text-text-secondary">
+                  {'{{변수명}}'} 형식으로 동적 값을 삽입합니다. 저장하면 캐시가 초기화되어 즉시 반영됩니다.
+                </p>
+              </div>
+            </Card>
+
+            {/* Few-shot 예시 편집 */}
+            <Card>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-text">Few-shot 예시</label>
+                  <button onClick={() => {
+                    const examples = [...(editing.few_shot_examples || []), { input: '', output: '' }];
+                    setEditing({...editing, few_shot_examples: examples});
+                  }}
+                    className="text-xs px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20">
+                    + 예시 추가
+                  </button>
+                </div>
+                {(editing.few_shot_examples || []).length === 0 && (
+                  <p className="text-[11px] text-text-secondary py-2">
+                    Few-shot 예시가 없습니다. 예시를 추가하면 LLM이 출력 형식을 더 잘 따릅니다.
+                  </p>
+                )}
+                {(editing.few_shot_examples || []).map((ex, idx) => (
+                  <div key={idx} className="p-2 rounded-lg border border-border bg-bg space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-medium text-text-secondary">예시 {idx + 1}</span>
+                      <button onClick={() => {
+                        const examples = editing.few_shot_examples.filter((_, i) => i !== idx);
+                        setEditing({...editing, few_shot_examples: examples});
+                      }}
+                        className="text-[10px] text-red-500 hover:text-red-700">삭제</button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-text-secondary">입력 (질문)</label>
+                      <input value={ex.input}
+                        onChange={e => {
+                          const examples = [...editing.few_shot_examples];
+                          examples[idx] = {...examples[idx], input: e.target.value};
+                          setEditing({...editing, few_shot_examples: examples});
+                        }}
+                        className="w-full px-2 py-1 text-xs rounded border border-border bg-card-bg text-text" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-text-secondary">출력 (기대 답변)</label>
+                      <textarea value={ex.output}
+                        onChange={e => {
+                          const examples = [...editing.few_shot_examples];
+                          examples[idx] = {...examples[idx], output: e.target.value};
+                          setEditing({...editing, few_shot_examples: examples});
+                        }}
+                        rows={3}
+                        className="w-full px-2 py-1 text-xs font-mono rounded border border-border bg-card-bg text-text resize-y" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            {/* 모델 파라미터 */}
+            <Card>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-text">모델 파라미터</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-text-secondary">Temperature</label>
+                    <input type="number" step="0.1" min="0" max="1"
+                      value={editing.model_params?.temperature ?? 0.3}
+                      onChange={e => setEditing({...editing, model_params: {...editing.model_params, temperature: parseFloat(e.target.value)}})}
+                      className="w-full px-2 py-1 text-xs rounded border border-border bg-bg text-text" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-secondary">Max Tokens</label>
+                    <input type="number" step="256" min="256" max="8192"
+                      value={editing.model_params?.maxTokens ?? 3072}
+                      onChange={e => setEditing({...editing, model_params: {...editing.model_params, maxTokens: parseInt(e.target.value)}})}
+                      className="w-full px-2 py-1 text-xs rounded border border-border bg-bg text-text" />
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* 저장 버튼 */}
+            <div className="flex gap-2">
+              <button onClick={handleSave}
+                className="flex-1 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary/90">
+                저장 (즉시 반영)
+              </button>
+              <button onClick={() => setEditing(null)}
+                className="px-4 py-2 text-sm text-text-secondary border border-border rounded-lg hover:bg-border/50">
+                취소
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      // 목록 모드
+      return (
+        <div className="space-y-4">
+          {message && (
+            <div className={`p-2 rounded text-xs ${message.type === 'success' ? 'bg-green-50 text-green-700' : message.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>
+              {message.text}
+            </div>
+          )}
+
+          <Card>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-text">프롬프트 템플릿</h3>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    DB에 저장된 프롬프트를 수정하면 재배포 없이 즉시 반영됩니다.
+                  </p>
+                </div>
+                <button onClick={handleInitDefaults}
+                  className="text-xs px-2 py-1 rounded bg-border/50 hover:bg-border text-text-secondary">
+                  초기화 안내
+                </button>
+              </div>
+
+              {templates.length === 0 && (
+                <div className="text-center py-6">
+                  <p className="text-sm text-text-secondary mb-2">등록된 템플릿이 없습니다.</p>
+                  <p className="text-xs text-text-secondary">
+                    서버에서 <code className="px-1 py-0.5 bg-gray-100 rounded text-[10px]">node scripts/add-prompt-templates-table.js</code>를 실행하세요.
+                  </p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    DB 없이도 코드 내장 폴백 프롬프트로 동작합니다.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {templates.map(t => (
+                  <div key={t.id} className="p-3 rounded-lg border border-border bg-bg hover:border-primary/30 transition-colors">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium text-text">{t.name}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                            t.category === '법령' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                            t.category === '규정' ? 'bg-green-50 text-green-700 border-green-200' :
+                            t.category === '기출' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                            'bg-gray-50 text-gray-600 border-gray-200'
+                          }`}>{t.category}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-200">
+                            {stageLabel(t.stage)}
+                          </span>
+                          {!t.is_active && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-500">비활성</span>
+                          )}
+                        </div>
+                        {t.description && (
+                          <p className="text-[11px] text-text-secondary mt-1 truncate">{t.description}</p>
+                        )}
+                        <div className="flex items-center gap-3 mt-1 text-[10px] text-text-secondary">
+                          <span>v{t.version}</span>
+                          <span>{t.template_length}자</span>
+                          {t.example_count > 0 && <span>예시 {t.example_count}개</span>}
+                        </div>
+                      </div>
+                      <div className="flex gap-1 ml-2">
+                        <button onClick={() => handleEdit(t)}
+                          className="text-[11px] px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20">
+                          편집
+                        </button>
+                        <button onClick={() => handleDelete(t.id)}
+                          className="text-[11px] px-2 py-1 rounded bg-red-50 text-red-500 hover:bg-red-100">
+                          삭제
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          {/* 프롬프트 체인 설명 */}
+          <Card>
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold text-text">프롬프트 체인 구조</h3>
+              <p className="text-xs text-text-secondary">
+                RAG 질의응답은 아래 단계별 프롬프트를 순서대로 실행합니다.
+                각 단계의 프롬프트를 독립적으로 최적화할 수 있습니다.
+              </p>
+              <div className="flex items-center gap-1 flex-wrap">
+                {[
+                  { name: 'query-rewrite', label: '쿼리 리라이팅', color: 'indigo' },
+                  { name: 'hyde', label: 'HyDE 가상문서', color: 'violet' },
+                  { name: 'rag-answer', label: 'RAG 답변', color: 'blue' },
+                  { name: 'rag-verify', label: '답변 검증', color: 'emerald' },
+                ].map((stage, i) => (
+                  <React.Fragment key={stage.name}>
+                    {i > 0 && <span className="text-text-secondary text-xs">→</span>}
+                    <span className={`text-[10px] px-2 py-1 rounded-md border bg-${stage.color}-50 text-${stage.color}-700 border-${stage.color}-200`}>
+                      {stage.label}
+                    </span>
+                  </React.Fragment>
+                ))}
+              </div>
+              <div className="space-y-1.5">
+                {[
+                  { stage: '쿼리 리라이팅', desc: '사용자 질문을 법률 용어로 변환 + 하위 질문 분해' },
+                  { stage: 'HyDE 가상문서', desc: '가상 답변 문서 생성으로 벡터 검색 품질 향상' },
+                  { stage: 'RAG 답변 (카테고리별)', desc: '법령/규정/기출/일반 각각 최적화된 프롬프트로 답변' },
+                  { stage: '답변 검증 (선택)', desc: '근거 정확성 + 논리 일관성 자동 검증' },
+                ].map(item => (
+                  <div key={item.stage} className="flex items-start gap-2 text-[11px]">
+                    <span className="text-primary font-medium min-w-[100px]">{item.stage}</span>
+                    <span className="text-text-secondary">{item.desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
         </div>
       );
     }
