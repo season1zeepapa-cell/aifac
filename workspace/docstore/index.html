@@ -3117,6 +3117,7 @@
                     { id: 'sections', label: '조문 목록' },
                     { id: 'graph', label: '참조 그래프' },
                     { id: 'crossref', label: '교차 참조' },
+                    { id: 'triples', label: '지식 그래프' },
                   ].map(tab => (
                     <button
                       key={tab.id}
@@ -3139,6 +3140,11 @@
               {/* 교차 참조 탭 */}
               {doc.file_type === 'law' && detailTab === 'crossref' && (
                 <CrossRefView documentId={documentId} docTitle={doc.title} />
+              )}
+
+              {/* 지식 그래프 탭 */}
+              {doc.file_type === 'law' && detailTab === 'triples' && (
+                <KnowledgeGraphView documentId={documentId} docTitle={doc.title} />
               )}
 
               {/* 섹션 목록 */}
@@ -3990,6 +3996,591 @@
           title: '교차 참조가 없습니다',
           description: '위 버튼을 클릭하여 다른 법령과의 참조 관계를 구축하세요.',
         }),
+      );
+    }
+
+    // ========================================
+    // 지식 그래프 뷰 (엔티티 + 트리플 + D3 그래프 + PG/Neo4j 비교)
+    // ========================================
+    function KnowledgeGraphView({ documentId, docTitle }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [building, setBuilding] = useState(false);
+      const [viewMode, setViewMode] = useState('graph'); // 'graph' | 'list' | 'entities' | 'compare'
+      const [searchQuery, setSearchQuery] = useState('');
+      const [typeFilter, setTypeFilter] = useState('all');
+      const [hoveredNode, setHoveredNode] = useState(null);
+      const [neo4jStatus, setNeo4jStatus] = useState(null); // { connected, message }
+      const [compareData, setCompareData] = useState(null); // PG vs Neo4j 비교 결과
+      const [comparing, setComparing] = useState(false);
+      const [pathQuery, setPathQuery] = useState({ from: '', to: '' });
+      const [pathResult, setPathResult] = useState(null);
+      const svgRef = useRef(null);
+      const graphContainerRef = useRef(null);
+
+      // 엔티티 타입별 색상
+      const typeColorMap = {
+        law: { bg: 'bg-blue-100', text: 'text-blue-700', hex: '#3B82F6' },
+        article: { bg: 'bg-green-100', text: 'text-green-700', hex: '#10B981' },
+        organization: { bg: 'bg-amber-100', text: 'text-amber-700', hex: '#F59E0B' },
+        concept: { bg: 'bg-purple-100', text: 'text-purple-700', hex: '#8B5CF6' },
+        duty: { bg: 'bg-red-100', text: 'text-red-700', hex: '#EF4444' },
+      };
+      const typeLabels = {
+        law: '법령', article: '조문', organization: '기관',
+        concept: '개념', duty: '의무·권리',
+      };
+
+      // 관계(predicate)별 색상
+      const predColorMap = {
+        '준용': '#F59E0B', '적용': '#10B981', '예외': '#EF4444',
+        '의거': '#6366F1', '위반': '#DC2626', '정의': '#3B82F6',
+        '위임': '#8B5CF6', '관할': '#14B8A6', '소속': '#F97316',
+        '근거': '#0EA5E9', '제한': '#E11D48', '부과': '#D946EF',
+        '보호': '#22C55E', '고지': '#64748B',
+      };
+
+      // PG 데이터 로드
+      const loadData = async () => {
+        try {
+          setLoading(true);
+          const res = await fetchAPI(`/api/knowledge-graph?docId=${documentId}`);
+          setData(res);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Neo4j 연결 상태 확인
+      const checkNeo4j = async () => {
+        try {
+          const res = await fetchAPI('/api/knowledge-graph-neo4j?status=true');
+          setNeo4jStatus(res);
+        } catch {
+          setNeo4jStatus({ connected: false, message: 'API 호출 실패' });
+        }
+      };
+
+      useEffect(() => { loadData(); checkNeo4j(); }, [documentId]);
+
+      // PG 트리플 구축
+      const handleBuild = async () => {
+        try {
+          setBuilding(true);
+          await fetchAPI('/api/knowledge-graph', {
+            method: 'POST',
+            body: JSON.stringify({ docId: documentId }),
+          });
+          await loadData();
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBuilding(false);
+        }
+      };
+
+      // PG vs Neo4j 비교 구축
+      const handleCompare = async () => {
+        try {
+          setComparing(true);
+          setCompareData(null);
+          const res = await fetchAPI('/api/knowledge-graph-neo4j', {
+            method: 'POST',
+            body: JSON.stringify({ docId: documentId, compare: true }),
+          });
+          setCompareData(res.comparison);
+          // PG 데이터도 갱신
+          await loadData();
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setComparing(false);
+        }
+      };
+
+      // Neo4j 최단 경로 탐색
+      const handlePathFind = async () => {
+        if (!pathQuery.from || !pathQuery.to) return;
+        try {
+          const res = await fetchAPI('/api/knowledge-graph-neo4j', {
+            method: 'POST',
+            body: JSON.stringify({
+              docId: documentId,
+              path: true,
+              from: pathQuery.from,
+              to: pathQuery.to,
+            }),
+          });
+          setPathResult(res);
+        } catch (e) {
+          setPathResult({ found: false, error: e.message });
+        }
+      };
+
+      // D3.js 그래프 렌더링
+      useEffect(() => {
+        if (viewMode !== 'graph' || !data || !data.nodes?.length || !svgRef.current) return;
+
+        const container = graphContainerRef.current;
+        const width = container?.clientWidth || 600;
+        const height = 450;
+
+        const svgEl = d3.select(svgRef.current);
+        svgEl.selectAll('*').remove();
+        svgEl.attr('viewBox', `0 0 ${width} ${height}`);
+
+        const nodes = data.nodes.map(n => ({ ...n }));
+        const links = data.links.map(l => ({
+          ...l,
+          source: typeof l.source === 'object' ? l.source.id : l.source,
+          target: typeof l.target === 'object' ? l.target.id : l.target,
+        }));
+
+        const svg = svgEl;
+        const g = svg.append('g');
+        const zoom = d3.zoom()
+          .scaleExtent([0.3, 4])
+          .on('zoom', (event) => g.attr('transform', event.transform));
+        svg.call(zoom);
+
+        const defs = svg.append('defs');
+        Object.entries(predColorMap).forEach(([pred, color]) => {
+          defs.append('marker')
+            .attr('id', `kg-arrow-${pred}`)
+            .attr('viewBox', '0 -5 10 10')
+            .attr('refX', 20).attr('refY', 0)
+            .attr('markerWidth', 6).attr('markerHeight', 6)
+            .attr('orient', 'auto')
+            .append('path')
+            .attr('d', 'M0,-5L10,0L0,5')
+            .attr('fill', color);
+        });
+
+        const radiusScale = d3.scaleSqrt()
+          .domain([0, d3.max(nodes, d => d.linkCount) || 1])
+          .range([8, 22]);
+
+        const simulation = d3.forceSimulation(nodes)
+          .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+          .force('charge', d3.forceManyBody().strength(-300))
+          .force('center', d3.forceCenter(width / 2, height / 2))
+          .force('collision', d3.forceCollide().radius(d => radiusScale(d.linkCount) + 10));
+
+        const link = g.append('g')
+          .selectAll('line').data(links).enter().append('line')
+          .attr('stroke', d => predColorMap[d.predicate] || '#6B7280')
+          .attr('stroke-opacity', 0.5)
+          .attr('stroke-width', d => d.confidence >= 0.9 ? 2 : 1)
+          .attr('marker-end', d => `url(#kg-arrow-${d.predicate})`);
+
+        const linkLabel = g.append('g')
+          .selectAll('text').data(links).enter().append('text')
+          .attr('text-anchor', 'middle')
+          .attr('fill', d => predColorMap[d.predicate] || '#6B7280')
+          .attr('font-size', '8px').attr('dy', -4)
+          .text(d => d.predicate);
+
+        const node = g.append('g')
+          .selectAll('g').data(nodes).enter().append('g')
+          .style('cursor', 'pointer')
+          .on('mouseover', (event, d) => setHoveredNode(d))
+          .on('mouseout', () => setHoveredNode(null))
+          .call(d3.drag()
+            .on('start', (event, d) => {
+              if (!event.active) simulation.alphaTarget(0.3).restart();
+              d.fx = d.x; d.fy = d.y;
+            })
+            .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+            .on('end', (event, d) => {
+              if (!event.active) simulation.alphaTarget(0);
+              d.fx = null; d.fy = null;
+            })
+          );
+
+        node.append('circle')
+          .attr('r', d => radiusScale(d.linkCount))
+          .attr('fill', d => typeColorMap[d.type]?.hex || '#6B7280')
+          .attr('stroke', '#fff').attr('stroke-width', 1.5).attr('opacity', 0.9);
+
+        node.append('text')
+          .attr('dy', d => radiusScale(d.linkCount) + 12)
+          .attr('text-anchor', 'middle')
+          .attr('fill', 'var(--text)').attr('font-size', '9px')
+          .text(d => d.name.length > 10 ? d.name.substring(0, 10) + '…' : d.name);
+
+        simulation.on('tick', () => {
+          link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+            .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+          linkLabel.attr('x', d => (d.source.x + d.target.x) / 2)
+            .attr('y', d => (d.source.y + d.target.y) / 2);
+          node.attr('transform', d => `translate(${d.x},${d.y})`);
+        });
+
+        return () => simulation.stop();
+      }, [data, viewMode]);
+
+      // 필터링
+      const filteredEntities = (data?.entities || []).filter(e => {
+        if (typeFilter !== 'all' && e.entity_type !== typeFilter) return false;
+        if (searchQuery && !e.name.includes(searchQuery)) return false;
+        return true;
+      });
+      const filteredTriples = (data?.links || []).filter(l => {
+        if (!searchQuery) return true;
+        const subj = data.nodes?.find(n => n.id === (typeof l.source === 'object' ? l.source.id : l.source));
+        const obj = data.nodes?.find(n => n.id === (typeof l.target === 'object' ? l.target.id : l.target));
+        return (subj?.name || '').includes(searchQuery) || (obj?.name || '').includes(searchQuery) || l.predicate.includes(searchQuery);
+      });
+
+      // 비교 바 렌더링 헬퍼 (막대 그래프)
+      const CompareBar = ({ label, pgVal, neo4jVal, unit, higherIsBetter }) => {
+        const maxVal = Math.max(pgVal || 0, neo4jVal || 0, 1);
+        const pgBetter = higherIsBetter ? pgVal >= neo4jVal : pgVal <= neo4jVal;
+        return React.createElement('div', { className: 'space-y-1' },
+          React.createElement('p', { className: 'text-[10px] text-text-secondary font-medium' }, label),
+          React.createElement('div', { className: 'flex items-center gap-2' },
+            React.createElement('span', { className: 'text-[10px] w-8 text-right font-mono text-blue-600' }, 'PG'),
+            React.createElement('div', { className: 'flex-1 bg-gray-100 rounded-full h-4 relative overflow-hidden' },
+              React.createElement('div', {
+                className: `h-full rounded-full transition-all ${pgBetter ? 'bg-blue-500' : 'bg-blue-300'}`,
+                style: { width: `${(pgVal / maxVal) * 100}%` },
+              }),
+              React.createElement('span', { className: 'absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white drop-shadow' },
+                `${pgVal}${unit}`),
+            ),
+          ),
+          React.createElement('div', { className: 'flex items-center gap-2' },
+            React.createElement('span', { className: 'text-[10px] w-8 text-right font-mono text-emerald-600' }, 'N4j'),
+            React.createElement('div', { className: 'flex-1 bg-gray-100 rounded-full h-4 relative overflow-hidden' },
+              React.createElement('div', {
+                className: `h-full rounded-full transition-all ${!pgBetter ? 'bg-emerald-500' : 'bg-emerald-300'}`,
+                style: { width: `${(neo4jVal / maxVal) * 100}%` },
+              }),
+              React.createElement('span', { className: 'absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white drop-shadow' },
+                neo4jVal !== undefined ? `${neo4jVal}${unit}` : 'N/A'),
+            ),
+          ),
+        );
+      };
+
+      if (loading) return React.createElement('div', { className: 'flex justify-center py-8' },
+        React.createElement('div', { className: 'animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full' })
+      );
+      if (error) return React.createElement('div', { className: 'text-center py-8 text-red-500 text-sm' }, error);
+
+      const stats = data?.stats || {};
+
+      return React.createElement('div', { className: 'space-y-4 p-2' },
+        // ─── 헤더 + 버튼 ───
+        React.createElement('div', { className: 'flex items-center justify-between' },
+          React.createElement('div', null,
+            React.createElement('h3', { className: 'text-sm font-semibold text-text' }, '지식 그래프 (트리플스토어)'),
+            React.createElement('p', { className: 'text-xs text-text-secondary mt-0.5' },
+              `엔티티 ${stats.entities || 0}개 / 트리플 ${stats.triples || 0}개`
+            ),
+          ),
+          React.createElement('div', { className: 'flex gap-1' },
+            React.createElement('button', {
+              onClick: handleBuild,
+              disabled: building || comparing,
+              className: 'px-2.5 py-1.5 text-[11px] font-medium bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50',
+            }, building ? '구축중...' : 'PG 구축'),
+            React.createElement('button', {
+              onClick: handleCompare,
+              disabled: building || comparing || !neo4jStatus?.connected,
+              className: 'px-2.5 py-1.5 text-[11px] font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50',
+              title: neo4jStatus?.connected ? 'PG와 Neo4j 동시 구축 비교' : neo4jStatus?.message || 'Neo4j 미연결',
+            }, comparing ? '비교중...' : 'PG vs Neo4j'),
+          ),
+        ),
+
+        // ─── Neo4j 연결 상태 표시 ───
+        React.createElement('div', { className: `flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] ${
+          neo4jStatus?.connected
+            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+            : 'bg-gray-50 text-gray-500 border border-gray-200'
+        }` },
+          React.createElement('span', { className: `w-2 h-2 rounded-full ${neo4jStatus?.connected ? 'bg-emerald-500' : 'bg-gray-400'}` }),
+          React.createElement('span', null, neo4jStatus?.connected ? 'Neo4j Aura 연결됨' : `Neo4j: ${neo4jStatus?.message || '확인 중...'}`),
+        ),
+
+        // ─── 검색 + 타입 필터 ───
+        React.createElement('div', { className: 'flex gap-2' },
+          React.createElement('input', {
+            type: 'text', placeholder: '엔티티 검색...', value: searchQuery,
+            onChange: (e) => setSearchQuery(e.target.value),
+            className: 'flex-1 px-3 py-1.5 text-xs border border-border rounded-lg bg-bg text-text focus:outline-none focus:ring-1 focus:ring-primary',
+          }),
+          React.createElement('select', {
+            value: typeFilter, onChange: (e) => setTypeFilter(e.target.value),
+            className: 'px-2 py-1.5 text-xs border border-border rounded-lg bg-bg text-text',
+          },
+            React.createElement('option', { value: 'all' }, '전체'),
+            ...Object.entries(typeLabels).map(([v, l]) =>
+              React.createElement('option', { key: v, value: v }, l)
+            ),
+          ),
+        ),
+
+        // ─── 뷰 전환 토글 ───
+        React.createElement('div', { className: 'flex gap-1 bg-card-bg border border-border rounded-lg p-0.5' },
+          ...['graph', 'list', 'entities', 'compare'].map(mode =>
+            React.createElement('button', {
+              key: mode,
+              onClick: () => setViewMode(mode),
+              className: `flex-1 px-2 py-1.5 text-[11px] font-medium rounded-md transition-colors ${
+                viewMode === mode ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-text'
+              }`,
+            }, mode === 'graph' ? '그래프' : mode === 'list' ? '트리플' : mode === 'entities' ? '엔티티' : 'PG vs Neo4j'),
+          ),
+        ),
+
+        // ═══ 그래프 뷰 ═══
+        viewMode === 'graph' && (data?.nodes?.length > 0
+          ? React.createElement('div', { className: 'space-y-2' },
+              React.createElement('div', {
+                ref: graphContainerRef,
+                className: 'border border-border rounded-lg overflow-hidden bg-bg relative',
+              },
+                React.createElement('svg', { ref: svgRef, className: 'w-full', style: { minHeight: '450px' } }),
+                hoveredNode && React.createElement('div', {
+                  className: 'absolute top-3 left-3 bg-card-bg border border-border rounded-lg p-3 shadow-lg max-w-xs z-10',
+                },
+                  React.createElement('div', { className: 'flex items-center gap-2' },
+                    React.createElement('span', {
+                      className: `text-[10px] px-1.5 py-0.5 rounded-full ${typeColorMap[hoveredNode.type]?.bg || 'bg-gray-100'} ${typeColorMap[hoveredNode.type]?.text || 'text-gray-700'}`,
+                    }, typeLabels[hoveredNode.type] || hoveredNode.type),
+                    React.createElement('span', { className: 'text-sm font-medium text-text' }, hoveredNode.name),
+                  ),
+                  React.createElement('p', { className: 'text-xs text-text-secondary mt-1' }, `연결 ${hoveredNode.linkCount}건`),
+                ),
+              ),
+              React.createElement('div', { className: 'flex flex-wrap gap-3 px-1' },
+                ...Object.entries(typeLabels).map(([type, label]) =>
+                  React.createElement('div', { key: type, className: 'flex items-center gap-1' },
+                    React.createElement('span', { className: 'w-3 h-3 rounded-full inline-block', style: { backgroundColor: typeColorMap[type]?.hex } }),
+                    React.createElement('span', { className: 'text-[10px] text-text-secondary' }, label),
+                  )
+                ),
+              ),
+            )
+          : React.createElement(EmptyState, { icon: '🔗', title: '지식 그래프가 없습니다', description: '"PG 구축" 버튼으로 엔티티와 관계를 추출하세요.' })
+        ),
+
+        // ═══ 트리플 목록 뷰 ═══
+        viewMode === 'list' && (filteredTriples.length > 0
+          ? React.createElement('div', { className: 'space-y-1.5 max-h-96 overflow-y-auto' },
+              filteredTriples.map((triple, i) => {
+                const subj = data.nodes?.find(n => n.id === (typeof triple.source === 'object' ? triple.source.id : triple.source));
+                const obj = data.nodes?.find(n => n.id === (typeof triple.target === 'object' ? triple.target.id : triple.target));
+                return React.createElement('div', { key: i, className: 'p-2.5 bg-card-bg border border-border rounded-lg hover:bg-card-bg-hover transition-colors' },
+                  React.createElement('div', { className: 'flex items-center gap-1.5 flex-wrap text-xs' },
+                    React.createElement('span', { className: `px-1.5 py-0.5 rounded-full ${typeColorMap[subj?.type]?.bg || 'bg-gray-100'} ${typeColorMap[subj?.type]?.text || 'text-gray-700'} font-medium` }, subj?.name || '?'),
+                    React.createElement('span', { className: 'px-1.5 py-0.5 rounded font-bold text-white', style: { backgroundColor: predColorMap[triple.predicate] || '#6B7280', fontSize: '10px' } }, `→ ${triple.predicate} →`),
+                    React.createElement('span', { className: `px-1.5 py-0.5 rounded-full ${typeColorMap[obj?.type]?.bg || 'bg-gray-100'} ${typeColorMap[obj?.type]?.text || 'text-gray-700'} font-medium` }, obj?.name || '?'),
+                    React.createElement('span', { className: `text-[10px] px-1.5 py-0.5 rounded-full ml-auto ${triple.confidence >= 0.9 ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}` }, `${(triple.confidence * 100).toFixed(0)}%`),
+                  ),
+                  triple.context && React.createElement('p', { className: 'text-[11px] text-text-secondary mt-1 leading-relaxed truncate' }, triple.context),
+                );
+              })
+            )
+          : React.createElement(EmptyState, { icon: '📊', title: '트리플이 없습니다', description: searchQuery ? '일치하는 트리플이 없습니다.' : '트리플을 구축해주세요.' })
+        ),
+
+        // ═══ 엔티티 목록 뷰 ═══
+        viewMode === 'entities' && (filteredEntities.length > 0
+          ? React.createElement('div', { className: 'space-y-1 max-h-96 overflow-y-auto' },
+              filteredEntities.map((ent, i) =>
+                React.createElement('div', { key: i, className: 'flex items-center gap-2 p-2 bg-card-bg border border-border rounded-lg hover:bg-card-bg-hover' },
+                  React.createElement('span', { className: `text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${typeColorMap[ent.entity_type]?.bg || 'bg-gray-100'} ${typeColorMap[ent.entity_type]?.text || 'text-gray-700'}` }, typeLabels[ent.entity_type] || ent.entity_type),
+                  React.createElement('span', { className: 'text-xs text-text font-medium truncate' }, ent.name),
+                )
+              )
+            )
+          : React.createElement(EmptyState, { icon: '🏷️', title: '엔티티가 없습니다', description: '트리플을 구축해주세요.' })
+        ),
+
+        // ═══ PG vs Neo4j 비교 뷰 ═══
+        viewMode === 'compare' && React.createElement('div', { className: 'space-y-4' },
+          // 비교 안내
+          !compareData && !comparing && React.createElement('div', { className: 'text-center py-6 space-y-3' },
+            React.createElement('p', { className: 'text-sm text-text-secondary' },
+              neo4jStatus?.connected
+                ? '상단 "PG vs Neo4j" 버튼을 클릭하면 동일 데이터로 양쪽을 구축하고 성능을 비교합니다.'
+                : 'Neo4j가 연결되지 않았습니다. 환경변수(NEO4J_URI, NEO4J_PASSWORD)를 설정해주세요.'
+            ),
+            React.createElement('div', { className: 'text-xs text-text-secondary bg-card-bg border border-border rounded-lg p-3 text-left max-w-sm mx-auto' },
+              React.createElement('p', { className: 'font-semibold mb-1' }, 'Neo4j Aura 무료 설정:'),
+              React.createElement('p', null, '1. aura.neo4j.io 에서 무료 인스턴스 생성'),
+              React.createElement('p', null, '2. .env 파일에 추가:'),
+              React.createElement('code', { className: 'block bg-bg p-1.5 rounded mt-1 text-[10px]' },
+                'NEO4J_URI=neo4j+s://xxx.databases.neo4j.io\nNEO4J_USER=neo4j\nNEO4J_PASSWORD=your-password'
+              ),
+            ),
+          ),
+
+          // 비교 진행 중
+          comparing && React.createElement('div', { className: 'flex flex-col items-center py-8 gap-3' },
+            React.createElement('div', { className: 'animate-spin w-8 h-8 border-3 border-primary border-t-transparent rounded-full' }),
+            React.createElement('p', { className: 'text-sm text-text-secondary' }, 'PG와 Neo4j 동시 구축 비교 중...'),
+          ),
+
+          // 비교 결과
+          compareData && React.createElement('div', { className: 'space-y-4' },
+            // 구축 성능 비교
+            React.createElement('div', { className: 'bg-card-bg border border-border rounded-lg p-3' },
+              React.createElement('h4', { className: 'text-xs font-semibold text-text mb-3' }, '구축 성능 비교'),
+              React.createElement('div', { className: 'space-y-3' },
+                React.createElement(CompareBar, {
+                  label: '구축 시간',
+                  pgVal: compareData.pg.build.timing || 0,
+                  neo4jVal: compareData.neo4j.build.error ? 0 : (compareData.neo4j.build.timing || 0),
+                  unit: 'ms', higherIsBetter: false,
+                }),
+                React.createElement(CompareBar, {
+                  label: '엔티티 수',
+                  pgVal: compareData.pg.build.entities?.total || 0,
+                  neo4jVal: compareData.neo4j.build.error ? 0 : (compareData.neo4j.build.entities?.total || 0),
+                  unit: '개', higherIsBetter: true,
+                }),
+                React.createElement(CompareBar, {
+                  label: '트리플 수',
+                  pgVal: compareData.pg.build.triples?.total || 0,
+                  neo4jVal: compareData.neo4j.build.error ? 0 : (compareData.neo4j.build.triples?.total || 0),
+                  unit: '개', higherIsBetter: true,
+                }),
+              ),
+              compareData.neo4j.build.error && React.createElement('p', { className: 'text-[10px] text-red-500 mt-2' },
+                `Neo4j 오류: ${compareData.neo4j.build.error}`
+              ),
+            ),
+
+            // 조회 성능 비교
+            React.createElement('div', { className: 'bg-card-bg border border-border rounded-lg p-3' },
+              React.createElement('h4', { className: 'text-xs font-semibold text-text mb-3' }, '조회 성능 비교'),
+              React.createElement('div', { className: 'space-y-3' },
+                React.createElement(CompareBar, {
+                  label: '조회 시간',
+                  pgVal: compareData.pg.query.timing || 0,
+                  neo4jVal: compareData.neo4j.query.timing || 0,
+                  unit: 'ms', higherIsBetter: false,
+                }),
+                React.createElement(CompareBar, {
+                  label: '그래프 노드 수',
+                  pgVal: compareData.pg.query.entities || 0,
+                  neo4jVal: compareData.neo4j.query.entities || 0,
+                  unit: '개', higherIsBetter: true,
+                }),
+                React.createElement(CompareBar, {
+                  label: '그래프 엣지 수',
+                  pgVal: compareData.pg.query.triples || 0,
+                  neo4jVal: compareData.neo4j.query.triples || 0,
+                  unit: '개', higherIsBetter: true,
+                }),
+              ),
+            ),
+
+            // 기능 비교표
+            React.createElement('div', { className: 'bg-card-bg border border-border rounded-lg p-3' },
+              React.createElement('h4', { className: 'text-xs font-semibold text-text mb-2' }, '기능 비교'),
+              React.createElement('table', { className: 'w-full text-[10px]' },
+                React.createElement('thead', null,
+                  React.createElement('tr', { className: 'border-b border-border' },
+                    React.createElement('th', { className: 'text-left py-1 text-text-secondary font-medium' }, '기능'),
+                    React.createElement('th', { className: 'text-center py-1 text-blue-600 font-medium' }, 'PostgreSQL'),
+                    React.createElement('th', { className: 'text-center py-1 text-emerald-600 font-medium' }, 'Neo4j'),
+                  ),
+                ),
+                React.createElement('tbody', null,
+                  ...[
+                    ['트리플 저장', 'JOIN 테이블', '네이티브 엣지'],
+                    ['그래프 조회', 'SQL JOIN', 'Cypher 패턴 매칭'],
+                    ['경로 탐색', '재귀 CTE (느림)', 'SHORTEST PATH (빠름)'],
+                    ['N-hop 이웃', 'N중 JOIN', 'MATCH *1..N (자연스러움)'],
+                    ['스키마', '고정 (마이그레이션)', '유연 (스키마리스)'],
+                    ['트랜잭션', 'ACID (강함)', 'ACID (강함)'],
+                    ['운영 비용', '기존 Supabase 활용', '별도 인스턴스 필요'],
+                    ['Vercel 호환', '네이티브', 'TCP 연결 필요'],
+                  ].map(([feature, pg, neo]) =>
+                    React.createElement('tr', { key: feature, className: 'border-b border-border/50' },
+                      React.createElement('td', { className: 'py-1.5 text-text font-medium' }, feature),
+                      React.createElement('td', { className: 'py-1.5 text-center text-text-secondary' }, pg),
+                      React.createElement('td', { className: 'py-1.5 text-center text-text-secondary' }, neo),
+                    )
+                  ),
+                ),
+              ),
+            ),
+
+            // Neo4j 전용: 최단 경로 탐색
+            neo4jStatus?.connected && React.createElement('div', { className: 'bg-card-bg border border-emerald-200 rounded-lg p-3' },
+              React.createElement('h4', { className: 'text-xs font-semibold text-emerald-700 mb-2' }, 'Neo4j 전용: 최단 경로 탐색'),
+              React.createElement('p', { className: 'text-[10px] text-text-secondary mb-2' }, '두 엔티티 사이의 최단 관계 경로를 찾습니다 (그래프 DB의 강점)'),
+              React.createElement('div', { className: 'flex gap-2 mb-2' },
+                React.createElement('input', {
+                  type: 'text', placeholder: '출발 엔티티 (예: 개인정보)',
+                  value: pathQuery.from,
+                  onChange: (e) => setPathQuery(p => ({ ...p, from: e.target.value })),
+                  className: 'flex-1 px-2 py-1 text-xs border border-border rounded bg-bg text-text',
+                }),
+                React.createElement('span', { className: 'text-text-secondary self-center text-xs' }, '→'),
+                React.createElement('input', {
+                  type: 'text', placeholder: '도착 엔티티 (예: 파기)',
+                  value: pathQuery.to,
+                  onChange: (e) => setPathQuery(p => ({ ...p, to: e.target.value })),
+                  className: 'flex-1 px-2 py-1 text-xs border border-border rounded bg-bg text-text',
+                }),
+                React.createElement('button', {
+                  onClick: handlePathFind,
+                  disabled: !pathQuery.from || !pathQuery.to,
+                  className: 'px-3 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50',
+                }, '탐색'),
+              ),
+              // 경로 결과
+              pathResult && (pathResult.found
+                ? React.createElement('div', { className: 'bg-emerald-50 rounded p-2 space-y-1' },
+                    React.createElement('p', { className: 'text-[10px] text-emerald-700 font-medium' },
+                      `경로 발견! (길이: ${pathResult.length}, ${pathResult.timing}ms)`
+                    ),
+                    React.createElement('div', { className: 'flex items-center gap-1 flex-wrap' },
+                      ...pathResult.path.flatMap((seg, i) => [
+                        i === 0 && React.createElement('span', { key: `f-${i}`, className: 'px-1.5 py-0.5 bg-emerald-200 text-emerald-800 rounded text-[10px] font-medium' }, seg.from),
+                        React.createElement('span', { key: `r-${i}`, className: 'text-[9px] text-emerald-600' }, `—[${seg.relation}]→`),
+                        React.createElement('span', { key: `t-${i}`, className: 'px-1.5 py-0.5 bg-emerald-200 text-emerald-800 rounded text-[10px] font-medium' }, seg.to),
+                      ].filter(Boolean)),
+                    ),
+                  )
+                : React.createElement('p', { className: 'text-[10px] text-red-500' },
+                    pathResult.error || `경로를 찾을 수 없습니다 (${pathResult.timing}ms)`)
+              ),
+            ),
+          ),
+        ),
+
+        // ─── 통계 요약 ───
+        viewMode !== 'compare' && stats.entities > 0 && React.createElement('div', { className: 'grid grid-cols-2 gap-2 text-[10px]' },
+          React.createElement('div', { className: 'p-2 bg-card-bg border border-border rounded-lg' },
+            React.createElement('p', { className: 'font-semibold text-text mb-1' }, '엔티티 타입'),
+            ...Object.entries(stats.byType || {}).map(([type, count]) =>
+              React.createElement('div', { key: type, className: 'flex justify-between text-text-secondary' },
+                React.createElement('span', null, typeLabels[type] || type),
+                React.createElement('span', { className: 'font-medium' }, count),
+              )
+            ),
+          ),
+          React.createElement('div', { className: 'p-2 bg-card-bg border border-border rounded-lg' },
+            React.createElement('p', { className: 'font-semibold text-text mb-1' }, '관계 유형'),
+            ...Object.entries(stats.byPredicate || {}).map(([pred, count]) =>
+              React.createElement('div', { key: pred, className: 'flex justify-between text-text-secondary' },
+                React.createElement('span', null, pred),
+                React.createElement('span', { className: 'font-medium' }, count),
+              )
+            ),
+          ),
+        ),
       );
     }
 

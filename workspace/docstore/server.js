@@ -85,6 +85,18 @@ const crossRefHandler = require('./api/cross-references');
 app.get('/api/cross-references', (req, res) => crossRefHandler(req, res));
 app.post('/api/cross-references', (req, res) => crossRefHandler(req, res));
 
+// ── /api/knowledge-graph (GET, POST, DELETE) — 지식 그래프 트리플스토어 ──
+const knowledgeGraphHandler = require('./api/knowledge-graph');
+app.get('/api/knowledge-graph', (req, res) => knowledgeGraphHandler(req, res));
+app.post('/api/knowledge-graph', (req, res) => knowledgeGraphHandler(req, res));
+app.delete('/api/knowledge-graph', (req, res) => knowledgeGraphHandler(req, res));
+
+// ── /api/knowledge-graph-neo4j (GET, POST, DELETE) — Neo4j 지식 그래프 + 비교 ──
+const kgNeo4jHandler = require('./api/knowledge-graph-neo4j');
+app.get('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));
+app.post('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));
+app.delete('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));
+
 // ── /api/organizations (GET, POST) — 조직 관리 (슈퍼 어드민 전용) ──
 const organizationsHandler = require('./api/organizations');
 app.get('/api/organizations', (req, res) => organizationsHandler(req, res));
