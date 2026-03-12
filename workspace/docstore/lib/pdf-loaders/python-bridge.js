@@ -151,8 +151,11 @@ function normalizeResult(result, loaderId) {
 
 /**
  * Python3 설치 여부 확인
+ * Vercel 환경에서는 Python 서버리스 함수(/api/pdf-python.py)가 있으므로 항상 true
  */
 function isPythonAvailable() {
+  if (process.env.VERCEL) return true;
+
   try {
     const { execSync } = require('child_process');
     execSync('python3 --version', { stdio: 'pipe', timeout: 5000 });
