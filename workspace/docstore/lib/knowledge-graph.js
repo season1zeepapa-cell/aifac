@@ -244,7 +244,7 @@ async function buildKnowledgeGraph(dbQuery, documentId) {
 
   // 2) 전체 섹션 조회
   const sections = await dbQuery(
-    'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_order',
+    'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
     [documentId]
   );
 
@@ -264,48 +264,96 @@ async function buildKnowledgeGraph(dbQuery, documentId) {
     triples: { total: 0, byPredicate: {} },
   };
 
-  // 엔티티 name→id 매핑 (트리플 저장 시 참조)
-  const entityIdMap = new Map();
+  // 4) 모든 섹션에서 엔티티/트리플 추출 (메모리에서)
+  // key: "type:name" → { name, type, sectionId, offset }
+  const uniqueEntities = new Map();
+  const allTriples = []; // { subject, subjectType, object, objectType, predicate, confidence, sectionId, context }
 
-  // 4) 섹션별 엔티티 추출 → DB 저장
   for (const section of sections.rows) {
     if (!section.raw_text) continue;
 
     const entities = extractEntities(section.raw_text, docTitle);
     for (const ent of entities) {
-      // DB 저장 (UPSERT)
-      const result = await dbQuery(
-        `INSERT INTO entities (name, entity_type, document_id, section_id, metadata)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (name, entity_type, document_id) DO UPDATE SET section_id = $4
-         RETURNING id`,
-        [ent.name, ent.type, documentId, section.id, JSON.stringify({ offset: ent.offset })]
-      );
-      entityIdMap.set(`${ent.type}:${ent.name}`, result.rows[0].id);
-
-      // 통계
-      stats.entities.total++;
-      stats.entities.byType[ent.type] = (stats.entities.byType[ent.type] || 0) + 1;
+      const key = `${ent.type}:${ent.name}`;
+      if (!uniqueEntities.has(key)) {
+        uniqueEntities.set(key, { name: ent.name, type: ent.type, sectionId: section.id, offset: ent.offset });
+      }
     }
 
-    // 5) 트리플 추출 → DB 저장
     const triples = extractTriples(section.raw_text, entities);
     for (const triple of triples) {
-      const subjectId = entityIdMap.get(`${triple.subjectType}:${triple.subject}`);
-      const objectId = entityIdMap.get(`${triple.objectType}:${triple.object}`);
-      if (!subjectId || !objectId) continue;
-
-      await dbQuery(
-        `INSERT INTO knowledge_triples (subject_id, predicate, object_id, confidence, source_document_id, source_section_id, context)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (subject_id, predicate, object_id) DO UPDATE
-         SET confidence = GREATEST(knowledge_triples.confidence, $4), context = $7`,
-        [subjectId, triple.predicate, objectId, triple.confidence, documentId, section.id, triple.context]
-      );
-
-      stats.triples.total++;
-      stats.triples.byPredicate[triple.predicate] = (stats.triples.byPredicate[triple.predicate] || 0) + 1;
+      allTriples.push({ ...triple, sectionId: section.id });
     }
+  }
+
+  // 5) 엔티티 배치 INSERT (10개씩 묶어서)
+  const entityIdMap = new Map();
+  const entArr = [...uniqueEntities.entries()];
+  const BATCH = 10;
+  for (let i = 0; i < entArr.length; i += BATCH) {
+    const batch = entArr.slice(i, i + BATCH);
+    // 배치 VALUES 생성
+    const values = [];
+    const params = [];
+    batch.forEach(([key, ent], idx) => {
+      const base = idx * 5;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+      params.push(ent.name, ent.type, documentId, ent.sectionId, JSON.stringify({ offset: ent.offset }));
+    });
+    const result = await dbQuery(
+      `INSERT INTO entities (name, entity_type, document_id, section_id, metadata)
+       VALUES ${values.join(', ')}
+       ON CONFLICT (name, entity_type, document_id) DO UPDATE SET section_id = EXCLUDED.section_id
+       RETURNING id, name, entity_type`,
+      params
+    );
+    for (const row of result.rows) {
+      entityIdMap.set(`${row.entity_type}:${row.name}`, row.id);
+    }
+  }
+
+  // 통계: 엔티티
+  stats.entities.total = uniqueEntities.size;
+  for (const [, ent] of uniqueEntities) {
+    stats.entities.byType[ent.type] = (stats.entities.byType[ent.type] || 0) + 1;
+  }
+
+  // 6) 트리플 배치 INSERT (10개씩)
+  // 중복 제거 (subject+predicate+object)
+  const tripleDedup = new Map();
+  for (const t of allTriples) {
+    const subjectId = entityIdMap.get(`${t.subjectType}:${t.subject}`);
+    const objectId = entityIdMap.get(`${t.objectType}:${t.object}`);
+    if (!subjectId || !objectId) continue;
+    const key = `${subjectId}|${t.predicate}|${objectId}`;
+    if (!tripleDedup.has(key) || t.confidence > tripleDedup.get(key).confidence) {
+      tripleDedup.set(key, { subjectId, predicate: t.predicate, objectId, confidence: t.confidence, sectionId: t.sectionId, context: t.context });
+    }
+  }
+
+  const tripleArr = [...tripleDedup.values()];
+  for (let i = 0; i < tripleArr.length; i += BATCH) {
+    const batch = tripleArr.slice(i, i + BATCH);
+    const values = [];
+    const params = [];
+    batch.forEach((t, idx) => {
+      const base = idx * 7;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
+      params.push(t.subjectId, t.predicate, t.objectId, t.confidence, documentId, t.sectionId, t.context);
+    });
+    await dbQuery(
+      `INSERT INTO knowledge_triples (subject_id, predicate, object_id, confidence, source_document_id, source_section_id, context)
+       VALUES ${values.join(', ')}
+       ON CONFLICT (subject_id, predicate, object_id) DO UPDATE
+       SET confidence = GREATEST(knowledge_triples.confidence, EXCLUDED.confidence), context = EXCLUDED.context`,
+      params
+    );
+  }
+
+  // 통계: 트리플
+  stats.triples.total = tripleDedup.size;
+  for (const [, t] of tripleDedup) {
+    stats.triples.byPredicate[t.predicate] = (stats.triples.byPredicate[t.predicate] || 0) + 1;
   }
 
   return stats;
