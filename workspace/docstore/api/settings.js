@@ -1,9 +1,11 @@
-// 앱 설정 관리 API (카테고리 등)
-// GET  /api/settings?key=categories  → 설정값 조회
-// POST /api/settings { key, value }  → 설정값 저장
+// 앱 설정 관리 API (카테고리, 임베딩 모델 등)
+// GET  /api/settings?key=categories       → 설정값 조회
+// GET  /api/settings?key=embeddingModel   → 임베딩 모델 설정 + 사용 가능 목록
+// POST /api/settings { key, value }       → 설정값 저장
 const { query } = require('../lib/db');
 const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
+const { getAvailableModels, resetModelCache } = require('../lib/embeddings');
 
 // 기본 카테고리 (테이블/데이터가 없을 때 사용)
 const DEFAULT_CATEGORIES = [
@@ -51,7 +53,23 @@ module.exports = async function handler(req, res) {
         if (key === 'categories') {
           return res.json({ key, value: DEFAULT_CATEGORIES });
         }
+        if (key === 'embeddingModel') {
+          return res.json({
+            key,
+            value: 'openai',
+            availableModels: getAvailableModels(),
+          });
+        }
         return res.json({ key, value: null });
+      }
+
+      // 임베딩 모델 조회 시 사용 가능한 모델 목록도 함께 반환
+      if (key === 'embeddingModel') {
+        return res.json({
+          key,
+          value: result.rows[0].value,
+          availableModels: getAvailableModels(),
+        });
       }
 
       return res.json({ key, value: result.rows[0].value });
@@ -67,6 +85,15 @@ module.exports = async function handler(req, res) {
 
       if (value === undefined || value === null) {
         return res.status(400).json({ error: 'value가 필요합니다.' });
+      }
+
+      // 임베딩 모델 변경 시 캐시 초기화
+      if (key === 'embeddingModel') {
+        const validIds = ['openai', 'upstage', 'cohere'];
+        if (!validIds.includes(value)) {
+          return res.status(400).json({ error: `유효하지 않은 모델입니다. 사용 가능: ${validIds.join(', ')}` });
+        }
+        resetModelCache();
       }
 
       // 카테고리 유효성 검증
