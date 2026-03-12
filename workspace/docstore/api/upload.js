@@ -111,8 +111,15 @@ module.exports = async function handler(req, res) {
     } else if (req.body && req.body.storagePath) {
       // ── 방법 2: Supabase Storage 경유 (대용량 파일, 4.5MB 초과) ──
       console.log(`[Upload] Storage 경유 업로드: ${req.body.storagePath}`);
+      console.log(`[Upload] body keys: ${Object.keys(req.body).join(', ')}`);
       tempStoragePath = req.body.storagePath;
-      fileBuffer = await downloadFile(req.body.storagePath);
+      try {
+        fileBuffer = await downloadFile(req.body.storagePath);
+        console.log(`[Upload] Storage 다운로드 성공: ${fileBuffer.length} bytes`);
+      } catch (dlErr) {
+        console.error(`[Upload] Storage 다운로드 실패:`, dlErr);
+        return res.status(500).json({ error: `Storage 다운로드 실패: ${dlErr.message}` });
+      }
       filename = sanitizeFilename(req.body.filename || 'file.pdf');
       mimetype = req.body.mimetype || 'application/pdf';
       title = req.body.title || '제목 없음';

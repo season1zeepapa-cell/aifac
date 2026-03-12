@@ -51,9 +51,9 @@ function sendError(res, err, context = '', status = 500) {
     return res.status(status).json({ error: message });
   }
 
-  // 프로덕션: 일반 메시지 반환
+  // 프로덕션: 에러 유형 포함 메시지 반환 (디버깅용)
   if (IS_PROD) {
-    return res.status(status).json({ error: '서버 오류가 발생했습니다.' });
+    return res.status(status).json({ error: `서버 오류: ${message.slice(0, 200)}` });
   }
 
   // 개발: 상세 메시지 반환
