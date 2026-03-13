@@ -19,6 +19,7 @@ const { parseRAGOutput } = require('../lib/output-parser');
 const { createTrace, createSpan, endSpan, finalizeTrace } = require('../lib/langfuse');
 const { setDbQuery, buildPrompt } = require('../lib/prompt-manager');
 const { createRagTracer } = require('../lib/rag-tracer');
+const { findTriplesForRAG } = require('../lib/knowledge-graph');
 
 // 프롬프트 매니저에 DB 쿼리 함수 연결
 setDbQuery(query);
@@ -157,6 +158,34 @@ module.exports = async (req, res) => {
       return `[근거 ${i + 1}] ${header} (${s.documentTitle})\n${s.text}`;
     }).join('\n\n---\n\n');
 
+    // 3) 지식 그래프 트리플 조회 — 질문의 엔티티와 관련된 관계 정보를 프롬프트에 추가
+    let triplesText = '';
+    let triplesData = null;
+    try {
+      const docIdsForTriples = sources.map(s => s.documentId).filter(Boolean);
+      const triplesResult = await findTriplesForRAG(query, question.trim(), {
+        docIds: [...new Set(docIdsForTriples)],
+        maxTriples: 15,
+        minConfidence: 0.6,
+      });
+      if (triplesResult.triples.length > 0) {
+        triplesText = '\n\n' + triplesResult.contextText;
+        triplesData = {
+          count: triplesResult.triples.length,
+          entities: triplesResult.entities,
+          triples: triplesResult.triples.map(t => ({
+            subject: t.subject_name,
+            predicate: t.predicate,
+            object: t.object_name,
+            confidence: t.confidence,
+          })),
+        };
+        console.log(`[RAG] 지식 그래프: ${triplesResult.entities.length}개 엔티티 → ${triplesResult.triples.length}개 트리플 주입`);
+      }
+    } catch (kgErr) {
+      console.warn('[RAG] 지식 그래프 조회 실패 (무시):', kgErr.message);
+    }
+
     // 대화 히스토리 (최근 10턴 = 20메시지)
     const recentHistory = Array.isArray(history) ? history.slice(-20) : [];
     const historyText = recentHistory.length > 0
@@ -166,9 +195,10 @@ module.exports = async (req, res) => {
       : '';
 
     // DB에서 카테고리별 프롬프트 템플릿 로드 + 변수 치환
+    //   contextText에 트리플 텍스트를 병합하여 LLM이 관계 정보도 참고하게 함
     const promptResult = await buildPrompt('rag-answer', category, {
       question: question.trim(),
-      contextText,
+      contextText: contextText + triplesText,
       historyText,
       sourceCount: String(sources.length),
     });
@@ -216,6 +246,7 @@ module.exports = async (req, res) => {
         sources: sourcesData,
         hops: searchResult.hops,
         crossRefs: searchResult.crossRefs || [],
+        knowledgeGraph: triplesData,
         enhancement: searchResult.enhancement || {},
         provider,
         promptTemplate: { category: promptResult.matchedCategory, fromDb: promptResult.fromDb },
@@ -329,6 +360,7 @@ module.exports = async (req, res) => {
         provider,
         hops: searchResult.hops,
         crossRefs: searchResult.crossRefs || [],
+        knowledgeGraph: triplesData,
         enhancement: searchResult.enhancement || {},
         sources: sourcesData,
         verification,

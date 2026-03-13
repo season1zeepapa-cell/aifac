@@ -40,13 +40,19 @@ function getDriver() {
  * @param {Object} params - 쿼리 파라미터
  * @returns {Object} result
  */
-async function runCypher(cypher, params = {}) {
+async function runCypher(cypher, params = {}, timeoutMs = 30000) {
   const driver = getDriver();
   if (!driver) throw new Error('Neo4j가 설정되지 않았습니다. 환경변수를 확인하세요.');
 
   const session = driver.session();
   try {
-    const result = await session.run(cypher, params);
+    // 타임아웃 래핑: Neo4j 쿼리가 지정 시간 내 응답하지 않으면 에러 발생
+    const result = await Promise.race([
+      session.run(cypher, params),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Neo4j 쿼리 타임아웃 (${timeoutMs}ms)`)), timeoutMs)
+      ),
+    ]);
     return result;
   } finally {
     await session.close();
@@ -63,7 +69,12 @@ async function checkConnection() {
 
   try {
     const session = driver.session();
-    await session.run('RETURN 1');
+    await Promise.race([
+      session.run('RETURN 1'),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('연결 타임아웃 (10초)')), 10000)
+      ),
+    ]);
     await session.close();
     return { connected: true, message: 'Neo4j 연결 성공' };
   } catch (err) {

@@ -46,7 +46,7 @@ async function buildKnowledgeGraphNeo4j(dbQuery, documentId) {
 
   // 2) 섹션 조회 (PG에서)
   const sections = await dbQuery(
-    'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_order',
+    'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
     [documentId]
   );
 

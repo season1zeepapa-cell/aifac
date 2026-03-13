@@ -82,12 +82,17 @@ module.exports = async (req, res) => {
         const pgStats = await buildKnowledgeGraph(query, id);
         const pgTiming = Date.now() - pgStart;
 
-        // Neo4j 구축 (타이밍)
+        // Neo4j 구축 (타이밍) — 60초 타임아웃
         let neo4jStats, neo4jTiming, neo4jError;
         try {
           if (!kgNeo4jMod) throw new Error('Neo4j 모듈 미설정');
           const neo4jStart = Date.now();
-          neo4jStats = await kgNeo4jMod.buildKnowledgeGraphNeo4j(query, id);
+          neo4jStats = await Promise.race([
+            kgNeo4jMod.buildKnowledgeGraphNeo4j(query, id),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Neo4j 구축 타임아웃 (60초)')), 60000)
+            ),
+          ]);
           neo4jTiming = Date.now() - neo4jStart;
         } catch (err) {
           neo4jError = err.message;
@@ -99,12 +104,17 @@ module.exports = async (req, res) => {
         const pgGraph = await getEntityGraph(query, { documentId: id });
         const pgQueryTiming = Date.now() - pgQueryStart;
 
-        // Neo4j 조회 타이밍
+        // Neo4j 조회 타이밍 — 15초 타임아웃
         let neo4jGraph, neo4jQueryTiming;
         try {
           if (!kgNeo4jMod) throw new Error('Neo4j 모듈 미설정');
           const neo4jQueryStart = Date.now();
-          neo4jGraph = await kgNeo4jMod.getEntityGraphNeo4j({ documentId: id });
+          neo4jGraph = await Promise.race([
+            kgNeo4jMod.getEntityGraphNeo4j({ documentId: id }),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Neo4j 조회 타임아웃 (15초)')), 15000)
+            ),
+          ]);
           neo4jQueryTiming = Date.now() - neo4jQueryStart;
         } catch (err) {
           neo4jGraph = { nodes: [], links: [], stats: {} };

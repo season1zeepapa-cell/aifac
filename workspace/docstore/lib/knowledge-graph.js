@@ -481,11 +481,122 @@ async function getEntityGraph(dbQuery, options = {}) {
   return { nodes, links, entities: entitiesList, stats };
 }
 
+// ============================================================
+// RAG용 트리플 조회 — 질문 텍스트에서 엔티티를 추출하고,
+// 해당 엔티티와 관련된 트리플을 DB에서 조회하여
+// LLM 프롬프트에 삽입할 수 있는 텍스트로 포맷팅
+// ============================================================
+
+/**
+ * 질문에서 엔티티를 추출하고, 관련 트리플을 DB에서 조회
+ *
+ * @param {Function} dbQuery - DB 쿼리 함수
+ * @param {string} question - 사용자 질문
+ * @param {object} [options]
+ * @param {number[]} [options.docIds] - 검색 범위 문서 ID 배열
+ * @param {number} [options.maxTriples=20] - 최대 트리플 수
+ * @param {number} [options.minConfidence=0.5] - 최소 신뢰도
+ * @returns {Promise<{triples: object[], entities: string[], contextText: string}>}
+ */
+async function findTriplesForRAG(dbQuery, question, options = {}) {
+  const { docIds, maxTriples = 20, minConfidence = 0.5 } = options;
+
+  // 1단계: 질문에서 엔티티 추출
+  const questionEntities = extractEntities(question);
+  if (questionEntities.length === 0) {
+    return { triples: [], entities: [], contextText: '' };
+  }
+
+  // 엔티티 이름 목록 (중복 제거)
+  const entityNames = [...new Set(questionEntities.map(e => e.name))];
+
+  // 2단계: DB에서 해당 엔티티가 포함된 트리플 조회
+  //   주어 또는 목적어 이름이 질문의 엔티티와 일치하는 트리플을 찾음
+  //   docIds가 지정되면 해당 문서 범위로 제한
+  let triplesResult;
+
+  // 엔티티 이름으로 ILIKE 조건 생성 (여러 엔티티를 OR로 연결)
+  const likeClauses = entityNames.map((_, i) =>
+    `s.name ILIKE '%' || $${i + 1} || '%' OR o.name ILIKE '%' || $${i + 1} || '%'`
+  );
+  const whereClause = `(${likeClauses.join(' OR ')})`;
+  const params = [...entityNames];
+
+  let sql = `
+    SELECT kt.predicate, kt.confidence, kt.context,
+           s.name AS subject_name, s.entity_type AS subject_type,
+           o.name AS object_name, o.entity_type AS object_type
+    FROM knowledge_triples kt
+    JOIN entities s ON kt.subject_id = s.id
+    JOIN entities o ON kt.object_id = o.id
+    WHERE ${whereClause}
+      AND kt.confidence >= $${params.length + 1}`;
+  params.push(minConfidence);
+
+  // 문서 범위 필터
+  if (docIds && docIds.length > 0) {
+    sql += ` AND kt.source_document_id = ANY($${params.length + 1})`;
+    params.push(docIds);
+  }
+
+  sql += ` ORDER BY kt.confidence DESC LIMIT $${params.length + 1}`;
+  params.push(maxTriples);
+
+  try {
+    triplesResult = await dbQuery(sql, params);
+  } catch (err) {
+    // knowledge_triples 테이블이 없는 경우 등 에러 시 빈 결과 반환
+    console.warn('[KG-RAG] 트리플 조회 실패:', err.message);
+    return { triples: [], entities: entityNames, contextText: '' };
+  }
+
+  const triples = triplesResult.rows || [];
+
+  if (triples.length === 0) {
+    return { triples: [], entities: entityNames, contextText: '' };
+  }
+
+  // 3단계: 프롬프트 삽입용 텍스트 포맷팅
+  //   "주어 —[관계]→ 목적어" 형식으로, LLM이 관계를 파악할 수 있게 구조화
+  const contextText = _formatTriplesForPrompt(triples);
+
+  return { triples, entities: entityNames, contextText };
+}
+
+/**
+ * 트리플 배열을 프롬프트 삽입용 텍스트로 변환
+ *
+ * 출력 예시:
+ *   --- 지식 그래프 관계 정보 ---
+ *   • 개인정보보호위원회 —[관할]→ 개인정보 보호법 (신뢰도: 1.0)
+ *   • 개인정보 보호법 —[정의]→ 개인정보 (신뢰도: 0.9)
+ *   • 정보주체 —[보호]→ 열람권 (신뢰도: 0.8)
+ */
+function _formatTriplesForPrompt(triples) {
+  // 중복 트리플 제거 (주어+관계+목적어가 동일한 것)
+  const seen = new Set();
+  const unique = [];
+  for (const t of triples) {
+    const key = `${t.subject_name}|${t.predicate}|${t.object_name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(t);
+    }
+  }
+
+  const lines = unique.map(t =>
+    `• ${t.subject_name} —[${t.predicate}]→ ${t.object_name} (신뢰도: ${t.confidence})`
+  );
+
+  return `--- 지식 그래프 관계 정보 ---\n${lines.join('\n')}`;
+}
+
 module.exports = {
   extractEntities,
   extractTriples,
   buildKnowledgeGraph,
   getEntityGraph,
+  findTriplesForRAG,
   CONCEPT_DICT,
   PREDICATE_PATTERNS,
 };

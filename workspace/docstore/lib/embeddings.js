@@ -30,7 +30,8 @@ const EMBEDDING_MODELS = {
   'upstage': {
     id: 'upstage',
     label: 'Upstage Solar',
-    model: 'solar-embedding-1-large',
+    model: 'embedding-passage',        // 문서 저장용 (별칭)
+    queryModel: 'embedding-query',     // 검색 쿼리용 (별칭)
     dimensions: 4096,
     provider: 'upstage',
     apiKeyEnv: 'UPSTAGE_API_KEY',
@@ -57,9 +58,13 @@ let _activeModelId = null;
 // OpenAI 호환 클라이언트 캐시 (provider별)
 const _clients = {};
 
+// DB 벡터 컬럼 차원 (create-tables.js: vector(1536))
+const DB_VECTOR_DIMENSIONS = 1536;
+
 /**
  * 현재 활성 임베딩 모델 ID 조회
  * DB app_settings에서 읽되, 캐시하여 매번 DB를 치지 않음
+ * DB 벡터 차원과 모델 차원이 다르면 openai로 폴백
  */
 async function getActiveModelId(dbQuery) {
   if (_activeModelId) return _activeModelId;
@@ -74,6 +79,13 @@ async function getActiveModelId(dbQuery) {
         // JSONB이므로 문자열이거나 객체일 수 있음
         const modelId = typeof val === 'string' ? val : val?.id || 'openai';
         if (EMBEDDING_MODELS[modelId]) {
+          // DB 벡터 차원과 모델 차원 일치 여부 확인
+          const modelDim = EMBEDDING_MODELS[modelId].dimensions;
+          if (modelDim !== DB_VECTOR_DIMENSIONS) {
+            console.warn(`[Embeddings] 모델 ${modelId} (${modelDim}차원)과 DB 벡터 컬럼 (${DB_VECTOR_DIMENSIONS}차원) 불일치 → openai로 폴백`);
+            _activeModelId = 'openai';
+            return 'openai';
+          }
           _activeModelId = modelId;
           return modelId;
         }
@@ -184,13 +196,17 @@ async function generateEmbeddings(chunks, modelId, inputType = 'search_document'
 
   // OpenAI / Upstage: OpenAI SDK 호환
   const client = getOpenAIClient(config);
+  // Upstage: inputType에 따라 query/passage 모델 분기
+  const modelName = (config.provider === 'upstage' && inputType === 'search_query' && config.queryModel)
+    ? config.queryModel
+    : config.model;
   const response = await client.embeddings.create({
-    model: config.model,
+    model: modelName,
     input: chunks,
   });
 
   trackUsage({
-    provider: config.provider, model: config.model, endpoint: 'embeddings-batch',
+    provider: config.provider, model: modelName, endpoint: 'embeddings-batch',
     tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
   }).catch(() => {});
 
@@ -221,13 +237,17 @@ async function generateEmbedding(text, modelId, inputType = 'search_query') {
 
   // OpenAI / Upstage
   const client = getOpenAIClient(config);
+  // Upstage: inputType에 따라 query/passage 모델 분기
+  const modelName = (config.provider === 'upstage' && inputType === 'search_query' && config.queryModel)
+    ? config.queryModel
+    : config.model;
   const response = await client.embeddings.create({
-    model: config.model,
+    model: modelName,
     input: text,
   });
 
   trackUsage({
-    provider: config.provider, model: config.model, endpoint: 'embedding-single',
+    provider: config.provider, model: modelName, endpoint: 'embedding-single',
     tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
   }).catch(() => {});
 

@@ -381,7 +381,9 @@ module.exports = async function handler(req, res) {
         const { generateEnrichedEmbeddings } = require('../lib/embeddings');
 
         // 기존 요약 캐시 무효화 (재분석이므로 이전 요약 제거)
-        await invalidateSummaryCache(query, id);
+        try { await invalidateSummaryCache(query, id); } catch (e) {
+          console.warn('[Analyze] 요약 캐시 무효화 건너뜀:', e.message);
+        }
 
         // 문서 + 섹션 조회 (조직별 격리)
         const orgC = orgId !== null ? ' AND org_id = $2' : '';
@@ -396,48 +398,62 @@ module.exports = async function handler(req, res) {
           'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
           [id]
         );
+        console.log(`[Analyze] 문서 ${id} 섹션 ${sections.rows.length}개 로드 완료`);
 
         // 전체 텍스트 합치기
         const fullText = sections.rows.map(s => s.raw_text || '').join('\n\n');
 
         // 1) 문서 분석 (요약/키워드/태그)
-        console.log(`[Analyze] 문서 ${id} AI 분석 시작...`);
+        console.log(`[Analyze] 문서 ${id} AI 분석 시작 (텍스트 ${fullText.length}자)...`);
         const analysis = await analyzeDocument(fullText, docRow.title, docRow.category);
+        console.log(`[Analyze] 1단계 완료 — 요약: ${analysis.summary?.length || 0}자, 키워드: ${analysis.keywords?.length || 0}개, 태그: ${analysis.tags?.length || 0}개`);
 
         // 2) 문서 요약/키워드 저장
         await query(
           'UPDATE documents SET summary = $1, keywords = $2 WHERE id = $3',
           [analysis.summary, analysis.keywords, id]
         );
+        console.log(`[Analyze] 2단계 완료 — 요약/키워드 DB 저장`);
 
         // 3) 태그 자동 추가 (조직별 격리)
         for (const tagName of analysis.tags) {
-          const tOrgC = orgId !== null ? ' AND org_id = $2' : ' AND org_id IS NULL';
-          const tOrgP = orgId !== null ? [tagName, orgId] : [tagName];
-          let tagResult = await query(`SELECT id FROM tags WHERE name = $1${tOrgC}`, tOrgP);
-          if (tagResult.rows.length === 0) {
-            tagResult = await query(
-              'INSERT INTO tags (name, org_id) VALUES ($1, $2) RETURNING id', [tagName, orgId]
+          try {
+            const tOrgC = orgId !== null ? ' AND org_id = $2' : ' AND org_id IS NULL';
+            const tOrgP = orgId !== null ? [tagName, orgId] : [tagName];
+            let tagResult = await query(`SELECT id FROM tags WHERE name = $1${tOrgC}`, tOrgP);
+            if (tagResult.rows.length === 0) {
+              tagResult = await query(
+                'INSERT INTO tags (name, org_id) VALUES ($1, $2) RETURNING id', [tagName, orgId]
+              );
+            }
+            await query(
+              'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+              [id, tagResult.rows[0].id]
             );
+            await query(
+              'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
+              [tagResult.rows[0].id]
+            );
+          } catch (tagErr) {
+            console.warn(`[Analyze] 태그 "${tagName}" 추가 실패 (무시):`, tagErr.message);
           }
-          await query(
-            'INSERT INTO document_tags (document_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [id, tagResult.rows[0].id]
-          );
-          await query(
-            'UPDATE tags SET usage_count = (SELECT COUNT(*) FROM document_tags WHERE tag_id = $1) WHERE id = $1',
-            [tagResult.rows[0].id]
-          );
         }
+        console.log(`[Analyze] 3단계 완료 — 태그 ${analysis.tags.length}개 처리`);
 
         // 4) 섹션별 요약 생성
-        const sectionSummaries = await analyzeSections(sections.rows);
-        for (const [sectionId, summary] of sectionSummaries) {
-          await query(
-            'UPDATE document_sections SET summary = $1 WHERE id = $2',
-            [summary, sectionId]
-          );
+        let sectionSummaries = new Map();
+        try {
+          sectionSummaries = await analyzeSections(sections.rows);
+          for (const [sectionId, summary] of sectionSummaries) {
+            await query(
+              'UPDATE document_sections SET summary = $1 WHERE id = $2',
+              [summary, sectionId]
+            );
+          }
+        } catch (secErr) {
+          console.warn(`[Analyze] 섹션 요약 실패 (무시):`, secErr.message);
         }
+        console.log(`[Analyze] 4단계 완료 — 섹션 요약 ${sectionSummaries.size}개`);
 
         // 5) 기존 청크 삭제 후 enriched 임베딩 재생성
         const sectionIds = sections.rows.map(s => s.id);
@@ -452,6 +468,7 @@ module.exports = async function handler(req, res) {
         );
         const tagList = tagNames.rows.map(r => r.name);
 
+        console.log(`[Analyze] 5단계 시작 — 임베딩 재생성 (섹션 ${sectionIds.length}개)...`);
         const totalChunks = await generateEnrichedEmbeddings(
           { query },
           id,

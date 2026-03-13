@@ -170,6 +170,11 @@ async function buildSemanticCrossRefs(dbQuery, documentId, options = {}) {
   }
 
   for (const [sectionId, chunk] of sectionChunks) {
+    // DB에서 가져온 벡터가 이미 "[0.1,0.2,...]" 문자열 → 그대로 사용
+    const vecStr = typeof chunk.embedding === 'string'
+      ? chunk.embedding
+      : `[${chunk.embedding}]`;
+
     // 타 문서의 유사 섹션 검색 (자기 문서 제외)
     const similar = await dbQuery(
       `SELECT DISTINCT ON (ds.id)
@@ -183,7 +188,7 @@ async function buildSemanticCrossRefs(dbQuery, documentId, options = {}) {
          AND 1 - (dc.embedding <=> $1::vector) >= $3
        ORDER BY ds.id, dc.embedding <=> $1::vector
        LIMIT $4`,
-      [`[${chunk.embedding}]`, documentId, threshold, maxPerSection]
+      [vecStr, documentId, threshold, maxPerSection]
     );
 
     for (const row of similar.rows) {
