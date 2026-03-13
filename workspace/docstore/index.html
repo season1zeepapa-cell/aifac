@@ -7034,7 +7034,7 @@
     // ========================================
     // AI 채팅 탭 (멀티턴 RAG 대화)
     // ========================================
-    function ChatTab() {
+    function ChatTab({ onNavigateToDoc }) {
       const [chatMessages, setChatMessages] = useState([]);
       // 각 메시지: { role: 'user'|'assistant', content, sources?, provider? }
       const [inputText, setInputText] = useState('');
@@ -7669,13 +7669,29 @@
                             const simPercent = (src.similarity * 100).toFixed(1);
                             const simColor = simPercent >= 80 ? 'text-green-600' : simPercent >= 60 ? 'text-yellow-600' : 'text-text-secondary';
                             return (
-                              <div key={si} className="text-xs bg-bg border border-border rounded-lg p-2.5">
+                              <div key={si}
+                                className="text-xs bg-bg border border-border rounded-lg p-2.5 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors group"
+                                onClick={() => {
+                                  if (src.documentId && onNavigateToDoc) {
+                                    onNavigateToDoc(src.documentId, {
+                                      sectionIndex: src.sectionIndex,
+                                      label: src.label || src.articleTitle || src.chapter,
+                                    });
+                                  }
+                                }}
+                                title="클릭하면 문서 상세로 이동하여 해당 조문을 펼칩니다"
+                              >
                                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
                                   <span className="font-medium text-primary">근거 {si + 1}</span>
                                   <span className="text-text font-medium">{src.documentTitle}</span>
                                   {src.label && <span className="text-text-secondary">({src.label})</span>}
                                   {src.chapter && !src.label && <span className="text-text-secondary">{src.chapter}</span>}
                                   <span className={`${simColor} font-medium`}>{simPercent}%</span>
+                                  {src.documentId && (
+                                    <svg className="w-3 h-3 text-primary opacity-0 group-hover:opacity-100 transition-opacity ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
+                                  )}
                                 </div>
                                 <p className="text-text-secondary leading-relaxed">{src.excerpt}</p>
                               </div>
@@ -10558,7 +10574,7 @@
                 <SearchTab onNavigateToDoc={handleNavigateToDoc} />
               )}
               {activeTab === 'chat' && (
-                <ChatTab />
+                <ChatTab onNavigateToDoc={handleNavigateToDoc} />
               )}
               {activeTab === 'settings' && (
                 <SettingsTab />
