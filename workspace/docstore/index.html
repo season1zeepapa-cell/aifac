@@ -10570,12 +10570,13 @@
               {activeTab === 'documents' && (
                 <DocumentsTab key={refreshKey} initialDocInfo={navigateDocInfo} onInitialDocConsumed={() => setNavigateDocInfo(null)} />
               )}
-              {activeTab === 'search' && (
+              {/* 검색/채팅 탭: 상태 유지를 위해 display:none 방식 사용 */}
+              <div style={{ display: activeTab === 'search' ? 'block' : 'none' }}>
                 <SearchTab onNavigateToDoc={handleNavigateToDoc} />
-              )}
-              {activeTab === 'chat' && (
+              </div>
+              <div style={{ display: activeTab === 'chat' ? 'block' : 'none' }}>
                 <ChatTab onNavigateToDoc={handleNavigateToDoc} />
-              )}
+              </div>
               {activeTab === 'settings' && (
                 <SettingsTab />
               )}

@@ -208,7 +208,8 @@ test.describe('설정/튜닝 탭 구조', () => {
     await page.waitForSelector('nav', { timeout: 15000 });
     await page.locator('nav button').filter({ hasText: '설정' }).click();
 
-    const settingsTabs = ['API 키 관리', 'LLM 모델', '임베딩 모델'];
+    // 실제 서브탭 라벨: 'API 키', 'LLM 설정', '임베딩'
+    const settingsTabs = ['API 키', 'LLM 설정', '임베딩'];
     for (const tabName of settingsTabs) {
       const tab = page.getByRole('button', { name: tabName, exact: true });
       await tab.scrollIntoViewIfNeeded();
