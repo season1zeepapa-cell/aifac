@@ -112,6 +112,10 @@ app.get('/api/communities', (req, res) => communitiesHandler(req, res));
 app.post('/api/communities', (req, res) => communitiesHandler(req, res));
 app.delete('/api/communities', (req, res) => communitiesHandler(req, res));
 
+// ── /api/few-shot (GET) — Few-shot 자동 매칭 ──
+const fewShotHandler = require('./api/few-shot');
+app.get('/api/few-shot', (req, res) => fewShotHandler(req, res));
+
 // ── /api/knowledge-graph-neo4j (GET, POST, DELETE) — Neo4j 지식 그래프 + 비교 ──
 const kgNeo4jHandler = require('./api/knowledge-graph-neo4j');
 app.get('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));

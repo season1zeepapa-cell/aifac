@@ -21,6 +21,7 @@ const { findTriplesForRAG } = require('./knowledge-graph');
 const { buildPrompt } = require('./prompt-manager');
 const { createSpan, endSpan } = require('./langfuse');
 const { globalSearch } = require('./community-summary');
+const { findRelevantFewShots } = require('./few-shot-manager');
 
 // ── 특수 종료 심볼 ──
 const END = Symbol('END');
@@ -262,7 +263,23 @@ async function augmentNode(state) {
       ).join('\n\n')
     : '';
 
-  // 5) 프롬프트 빌드
+  // 5) 동적 Few-shot 예시 자동 매칭
+  let dynamicFewShots = [];
+  try {
+    const fewShotResult = await findRelevantFewShots(state.dbQuery, question, {
+      category: state.category !== 'default' ? state.category : undefined,
+      maxExamples: 2,
+    });
+    if (fewShotResult.examples.length > 0) {
+      dynamicFewShots = fewShotResult.examples;
+      console.log(`[RAG-Graph] Few-shot 매칭: ${fewShotResult.examples.length}개 (후보: ${fewShotResult.meta.candidates})`);
+      state.fewShotMeta = fewShotResult.meta;
+    }
+  } catch (fsErr) {
+    console.warn('[RAG-Graph] Few-shot 매칭 실패 (무시):', fsErr.message);
+  }
+
+  // 6) 프롬프트 빌드 (동적 few-shot 주입)
   const promptResult = await buildPrompt('rag-answer', state.category, {
     question,
     contextText: state.contextText,
@@ -270,10 +287,24 @@ async function augmentNode(state) {
     sourceCount: String(sources.length),
   });
 
+  // 동적 few-shot이 있으면 템플릿 예시에 병합하여 프롬프트 재렌더링
+  if (dynamicFewShots.length > 0) {
+    const { renderTemplate, formatFewShotExamples } = require('./prompt-manager');
+    const { loadTemplate } = require('./prompt-manager');
+    const tpl = await loadTemplate('rag-answer', state.category);
+    const allExamples = [...(tpl?.few_shot_examples || []), ...dynamicFewShots];
+    promptResult.prompt = renderTemplate(tpl.template, {
+      question,
+      contextText: state.contextText,
+      historyText,
+      sourceCount: String(sources.length),
+    }, allExamples);
+  }
+
   state.prompt = promptResult.prompt;
   state.promptResult = promptResult;
   state.tracer.setPromptInfo(promptResult, state.prompt);
-  console.log(`[RAG-Graph] 프롬프트: rag-answer/${promptResult.matchedCategory} (DB: ${promptResult.fromDb})`);
+  console.log(`[RAG-Graph] 프롬프트: rag-answer/${promptResult.matchedCategory} (DB: ${promptResult.fromDb}, few-shot: ${dynamicFewShots.length})`);
 
   // 6) LLM 호출 옵션 조립
   const templateParams = promptResult.modelParams || {};
