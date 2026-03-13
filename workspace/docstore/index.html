@@ -4283,7 +4283,7 @@
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
       const [building, setBuilding] = useState(false);
-      const [viewMode, setViewMode] = useState('graph'); // 'graph' | 'list' | 'entities' | 'compare'
+      const [viewMode, setViewMode] = useState('graph'); // 'graph' | 'list' | 'entities' | 'compare' | 'traverse'
       const [searchQuery, setSearchQuery] = useState('');
       const [typeFilter, setTypeFilter] = useState('all');
       const [hoveredNode, setHoveredNode] = useState(null);
@@ -4295,6 +4295,15 @@
       const [useLLMNer, setUseLLMNer] = useState(false); // LLM NER 하이브리드 모드
       const svgRef = useRef(null);
       const graphContainerRef = useRef(null);
+
+      // BFS/DFS 탐색 상태
+      const [traverseAlgo, setTraverseAlgo] = useState('bfs'); // 'bfs' | 'dfs'
+      const [traverseHops, setTraverseHops] = useState(3);
+      const [traverseStartId, setTraverseStartId] = useState('');
+      const [traverseResult, setTraverseResult] = useState(null);
+      const [traverseLoading, setTraverseLoading] = useState(false);
+      const traverseSvgRef = useRef(null);
+      const traverseContainerRef = useRef(null);
 
       // 엔티티 타입별 색상
       const typeColorMap = {
@@ -4674,14 +4683,14 @@
 
         // ─── 뷰 전환 토글 ───
         React.createElement('div', { className: 'flex gap-1 bg-card-bg border border-border rounded-lg p-0.5' },
-          ...['graph', 'list', 'entities', 'compare'].map(mode =>
+          ...['graph', 'list', 'entities', 'traverse', 'compare'].map(mode =>
             React.createElement('button', {
               key: mode,
               onClick: () => setViewMode(mode),
               className: `flex-1 px-2 py-1.5 text-[11px] font-medium rounded-md transition-colors ${
                 viewMode === mode ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-text'
               }`,
-            }, mode === 'graph' ? '그래프' : mode === 'list' ? '트리플' : mode === 'entities' ? '엔티티' : 'PG vs Neo4j'),
+            }, mode === 'graph' ? '그래프' : mode === 'list' ? '트리플' : mode === 'entities' ? '엔티티' : mode === 'traverse' ? '탐색' : 'PG vs Neo4j'),
           ),
         ),
 
@@ -4748,6 +4757,186 @@
               )
             )
           : React.createElement(EmptyState, { icon: '🏷️', title: '엔티티가 없습니다', description: '트리플을 구축해주세요.' })
+        ),
+
+        // ═══ BFS/DFS 그래프 탐색 뷰 ═══
+        viewMode === 'traverse' && React.createElement('div', { className: 'space-y-3' },
+          // 탐색 설정 패널
+          React.createElement('div', { className: 'bg-card-bg border border-border rounded-xl p-4 space-y-3' },
+            React.createElement('div', { className: 'text-sm font-semibold text-text' }, '그래프 탐색 (BFS/DFS)'),
+            React.createElement('p', { className: 'text-[11px] text-text-secondary' },
+              'BFS: 시작점에서 물결처럼 퍼져나가며 탐색 (가까운 것부터) | DFS: 한 경로를 끝까지 추적 후 백트래킹 (연쇄 참조 발견)'),
+
+            // 알고리즘 선택 + 홉 수
+            React.createElement('div', { className: 'flex flex-wrap gap-2 items-center' },
+              // BFS/DFS 토글
+              React.createElement('div', { className: 'flex gap-1 bg-bg border border-border rounded-lg p-0.5' },
+                ...['bfs', 'dfs'].map(algo =>
+                  React.createElement('button', {
+                    key: algo,
+                    onClick: () => setTraverseAlgo(algo),
+                    className: `px-3 py-1.5 text-[11px] font-medium rounded-md transition-colors ${
+                      traverseAlgo === algo
+                        ? (algo === 'bfs' ? 'bg-blue-500 text-white' : 'bg-purple-500 text-white')
+                        : 'text-text-secondary hover:text-text'
+                    }`,
+                  }, algo.toUpperCase()),
+                ),
+              ),
+
+              // 홉 수 선택
+              React.createElement('div', { className: 'flex items-center gap-1.5' },
+                React.createElement('span', { className: 'text-[11px] text-text-secondary' }, '탐색 깊이:'),
+                ...([1, 2, 3, 4, 5].map(h =>
+                  React.createElement('button', {
+                    key: h,
+                    onClick: () => setTraverseHops(h),
+                    className: `w-7 h-7 text-[11px] font-medium rounded-md transition-colors ${
+                      traverseHops === h ? 'bg-primary text-white' : 'bg-bg border border-border text-text-secondary hover:text-text'
+                    }`,
+                  }, `${h}`)
+                )),
+              ),
+
+              // 시작 엔티티 선택
+              React.createElement('select', {
+                value: traverseStartId,
+                onChange: (e) => setTraverseStartId(e.target.value),
+                className: 'flex-1 min-w-[180px] px-2.5 py-1.5 text-xs border border-border rounded-lg bg-bg text-text',
+              },
+                React.createElement('option', { value: '' }, '시작 엔티티 선택...'),
+                ...(data?.entities || []).map(e =>
+                  React.createElement('option', { key: e.id, value: e.id },
+                    `[${typeLabels[e.entity_type] || e.entity_type}] ${e.name}`),
+                ),
+              ),
+
+              // 탐색 실행 버튼
+              React.createElement('button', {
+                onClick: async () => {
+                  if (!traverseStartId) return;
+                  try {
+                    setTraverseLoading(true);
+                    setTraverseResult(null);
+                    const params = new URLSearchParams({
+                      traverse: traverseAlgo,
+                      startId: traverseStartId,
+                      hops: traverseHops.toString(),
+                      docId: documentId.toString(),
+                    });
+                    const resp = await authFetch(`${API_BASE_URL}/knowledge-graph?${params}`);
+                    const res = await resp.json();
+                    setTraverseResult(res);
+                  } catch (e) {
+                    setError(e.message);
+                  } finally {
+                    setTraverseLoading(false);
+                  }
+                },
+                disabled: !traverseStartId || traverseLoading,
+                className: `px-3 py-1.5 text-[11px] font-medium text-white rounded-lg disabled:opacity-50 ${
+                  traverseAlgo === 'bfs' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-purple-500 hover:bg-purple-600'
+                }`,
+              }, traverseLoading ? '탐색중...' : `${traverseAlgo.toUpperCase()} 탐색`),
+            ),
+          ),
+
+          // 탐색 결과
+          traverseResult && React.createElement('div', { className: 'space-y-3' },
+            // 통계 요약
+            React.createElement('div', { className: 'flex flex-wrap gap-2' },
+              React.createElement('span', { className: 'px-2.5 py-1 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200' },
+                `${traverseResult.algorithm?.toUpperCase()} | 시작: ${traverseResult.startEntity?.name}`),
+              React.createElement('span', { className: 'px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200' },
+                `노드 ${traverseResult.stats?.totalNodes}개`),
+              React.createElement('span', { className: 'px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200' },
+                `엣지 ${traverseResult.stats?.totalEdges}개`),
+              React.createElement('span', { className: 'px-2.5 py-1 rounded-full text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200' },
+                `최대 깊이 ${traverseResult.stats?.maxDepth}홉`),
+              traverseResult.stats?.totalChains && React.createElement('span', { className: 'px-2.5 py-1 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200' },
+                `연쇄 경로 ${traverseResult.stats.totalChains}개`),
+            ),
+
+            // BFS 결과: 깊이별 노드 목록
+            traverseResult.algorithm === 'bfs' && traverseResult.nodes && React.createElement('div', { className: 'space-y-2' },
+              // 깊이별로 그룹화
+              ...Array.from(new Set(traverseResult.nodes.map(n => n.depth))).sort().map(depth =>
+                React.createElement('div', { key: depth, className: 'bg-card-bg border border-border rounded-lg p-3' },
+                  React.createElement('div', { className: 'text-[11px] font-semibold text-text-secondary mb-2' },
+                    depth === 0 ? '시작점' : `${depth}홉 이웃`),
+                  React.createElement('div', { className: 'flex flex-wrap gap-1.5' },
+                    ...traverseResult.nodes.filter(n => n.depth === depth).map(n =>
+                      React.createElement('span', {
+                        key: n.id,
+                        className: `px-2 py-1 rounded-full text-[11px] font-medium text-white cursor-pointer hover:opacity-80`,
+                        style: { backgroundColor: typeColorMap[n.type] || '#6B7280' },
+                        title: `${typeLabels[n.type] || n.type} | ID: ${n.id}`,
+                        onClick: () => { setTraverseStartId(n.id.toString()); },
+                      }, n.name),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // DFS 결과: 연쇄 참조 체인 목록
+            traverseResult.algorithm === 'dfs' && traverseResult.chains && React.createElement('div', { className: 'space-y-2' },
+              React.createElement('div', { className: 'text-xs font-semibold text-text mb-1' }, '발견된 연쇄 참조 경로'),
+              ...traverseResult.chains.slice(0, 30).map((chain, idx) =>
+                React.createElement('div', {
+                  key: idx,
+                  className: 'bg-card-bg border border-border rounded-lg p-3 hover:border-purple-300 transition-colors',
+                },
+                  // 깊이 + 신뢰도 뱃지
+                  React.createElement('div', { className: 'flex items-center gap-2 mb-2' },
+                    React.createElement('span', { className: 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-purple-100 text-purple-700' },
+                      `${chain.depth}홉`),
+                    React.createElement('span', { className: 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 text-gray-600' },
+                      `신뢰도: ${chain.confidence}`),
+                  ),
+                  // 경로 시각화: A →[관계]→ B →[관계]→ C
+                  React.createElement('div', { className: 'flex flex-wrap items-center gap-1 text-[11px]' },
+                    ...chain.path.flatMap((entity, i) => {
+                      const items = [
+                        React.createElement('span', {
+                          key: `e${i}`,
+                          className: 'px-2 py-0.5 rounded-full font-medium text-white',
+                          style: { backgroundColor: typeColorMap[entity.type] || '#6B7280' },
+                        }, entity.name),
+                      ];
+                      if (i < chain.predicates.length) {
+                        items.push(
+                          React.createElement('span', {
+                            key: `p${i}`,
+                            className: 'text-text-secondary font-mono',
+                          }, ` →[${chain.predicates[i]}]→ `),
+                        );
+                      }
+                      return items;
+                    }),
+                  ),
+                ),
+              ),
+              traverseResult.chains.length > 30 && React.createElement('div', { className: 'text-center text-[11px] text-text-secondary py-2' },
+                `... 외 ${traverseResult.chains.length - 30}개 경로`),
+            ),
+
+            // 탐색 엣지 목록 (접혀 있음)
+            traverseResult.edges?.length > 0 && React.createElement('details', { className: 'bg-card-bg border border-border rounded-lg' },
+              React.createElement('summary', { className: 'px-3 py-2 text-[11px] font-medium text-text-secondary cursor-pointer hover:text-text' },
+                `관계 상세 (${traverseResult.edges.length}건)`),
+              React.createElement('div', { className: 'px-3 pb-3 space-y-1' },
+                ...traverseResult.edges.slice(0, 50).map(edge =>
+                  React.createElement('div', { key: edge.id, className: 'flex items-center gap-1 text-[11px]' },
+                    React.createElement('span', { className: 'font-medium text-text' }, edge.sourceName),
+                    React.createElement('span', { className: 'text-text-secondary' }, ` →[${edge.predicate}]→ `),
+                    React.createElement('span', { className: 'font-medium text-text' }, edge.targetName),
+                    React.createElement('span', { className: 'text-gray-400 ml-1' }, `(${edge.confidence})`),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
 
         // ═══ PG vs Neo4j 비교 뷰 ═══

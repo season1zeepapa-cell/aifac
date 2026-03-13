@@ -939,6 +939,354 @@ async function incrementalUpdateGraph(dbQuery, documentId, options = {}) {
   };
 }
 
+// ============================================================
+// BFS / DFS 그래프 탐색 (PostgreSQL 재귀 CTE)
+//
+// Neo4j 없이도 PostgreSQL만으로 N-홉 그래프 탐색을 수행한다.
+//
+// 원리 (비유):
+//   BFS = 연못에 돌을 던지면 물결이 동심원으로 퍼지는 것
+//         → 1홉 이웃 전부 → 2홉 이웃 전부 → ...
+//   DFS = 미로에서 한 방향으로 끝까지 가보고, 막히면 돌아와서 다른 길
+//         → 한 경로를 깊이까지 추적 → 다음 경로
+//
+// 사용 사례:
+//   "개인정보보호위원회"에서 3홉 탐색 →
+//   개인정보보호위원회 → 개인정보 보호법 → 제3조 → 정보주체
+//   이런 연쇄 참조 관계를 자동으로 발견
+//
+// PostgreSQL의 WITH RECURSIVE는 기본적으로 BFS처럼 동작.
+// DFS는 path 배열을 추적하면서 깊이 우선으로 결과를 정렬.
+// ============================================================
+
+/**
+ * BFS 그래프 탐색 — 시작 엔티티에서 N-홉까지 너비 우선 탐색
+ *
+ * @param {Function} dbQuery - DB 쿼리 함수
+ * @param {number} entityId - 시작 엔티티 ID
+ * @param {object} [options]
+ * @param {number} [options.maxHops=3] - 최대 탐색 깊이
+ * @param {number} [options.maxNodes=100] - 최대 노드 수
+ * @param {number} [options.minConfidence=0.0] - 최소 신뢰도 필터
+ * @param {number} [options.documentId] - 문서 범위 제한
+ * @returns {{ nodes, edges, paths, stats }}
+ */
+async function bfsTraversal(dbQuery, entityId, options = {}) {
+  const { maxHops = 3, maxNodes = 100, minConfidence = 0.0, documentId } = options;
+  const hops = Math.min(maxHops, 5); // 안전 제한: 최대 5홉
+
+  // 시작 엔티티 정보 조회
+  const startEntity = await dbQuery(
+    'SELECT id, name, entity_type FROM entities WHERE id = $1',
+    [entityId]
+  );
+  if (startEntity.rows.length === 0) throw new Error('시작 엔티티를 찾을 수 없습니다.');
+
+  // 재귀 CTE로 BFS 탐색
+  // visited 배열로 순환 방지 (이미 방문한 노드 재방문 안 함)
+  const docFilter = documentId ? 'AND kt.source_document_id = $3' : '';
+  const params = [entityId, hops];
+  if (documentId) params.push(documentId);
+
+  const result = await dbQuery(
+    `WITH RECURSIVE bfs AS (
+      -- 시작점 (0홉 = 자기 자신)
+      SELECT
+        $1::int AS current_id,
+        ARRAY[$1::int] AS visited,
+        0 AS depth,
+        NULL::int AS edge_id,
+        NULL::text AS predicate,
+        NULL::int AS from_id,
+        NULL::float AS confidence
+
+      UNION ALL
+
+      -- 재귀: 인접 노드로 확장
+      SELECT
+        CASE
+          WHEN kt.subject_id = bfs.current_id THEN kt.object_id
+          ELSE kt.subject_id
+        END AS current_id,
+        bfs.visited || CASE
+          WHEN kt.subject_id = bfs.current_id THEN kt.object_id
+          ELSE kt.subject_id
+        END,
+        bfs.depth + 1,
+        kt.id,
+        kt.predicate,
+        bfs.current_id,
+        kt.confidence
+      FROM knowledge_triples kt
+      JOIN bfs ON (kt.subject_id = bfs.current_id OR kt.object_id = bfs.current_id)
+      WHERE bfs.depth < $2
+        AND NOT (CASE WHEN kt.subject_id = bfs.current_id THEN kt.object_id ELSE kt.subject_id END) = ANY(bfs.visited)
+        AND kt.confidence >= ${minConfidence}
+        ${docFilter}
+    )
+    SELECT DISTINCT ON (current_id)
+      bfs.current_id,
+      bfs.depth,
+      bfs.edge_id,
+      bfs.predicate,
+      bfs.from_id,
+      bfs.confidence,
+      e.name AS entity_name,
+      e.entity_type
+    FROM bfs
+    JOIN entities e ON e.id = bfs.current_id
+    ORDER BY current_id, depth ASC
+    LIMIT $${params.length + 1}`,
+    [...params, maxNodes]
+  );
+
+  // 탐색된 노드들의 모든 연결 엣지 조회 (시각화용)
+  const nodeIds = result.rows.map(r => r.current_id);
+  if (nodeIds.length === 0) {
+    return {
+      startEntity: startEntity.rows[0],
+      nodes: [{ id: startEntity.rows[0].id, name: startEntity.rows[0].name, type: startEntity.rows[0].entity_type, depth: 0 }],
+      edges: [],
+      paths: [],
+      stats: { totalNodes: 1, totalEdges: 0, maxDepth: 0 },
+    };
+  }
+
+  const edgesResult = await dbQuery(
+    `SELECT kt.id, kt.subject_id, kt.object_id, kt.predicate, kt.confidence, kt.context,
+            s.name AS subject_name, s.entity_type AS subject_type,
+            o.name AS object_name, o.entity_type AS object_type
+     FROM knowledge_triples kt
+     JOIN entities s ON kt.subject_id = s.id
+     JOIN entities o ON kt.object_id = o.id
+     WHERE kt.subject_id = ANY($1) AND kt.object_id = ANY($1)`,
+    [nodeIds]
+  );
+
+  // 노드/엣지 구조 변환
+  const nodes = result.rows.map(r => ({
+    id: r.current_id,
+    name: r.entity_name,
+    type: r.entity_type,
+    depth: r.depth,
+  }));
+
+  const edges = edgesResult.rows.map(r => ({
+    id: r.id,
+    source: r.subject_id,
+    target: r.object_id,
+    predicate: r.predicate,
+    confidence: r.confidence,
+    context: r.context,
+    sourceName: r.subject_name,
+    targetName: r.object_name,
+  }));
+
+  // 경로 복원 (시작점에서 각 노드까지의 도달 경로)
+  const paths = result.rows
+    .filter(r => r.depth > 0)
+    .map(r => ({
+      entityId: r.current_id,
+      entityName: r.entity_name,
+      depth: r.depth,
+      reachedVia: r.predicate,
+      fromId: r.from_id,
+    }));
+
+  const maxDepth = Math.max(...result.rows.map(r => r.depth), 0);
+
+  return {
+    algorithm: 'bfs',
+    startEntity: startEntity.rows[0],
+    nodes,
+    edges,
+    paths,
+    stats: {
+      totalNodes: nodes.length,
+      totalEdges: edges.length,
+      maxDepth,
+      hopsRequested: hops,
+    },
+  };
+}
+
+/**
+ * DFS 그래프 탐색 — 시작 엔티티에서 깊이 우선 탐색 (경로 추적)
+ *
+ * BFS와 달리, 한 경로를 끝까지 추적한 후 백트래킹.
+ * 연쇄 참조(A→B→C→D) 발견에 특화.
+ *
+ * @param {Function} dbQuery - DB 쿼리 함수
+ * @param {number} entityId - 시작 엔티티 ID
+ * @param {object} [options]
+ * @param {number} [options.maxHops=3] - 최대 탐색 깊이
+ * @param {number} [options.maxPaths=50] - 최대 경로 수
+ * @param {number} [options.minConfidence=0.0] - 최소 신뢰도 필터
+ * @param {number} [options.documentId] - 문서 범위 제한
+ * @returns {{ nodes, edges, chains, stats }}
+ */
+async function dfsTraversal(dbQuery, entityId, options = {}) {
+  const { maxHops = 3, maxPaths = 50, minConfidence = 0.0, documentId } = options;
+  const hops = Math.min(maxHops, 5);
+
+  // 시작 엔티티 정보
+  const startEntity = await dbQuery(
+    'SELECT id, name, entity_type FROM entities WHERE id = $1',
+    [entityId]
+  );
+  if (startEntity.rows.length === 0) throw new Error('시작 엔티티를 찾을 수 없습니다.');
+
+  // 재귀 CTE로 DFS 탐색 — 전체 경로를 path 배열에 기록
+  const docFilter = documentId ? 'AND kt.source_document_id = $3' : '';
+  const params = [entityId, hops];
+  if (documentId) params.push(documentId);
+
+  const result = await dbQuery(
+    `WITH RECURSIVE dfs AS (
+      -- 시작점
+      SELECT
+        $1::int AS current_id,
+        ARRAY[$1::int] AS path,
+        ARRAY[]::text[] AS predicates,
+        0 AS depth,
+        1.0::float AS path_confidence
+
+      UNION ALL
+
+      -- 재귀: 깊이 우선 확장
+      SELECT
+        CASE
+          WHEN kt.subject_id = dfs.current_id THEN kt.object_id
+          ELSE kt.subject_id
+        END,
+        dfs.path || CASE
+          WHEN kt.subject_id = dfs.current_id THEN kt.object_id
+          ELSE kt.subject_id
+        END,
+        dfs.predicates || kt.predicate,
+        dfs.depth + 1,
+        dfs.path_confidence * kt.confidence
+      FROM knowledge_triples kt
+      JOIN dfs ON (kt.subject_id = dfs.current_id OR kt.object_id = dfs.current_id)
+      WHERE dfs.depth < $2
+        AND NOT (CASE WHEN kt.subject_id = dfs.current_id THEN kt.object_id ELSE kt.subject_id END) = ANY(dfs.path)
+        AND kt.confidence >= ${minConfidence}
+        ${docFilter}
+    )
+    SELECT
+      dfs.current_id,
+      dfs.path,
+      dfs.predicates,
+      dfs.depth,
+      dfs.path_confidence,
+      e.name AS entity_name,
+      e.entity_type
+    FROM dfs
+    JOIN entities e ON e.id = dfs.current_id
+    WHERE dfs.depth > 0
+    ORDER BY dfs.depth DESC, dfs.path_confidence DESC
+    LIMIT $${params.length + 1}`,
+    [...params, maxPaths]
+  );
+
+  // 모든 탐색된 노드 수집
+  const allNodeIds = new Set();
+  allNodeIds.add(entityId);
+  for (const row of result.rows) {
+    for (const nodeId of row.path) {
+      allNodeIds.add(nodeId);
+    }
+  }
+  const nodeIdArr = [...allNodeIds];
+
+  // 노드 정보 조회
+  const nodesResult = await dbQuery(
+    'SELECT id, name, entity_type FROM entities WHERE id = ANY($1)',
+    [nodeIdArr]
+  );
+  const nodeMap = new Map();
+  for (const n of nodesResult.rows) {
+    nodeMap.set(n.id, n);
+  }
+
+  // 엣지 조회
+  const edgesResult = await dbQuery(
+    `SELECT kt.id, kt.subject_id, kt.object_id, kt.predicate, kt.confidence, kt.context,
+            s.name AS subject_name, s.entity_type AS subject_type,
+            o.name AS object_name, o.entity_type AS object_type
+     FROM knowledge_triples kt
+     JOIN entities s ON kt.subject_id = s.id
+     JOIN entities o ON kt.object_id = o.id
+     WHERE kt.subject_id = ANY($1) AND kt.object_id = ANY($1)`,
+    [nodeIdArr]
+  );
+
+  // 연쇄 참조 체인 구성
+  // 예: [개인정보보호위원회] →관할→ [개인정보 보호법] →정의→ [개인정보] →보호→ [정보주체]
+  const chains = result.rows.map(row => {
+    const pathEntities = row.path.map(id => {
+      const n = nodeMap.get(id);
+      return n ? { id, name: n.name, type: n.entity_type } : { id, name: `#${id}`, type: 'unknown' };
+    });
+    return {
+      path: pathEntities,
+      predicates: row.predicates,
+      depth: row.depth,
+      confidence: parseFloat(row.path_confidence.toFixed(4)),
+      // 읽기 쉬운 텍스트 표현
+      readable: pathEntities.map((e, i) =>
+        i < row.predicates.length
+          ? `${e.name} →[${row.predicates[i]}]→`
+          : e.name
+      ).join(' '),
+    };
+  });
+
+  // 중복 체인 제거 (같은 경로는 한 번만)
+  const uniqueChains = [];
+  const seenPaths = new Set();
+  for (const chain of chains) {
+    const key = chain.path.map(e => e.id).join('-');
+    if (!seenPaths.has(key)) {
+      seenPaths.add(key);
+      uniqueChains.push(chain);
+    }
+  }
+
+  const nodes = nodeIdArr.map(id => {
+    const n = nodeMap.get(id);
+    return n ? { id, name: n.name, type: n.entity_type } : { id, name: `#${id}`, type: 'unknown' };
+  });
+
+  const edges = edgesResult.rows.map(r => ({
+    id: r.id,
+    source: r.subject_id,
+    target: r.object_id,
+    predicate: r.predicate,
+    confidence: r.confidence,
+    context: r.context,
+    sourceName: r.subject_name,
+    targetName: r.object_name,
+  }));
+
+  const maxDepth = uniqueChains.length > 0 ? Math.max(...uniqueChains.map(c => c.depth)) : 0;
+
+  return {
+    algorithm: 'dfs',
+    startEntity: startEntity.rows[0],
+    nodes,
+    edges,
+    chains: uniqueChains,
+    stats: {
+      totalNodes: nodes.length,
+      totalEdges: edges.length,
+      totalChains: uniqueChains.length,
+      maxDepth,
+      hopsRequested: hops,
+    },
+  };
+}
+
 module.exports = {
   extractEntities,
   extractTriples,
@@ -946,6 +1294,8 @@ module.exports = {
   incrementalUpdateGraph,
   getEntityGraph,
   findTriplesForRAG,
+  bfsTraversal,
+  dfsTraversal,
   CONCEPT_DICT,
   PREDICATE_PATTERNS,
 };

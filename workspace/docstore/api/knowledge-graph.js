@@ -2,6 +2,7 @@
 // GET  /api/knowledge-graph?docId=N         — 문서별 트리플 그래프
 // GET  /api/knowledge-graph?entityId=N      — 엔티티 중심 그래프
 // GET  /api/knowledge-graph?search=keyword  — 엔티티 검색
+// GET  /api/knowledge-graph?traverse=bfs|dfs&startId=N&hops=3 — 그래프 탐색
 // POST /api/knowledge-graph { docId }       — 트리플 구축 트리거
 // DELETE /api/knowledge-graph { docId }     — 문서 트리플 삭제
 const { query } = require('../lib/db');
@@ -12,6 +13,8 @@ const {
   buildKnowledgeGraph,
   incrementalUpdateGraph,
   getEntityGraph,
+  bfsTraversal,
+  dfsTraversal,
 } = require('../lib/knowledge-graph');
 
 module.exports = async (req, res) => {
@@ -21,9 +24,24 @@ module.exports = async (req, res) => {
   if (authError) return res.status(401).json({ error: authError });
 
   try {
-    // GET: 지식 그래프 조회
+    // GET: 지식 그래프 조회 / 탐색
     if (req.method === 'GET') {
-      const { docId, entityId, search } = req.query;
+      const { docId, entityId, search, traverse, startId, hops, maxNodes, minConfidence } = req.query;
+
+      // BFS/DFS 그래프 탐색 모드
+      if (traverse && startId) {
+        const algo = traverse === 'dfs' ? 'dfs' : 'bfs';
+        const traverseFn = algo === 'dfs' ? dfsTraversal : bfsTraversal;
+
+        const result = await traverseFn(query, parseInt(startId, 10), {
+          maxHops: Math.min(parseInt(hops) || 3, 5),
+          maxNodes: Math.min(parseInt(maxNodes) || 100, 200),
+          minConfidence: parseFloat(minConfidence) || 0.0,
+          documentId: docId ? parseInt(docId, 10) : undefined,
+        });
+
+        return res.json(result);
+      }
 
       const graph = await getEntityGraph(query, {
         documentId: docId ? parseInt(docId, 10) : undefined,
