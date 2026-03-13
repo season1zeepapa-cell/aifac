@@ -14,23 +14,34 @@ function stripHtml(str) {
   return str.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// URL 요청 (리다이렉트 포함)
+// 단일 HTTP 요청 (리다이렉트 포함)
 // 한국 정부기관 사이트는 GPKI 인증서를 사용하므로 SSL 검증 스킵 필요
-function fetchUrl(url, maxRedirects = 3) {
+function fetchUrlOnce(url, maxRedirects = 3) {
   return new Promise((resolve, reject) => {
     const protocol = url.startsWith('https') ? https : http;
     const req = protocol.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'identity',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
       },
-      timeout: 15000,
+      timeout: 20000,
       rejectUnauthorized: false, // 정부기관 GPKI 인증서 허용
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && maxRedirects > 0) {
         const redirectUrl = new URL(res.headers.location, url).href;
-        return fetchUrl(redirectUrl, maxRedirects - 1).then(resolve).catch(reject);
+        return fetchUrlOnce(redirectUrl, maxRedirects - 1).then(resolve).catch(reject);
+      }
+      if (res.statusCode >= 400) {
+        return reject(new Error(`HTTP ${res.statusCode} (${url})`));
       }
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
@@ -53,8 +64,42 @@ function fetchUrl(url, maxRedirects = 3) {
       });
     });
     req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('요청 타임아웃')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('요청 타임아웃 (20초)')); });
   });
+}
+
+// 재시도 포함 URL 요청 (ECONNRESET 등 네트워크 오류 대응)
+async function fetchUrl(url, maxRedirects = 3) {
+  const MAX_RETRIES = 3;
+  // 재시도 가능한 네트워크 에러 코드
+  const RETRYABLE = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'EHOSTUNREACH'];
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fetchUrlOnce(url, maxRedirects);
+    } catch (err) {
+      lastError = err;
+      const code = err.code || '';
+      const isRetryable = RETRYABLE.some(c => code.includes(c)) || err.message.includes('ECONNRESET') || err.message.includes('socket hang up');
+      if (!isRetryable || attempt === MAX_RETRIES) break;
+      // 재시도 전 대기 (1초, 3초)
+      const delay = attempt * 2000;
+      console.warn(`[Crawl] ${url} 연결 실패 (${code || err.message}), ${delay/1000}초 후 재시도 (${attempt}/${MAX_RETRIES})`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  // 사용자 친화적 에러 메시지
+  const code = lastError.code || '';
+  if (code === 'ECONNRESET' || lastError.message.includes('ECONNRESET')) {
+    throw new Error(`사이트(${new URL(url).hostname})가 연결을 거부했습니다. 정부기관 사이트는 클라우드 서버 접속을 차단할 수 있습니다.`);
+  }
+  if (code === 'ECONNREFUSED') {
+    throw new Error(`사이트(${new URL(url).hostname})에 연결할 수 없습니다. 서버가 중지되었거나 접속이 차단되었습니다.`);
+  }
+  if (code === 'ETIMEDOUT' || lastError.message.includes('타임아웃')) {
+    throw new Error(`사이트(${new URL(url).hostname}) 응답 시간 초과 (20초). 사이트가 느리거나 접속이 차단되었습니다.`);
+  }
+  throw lastError;
 }
 
 // 간이 HTML 파서: 게시판 목록에서 게시물 추출
