@@ -10,6 +10,7 @@ const { setCors } = require('../lib/cors');
 const { sendError } = require('../lib/error-handler');
 const {
   buildKnowledgeGraph,
+  incrementalUpdateGraph,
   getEntityGraph,
 } = require('../lib/knowledge-graph');
 
@@ -35,10 +36,23 @@ module.exports = async (req, res) => {
 
     // POST: 지식 그래프 구축
     if (req.method === 'POST') {
-      const { docId, useLLM, llmModel } = req.body;
+      const { docId, useLLM, llmModel, incremental } = req.body;
       if (!docId) return res.status(400).json({ error: 'docId가 필요합니다.' });
 
       const id = parseInt(docId, 10);
+
+      // 증분 업데이트 모드: 변경된 섹션만 처리
+      if (incremental) {
+        const mode = useLLM ? 'Hybrid(정규식+LLM)' : '정규식';
+        console.log(`[KnowledgeGraph] 증분 업데이트 시작: 문서 ${id} (${mode})`);
+
+        const stats = await incrementalUpdateGraph(query, id, { useLLM: !!useLLM, llmModel });
+        console.log(`[KnowledgeGraph] 증분 완료: 추가 ${stats.added}, 변경 ${stats.updated}, 삭제 ${stats.removed}, 유지 ${stats.unchanged}`);
+
+        return res.json({ success: true, documentId: id, incremental: true, stats });
+      }
+
+      // 전체 재구축 모드 (기존)
       const mode = useLLM ? 'Hybrid(정규식+LLM)' : '정규식';
       console.log(`[KnowledgeGraph] 트리플 구축 시작: 문서 ${id} (${mode})`);
 

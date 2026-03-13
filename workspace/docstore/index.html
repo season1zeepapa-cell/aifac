@@ -4362,6 +4362,28 @@
         }
       };
 
+      // 증분 업데이트 (변경된 섹션만 처리)
+      const [incrementalUpdating, setIncrementalUpdating] = useState(false);
+      const [incrementalResult, setIncrementalResult] = useState(null);
+      const handleIncrementalUpdate = async () => {
+        try {
+          setIncrementalUpdating(true);
+          setIncrementalResult(null);
+          const resp = await authFetch(`${API_BASE_URL}/knowledge-graph`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ docId: documentId, useLLM: useLLMNer, incremental: true }),
+          });
+          const res = await resp.json();
+          setIncrementalResult(res.stats);
+          await loadData();
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setIncrementalUpdating(false);
+        }
+      };
+
       // PG vs Neo4j 비교 구축
       const handleCompare = async () => {
         try {
@@ -4587,6 +4609,12 @@
               className: 'px-2.5 py-1.5 text-[11px] font-medium bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50',
             }, building ? (useLLMNer ? 'AI 분석중...' : '구축중...') : (useLLMNer ? 'Hybrid 구축' : 'PG 구축')),
             React.createElement('button', {
+              onClick: handleIncrementalUpdate,
+              disabled: building || comparing || incrementalUpdating,
+              className: 'px-2.5 py-1.5 text-[11px] font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50',
+              title: '변경된 섹션만 감지하여 그래프를 부분 갱신합니다 (전체 재구축보다 빠름)',
+            }, incrementalUpdating ? '증분 갱신중...' : '증분 업데이트'),
+            React.createElement('button', {
               onClick: handleCompare,
               disabled: building || comparing || !neo4jStatus?.connected,
               className: 'px-2.5 py-1.5 text-[11px] font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50',
@@ -4603,6 +4631,27 @@
         }` },
           React.createElement('span', { className: `w-2 h-2 rounded-full ${neo4jStatus?.connected ? 'bg-emerald-500' : 'bg-gray-400'}` }),
           React.createElement('span', null, neo4jStatus?.connected ? 'Neo4j Aura 연결됨' : `Neo4j: ${neo4jStatus?.message || '확인 중...'}`),
+        ),
+
+        // ─── 증분 업데이트 결과 표시 ───
+        incrementalResult && React.createElement('div', {
+          className: `px-3 py-2 rounded-lg text-[11px] border ${
+            incrementalResult.status === 'no_changes'
+              ? 'bg-gray-50 text-gray-600 border-gray-200'
+              : 'bg-amber-50 text-amber-700 border-amber-200'
+          }`,
+        },
+          incrementalResult.status === 'no_changes'
+            ? React.createElement('span', null, '변경 사항 없음 — 모든 섹션이 최신 상태입니다')
+            : React.createElement('span', null,
+                `증분 완료: 추가 ${incrementalResult.added}건, 변경 ${incrementalResult.updated}건, `,
+                `삭제 ${incrementalResult.removed}건, 유지 ${incrementalResult.unchanged}건 `,
+                `(엔티티 ${incrementalResult.entities?.total || 0}, 트리플 ${incrementalResult.triples?.total || 0})`,
+              ),
+          React.createElement('button', {
+            onClick: () => setIncrementalResult(null),
+            className: 'ml-2 text-gray-400 hover:text-gray-600',
+          }, '×'),
         ),
 
         // ─── 검색 + 타입 필터 ───

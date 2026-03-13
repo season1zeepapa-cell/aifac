@@ -641,10 +641,309 @@ function _formatTriplesForPrompt(triples) {
   return `--- 지식 그래프 관계 정보 ---\n${lines.join('\n')}`;
 }
 
+// ============================================================
+// 증분 업데이트 (Incremental Graph Update)
+//
+// 전체 재구축 대신, 변경된 섹션만 감지하여 그래프를 부분 갱신한다.
+//
+// 원리 (비유: 도서관 서가 관리):
+// ① 각 섹션의 텍스트를 해시(지문)로 만들어 기록해 둠
+// ② 문서 수정 시, 해시가 바뀐 섹션 = "내용이 바뀐 페이지"만 찾아냄
+// ③ 바뀐 페이지의 기존 엔티티/트리플을 제거하고, 새로 추출
+// ④ 새 엔티티는 기존 것과 병합 (동일 이름+타입이면 업데이트)
+// ⑤ 삭제된 섹션이 있으면, 해당 섹션의 엔티티/트리플만 정리
+//
+// 장점: 100개 섹션 중 3개만 바뀌면 3개만 처리 → 속도 30배↑
+// ============================================================
+
+/**
+ * 텍스트의 간단한 해시를 생성 (변경 감지용)
+ * 암호학적 해시가 아닌 빠른 비교용 해시
+ * @param {string} text
+ * @returns {string} 해시 문자열
+ */
+function simpleHash(text) {
+  if (!text) return '0';
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // 32비트 정수로 변환
+  }
+  return hash.toString(36);
+}
+
+/**
+ * 지식 그래프 증분 업데이트
+ *
+ * 전체 재구축(buildKnowledgeGraph)과 달리:
+ * - 변경된 섹션만 감지하여 해당 섹션의 엔티티/트리플만 갱신
+ * - 새로 추가된 섹션은 자동으로 처리
+ * - 삭제된 섹션의 데이터는 정리
+ * - 변경 없는 섹션은 건드리지 않음 → 빠름
+ *
+ * @param {Function} dbQuery - DB 쿼리 함수
+ * @param {number} documentId - 문서 ID
+ * @param {object} [options] - { useLLM, llmModel }
+ * @returns {{ added, updated, removed, unchanged, entities, triples }}
+ */
+async function incrementalUpdateGraph(dbQuery, documentId, options = {}) {
+  const { useLLM = false, llmModel } = options;
+
+  // 1) 문서 정보 조회
+  const docRow = await dbQuery('SELECT title, file_type FROM documents WHERE id = $1', [documentId]);
+  if (docRow.rows.length === 0) throw new Error('문서를 찾을 수 없습니다.');
+  const docTitle = docRow.rows[0].title;
+
+  // 2) 현재 섹션 목록 조회
+  const sections = await dbQuery(
+    'SELECT id, raw_text, metadata FROM document_sections WHERE document_id = $1 ORDER BY section_index',
+    [documentId]
+  );
+  const currentSectionIds = new Set(sections.rows.map(s => s.id));
+
+  // 3) 기존에 처리된 섹션 해시 조회
+  //    entities 테이블의 metadata.textHash로 섹션별 해시를 추적
+  const existingEntities = await dbQuery(
+    `SELECT DISTINCT section_id, metadata->>'textHash' AS text_hash
+     FROM entities WHERE document_id = $1 AND section_id IS NOT NULL`,
+    [documentId]
+  );
+  const existingHashMap = new Map(); // sectionId → textHash
+  for (const row of existingEntities.rows) {
+    if (row.section_id && row.text_hash) {
+      existingHashMap.set(row.section_id, row.text_hash);
+    }
+  }
+  const existingSectionIds = new Set(existingHashMap.keys());
+
+  // 4) 변경 감지: 각 섹션을 3가지로 분류
+  //    - added: 새로 추가된 섹션 (기존에 없음)
+  //    - changed: 텍스트가 바뀐 섹션 (해시 불일치)
+  //    - removed: 삭제된 섹션 (현재 없는데 기존에 있음)
+  //    - unchanged: 변경 없음 (해시 일치)
+  const toProcess = []; // 새로 추출해야 할 섹션들
+  const toRemove = []; // 삭제해야 할 섹션 ID들
+  let unchangedCount = 0;
+
+  for (const section of sections.rows) {
+    if (!section.raw_text || section.raw_text.trim().length === 0) continue;
+    const hash = simpleHash(section.raw_text);
+
+    if (!existingHashMap.has(section.id)) {
+      // 새로 추가된 섹션
+      toProcess.push({ section, hash, reason: 'added' });
+    } else if (existingHashMap.get(section.id) !== hash) {
+      // 텍스트가 변경된 섹션
+      toProcess.push({ section, hash, reason: 'changed' });
+    } else {
+      // 변경 없음 → 건너뜀
+      unchangedCount++;
+    }
+  }
+
+  // 삭제된 섹션 감지
+  for (const sectionId of existingSectionIds) {
+    if (!currentSectionIds.has(sectionId)) {
+      toRemove.push(sectionId);
+    }
+  }
+
+  // 변경 사항이 전혀 없으면 바로 반환
+  if (toProcess.length === 0 && toRemove.length === 0) {
+    return {
+      status: 'no_changes',
+      added: 0,
+      updated: 0,
+      removed: 0,
+      unchanged: unchangedCount,
+      entities: { total: 0 },
+      triples: { total: 0 },
+    };
+  }
+
+  // LLM NER 모듈 (필요 시 로드)
+  let hybridExtractEntities, extractTriplesWithLLM;
+  if (useLLM) {
+    try {
+      const llmNer = require('./llm-ner');
+      hybridExtractEntities = llmNer.hybridExtractEntities;
+      extractTriplesWithLLM = llmNer.extractTriplesWithLLM;
+    } catch (err) {
+      console.warn('[KG-Incremental] LLM NER 모듈 로드 실패:', err.message);
+    }
+  }
+
+  // 5) 변경된/삭제된 섹션의 기존 데이터 정리
+  const sectionsToClean = [
+    ...toProcess.filter(p => p.reason === 'changed').map(p => p.section.id),
+    ...toRemove,
+  ];
+  if (sectionsToClean.length > 0) {
+    // 해당 섹션 트리플 삭제
+    await dbQuery(
+      'DELETE FROM knowledge_triples WHERE source_section_id = ANY($1)',
+      [sectionsToClean]
+    );
+    // 해당 섹션 엔티티 삭제 (다른 섹션에서도 참조되지 않는 것만)
+    // → 엔티티는 여러 섹션에서 나올 수 있으므로, section_id 기준으로만 삭제
+    await dbQuery(
+      'DELETE FROM entities WHERE section_id = ANY($1) AND document_id = $2',
+      [sectionsToClean, documentId]
+    );
+  }
+
+  // 6) 변경된/추가된 섹션에서 엔티티/트리플 추출 및 저장
+  const stats = {
+    added: toProcess.filter(p => p.reason === 'added').length,
+    updated: toProcess.filter(p => p.reason === 'changed').length,
+    removed: toRemove.length,
+    unchanged: unchangedCount,
+    entities: { total: 0, byType: {}, bySource: { regex: 0, llm: 0 } },
+    triples: { total: 0, byPredicate: {}, bySource: { regex: 0, llm: 0 } },
+  };
+
+  const BATCH = 10;
+
+  for (const { section, hash } of toProcess) {
+    // 엔티티 추출
+    let entities;
+    if (useLLM && hybridExtractEntities) {
+      entities = await hybridExtractEntities(section.raw_text, docTitle, {
+        useLLM: true, model: llmModel,
+      });
+    } else {
+      entities = extractEntities(section.raw_text, docTitle)
+        .map(e => ({ ...e, source: 'regex' }));
+    }
+
+    // 엔티티 DB 저장 (ON CONFLICT → 업데이트)
+    const entityIdMap = new Map();
+    for (let i = 0; i < entities.length; i += BATCH) {
+      const batch = entities.slice(i, i + BATCH);
+      const values = [];
+      const params = [];
+      batch.forEach((ent, idx) => {
+        const base = idx * 5;
+        values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+        params.push(
+          ent.name, ent.type, documentId, section.id,
+          JSON.stringify({ offset: ent.offset, source: ent.source || 'regex', textHash: hash })
+        );
+      });
+      if (values.length === 0) continue;
+
+      const result = await dbQuery(
+        `INSERT INTO entities (name, entity_type, document_id, section_id, metadata)
+         VALUES ${values.join(', ')}
+         ON CONFLICT (name, entity_type, document_id) DO UPDATE
+         SET section_id = EXCLUDED.section_id,
+             metadata = EXCLUDED.metadata
+         RETURNING id, name, entity_type`,
+        params
+      );
+      for (const row of result.rows) {
+        entityIdMap.set(`${row.entity_type}:${row.name}`, row.id);
+      }
+    }
+
+    // 통계: 엔티티
+    for (const ent of entities) {
+      stats.entities.total++;
+      stats.entities.byType[ent.type] = (stats.entities.byType[ent.type] || 0) + 1;
+      stats.entities.bySource[ent.source || 'regex'] = (stats.entities.bySource[ent.source || 'regex'] || 0) + 1;
+    }
+
+    // 트리플 추출 (정규식)
+    const regexTriples = extractTriples(section.raw_text, entities);
+
+    // 트리플 추출 (LLM 보완)
+    let llmTriples = [];
+    if (useLLM && extractTriplesWithLLM && entities.length >= 3) {
+      try {
+        llmTriples = await extractTriplesWithLLM(
+          section.raw_text, entities, regexTriples, { model: llmModel }
+        );
+      } catch (err) {
+        console.warn('[KG-Incremental] LLM 트리플 추출 실패:', err.message);
+      }
+    }
+
+    const allTriples = [
+      ...regexTriples.map(t => ({ ...t, source: 'regex' })),
+      ...llmTriples.map(t => ({ ...t, source: 'llm' })),
+    ];
+
+    // 트리플 중복 제거 + DB 저장
+    const tripleDedup = new Map();
+    for (const t of allTriples) {
+      const subjectId = entityIdMap.get(`${t.subjectType}:${t.subject}`);
+      const objectId = entityIdMap.get(`${t.objectType}:${t.object}`);
+      if (!subjectId || !objectId) continue;
+      const key = `${subjectId}|${t.predicate}|${objectId}`;
+      if (!tripleDedup.has(key) || t.confidence > tripleDedup.get(key).confidence) {
+        tripleDedup.set(key, {
+          subjectId, predicate: t.predicate, objectId,
+          confidence: t.confidence, sectionId: section.id,
+          context: t.context, source: t.source,
+        });
+      }
+    }
+
+    const tripleArr = [...tripleDedup.values()];
+    for (let i = 0; i < tripleArr.length; i += BATCH) {
+      const batch = tripleArr.slice(i, i + BATCH);
+      const values = [];
+      const params = [];
+      batch.forEach((t, idx) => {
+        const base = idx * 7;
+        values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
+        params.push(t.subjectId, t.predicate, t.objectId, t.confidence, documentId, t.sectionId, t.context);
+      });
+      if (values.length === 0) continue;
+
+      await dbQuery(
+        `INSERT INTO knowledge_triples (subject_id, predicate, object_id, confidence, source_document_id, source_section_id, context)
+         VALUES ${values.join(', ')}
+         ON CONFLICT (subject_id, predicate, object_id) DO UPDATE
+         SET confidence = GREATEST(knowledge_triples.confidence, EXCLUDED.confidence),
+             context = EXCLUDED.context`,
+        params
+      );
+    }
+
+    // 통계: 트리플
+    stats.triples.total += tripleDedup.size;
+    for (const [, t] of tripleDedup) {
+      stats.triples.byPredicate[t.predicate] = (stats.triples.byPredicate[t.predicate] || 0) + 1;
+      stats.triples.bySource[t.source || 'regex'] = (stats.triples.bySource[t.source || 'regex'] || 0) + 1;
+    }
+  }
+
+  // 7) 고아 엔티티 정리 (트리플에 참여하지 않는 엔티티 제거)
+  await dbQuery(
+    `DELETE FROM entities
+     WHERE document_id = $1
+       AND id NOT IN (
+         SELECT subject_id FROM knowledge_triples WHERE source_document_id = $1
+         UNION
+         SELECT object_id FROM knowledge_triples WHERE source_document_id = $1
+       )
+       AND section_id = ANY($2)`,
+    [documentId, sectionsToClean.length > 0 ? sectionsToClean : [0]]
+  );
+
+  return {
+    status: 'updated',
+    ...stats,
+  };
+}
+
 module.exports = {
   extractEntities,
   extractTriples,
   buildKnowledgeGraph,
+  incrementalUpdateGraph,
   getEntityGraph,
   findTriplesForRAG,
   CONCEPT_DICT,
