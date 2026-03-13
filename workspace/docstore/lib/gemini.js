@@ -343,6 +343,9 @@ function callGeminiStream(prompt, options = {}, onToken) {
       }
 
       let buffer = '';
+      let tokenCount = 0;
+      let lastFinishReason = null;
+      let blockReason = null;
       res.on('data', (chunk) => {
         buffer += chunk.toString('utf8');
         // SSE 이벤트 파싱: "data: {...}\n\n" 형식
@@ -354,12 +357,37 @@ function callGeminiStream(prompt, options = {}, onToken) {
           if (!jsonStr.trim()) continue;
           try {
             const parsed = JSON.parse(jsonStr);
-            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (text && onToken) onToken(text);
+            // 안전 필터 차단 감지
+            if (parsed.promptFeedback?.blockReason) {
+              blockReason = parsed.promptFeedback.blockReason;
+            }
+            // 종료 사유 감지
+            const fr = parsed.candidates?.[0]?.finishReason;
+            if (fr) lastFinishReason = fr;
+            // 텍스트 파트 추출 (thinking 파트 제외)
+            const parts = parsed.candidates?.[0]?.content?.parts || [];
+            for (const part of parts) {
+              if (part.text && onToken) {
+                onToken(part.text);
+                tokenCount++;
+              }
+            }
           } catch { /* 파싱 불가 청크 무시 */ }
         }
       });
-      res.on('end', () => resolve());
+      res.on('end', () => {
+        if (tokenCount === 0) {
+          const reason = blockReason
+            ? `Gemini 안전 필터 차단 (${blockReason})`
+            : lastFinishReason && lastFinishReason !== 'STOP'
+            ? `Gemini 응답 중단 (${lastFinishReason})`
+            : 'Gemini가 빈 응답을 반환했습니다';
+          console.warn(`[Gemini Stream] 토큰 0개 수신: ${reason}`);
+          reject(new Error(reason));
+        } else {
+          resolve();
+        }
+      });
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('Gemini 스트리밍 타임아웃')); });

@@ -1434,3 +1434,160 @@ Phase 1 (검색):
 | **쿼리 확장** | ★★★☆☆ | **★★★★★** | 동의어 확장 + 쿼리 리라이팅 + HyDE + 블렌딩 임베딩 |
 
 **Hybrid RAG 종합 점수:** ★★★★☆ (4.3/5) → **★★★★★ (4.6/5)** (쿼리 확장 ★3→★5 반영)
+
+---
+
+## 13. 프레임워크 기준 종합 평가
+
+> 평가일: 2026-03-12
+> 기준: LangChain · Hybrid RAG · LangGraph · Graph RAG
+
+### 13-1. LangChain 기준 평가
+
+LangChain의 핵심 모듈을 기준으로 현재 구현 수준을 평가한다. **LangChain 라이브러리를 사용하지 않고 모든 모듈을 직접 구현**한 점이 특이사항이다.
+
+| 모듈 | 구현 방식 | 평가 | 비고 |
+|------|-----------|:----:|------|
+| **Document Loaders** | PDF/DOCX/CSV/XLSX/HWP/HWPX/이미지/URL 등 10+ 포맷 | ★★★★★ | `text-extractor.js`에서 직접 구현, HWP 한국 공공문서 지원 포함 |
+| **Text Splitters** | 토큰 기반 + 섹션 인식 + 오버랩 + Semantic Splitting | ★★★★★ | `text-splitters.js`에서 6가지 전략 지원, 임베딩 유사도 기반 SemanticChunker 구현 완료 |
+| **Embeddings** | OpenAI `text-embedding-3-small` | ★★★★☆ | `embeddings.js`에서 배치 처리 + 캐싱, 다중 모델 미지원 |
+| **Vector Store** | Supabase pgvector (HNSW 인덱스) | ★★★★☆ | 직접 SQL, Pinecone/Chroma 등 외부 벡터DB 미연동 |
+| **Retrievers** | Hybrid (Vector + FTS + RRF) + Rerank + MMR | ★★★★★ | `search.js`에서 3단계 검색, Cohere Rerank 옵션 |
+| **Chains** | 프롬프트 체인 (카테고리→템플릿→검증) | ★★★★☆ | `prompt-manager.js`에서 5-min 캐시 체인, LangChain LCEL 미사용 |
+| **Agents** | RAG Agent (도구 선택 + 멀티홉) | ★★★☆☆ | `rag-agent.js`에서 도구 3개(search/crossRef/analyze) 지원, ReAct 루프 미구현 |
+| **Callbacks/Tracing** | 3-Layer (LangFuse + RAG Tracer + API Tracker) | ★★★★★ | `rag-tracer.js` 30컬럼 추적, `langfuse.js` 외부 연동, `api-tracker.js` 비용 추적 |
+| **Output Parsers** | JSON 추출 + 폴백 + 검증 | ★★★★☆ | `output-parser.js`에서 3단계 파싱, Pydantic/Zod 스키마 검증 미사용 |
+| **Memory** | 채팅 세션 DB 저장 | ★★★☆☆ | `chat_sessions` 테이블, ConversationBufferMemory 등 고급 패턴 미구현 |
+
+**LangChain 종합: ★★★★☆ (4.1/5)** (Text Splitters ★4→★5 반영)
+
+- 의존성 최소화와 성능 최적화에 유리
+- LangChain 생태계(허브, 커뮤니티 도구)와의 호환성 없음
+
+### 13-2. Hybrid RAG 기준 평가
+
+현대적 Hybrid RAG 아키텍처의 핵심 요소를 평가한다.
+
+| 요소 | 구현 상태 | 평가 | 상세 |
+|------|-----------|:----:|------|
+| **Vector Search** | pgvector cosine similarity + HNSW | ★★★★★ | 임베딩 배치 생성, 유사도 임계값 필터링 |
+| **Keyword Search (BM25/FTS)** | PostgreSQL tsvector + GIN + BM25 | ★★★★★ | tsvector 필터링 → 앱 레벨 BM25(IDF+TF포화+길이보정) 재정렬, k1=1.2 b=0.75 |
+| **Hybrid Fusion (RRF)** | RRF (k=60) + 가중 블렌딩 | ★★★★★ | `search.js`에서 vector 0.7 + keyword 0.3 기본 가중치, 동적 조절 가능 |
+| **Query Enhancement** | HyDE + 쿼리 분해 + 확장 | ★★★★★ | `query-enhancer.js`에서 HyDE 가상문서 생성 → 블렌딩, 키워드 추출 |
+| **Reranking** | Cohere Rerank API (옵션) + MMR | ★★★★★ | 2단계: Cohere cross-encoder → MMR 다양성 보장 |
+| **Multi-hop Search** | 1차 검색 → 교차참조 추출 → 2차 검색 | ★★★★★ | `rag.js`에서 자동 멀티홉, 중복 제거 + 재랭킹 |
+| **Context Compression** | 관련 섹션만 선별 | ★★★☆☆ | 검색 결과 수 제한만 적용, LLM 기반 압축 미구현 |
+| **Adaptive Retrieval** | 문서 타입별 전략 분기 | ★★★★☆ | 법령/일반/기술문서 카테고리별 프롬프트 분기, 검색 전략 자체는 단일 |
+| **Streaming Response** | SSE 기반 실시간 출력 | ★★★★★ | Claude/Gemini/OpenAI 3개 LLM 스트리밍 지원 |
+| **한국어 특화** | 형태소 분석 + 44개 동의어 사전 | ★★★★★ | `korean-tokenizer.js` N-gram + 동의어 확장, FTS 형태소 벡터 |
+
+**Hybrid RAG 종합: ★★★★★ (4.7/5)** (Keyword Search ★4→★5 반영)
+
+- HyDE + BM25 + RRF + Rerank + MMR + Multi-hop의 6단계 파이프라인
+- BM25: IDF(희귀 용어 가중) + TF 포화(반복 감쇠) + 문서 길이 보정 구현
+- 한국어 특화 처리가 특히 우수
+
+### 13-3. LangGraph 기준 평가
+
+LangGraph의 상태 기계 기반 에이전트 아키텍처를 기준으로 평가한다.
+
+| 요소 | 구현 상태 | 평가 | 상세 |
+|------|-----------|:----:|------|
+| **State Machine** | 없음 (절차적 파이프라인) | ★★☆☆☆ | `rag.js`가 순차 실행, 상태 그래프 미정의 |
+| **Conditional Edges** | if/else 분기만 사용 | ★★☆☆☆ | 멀티홉 여부, 스트리밍 여부 등 조건 분기 존재하나 그래프 구조 아님 |
+| **Checkpointing** | RAG Tracer에 단계별 기록 | ★★★☆☆ | `rag-tracer.js`가 30컬럼으로 상태 기록하나 복원/재실행 불가 |
+| **Human-in-the-Loop** | 없음 | ★☆☆☆☆ | 사용자 승인/수정 후 재개 메커니즘 없음 |
+| **Tool Calling** | 에이전트 도구 3개 | ★★★☆☆ | `rag-agent.js`에서 search/crossRef/analyze 도구, 단일 라운드 |
+| **Multi-Agent** | 없음 | ★☆☆☆☆ | 단일 RAG 에이전트, 에이전트 간 협업 미구현 |
+| **Streaming Events** | SSE 출력만 | ★★☆☆☆ | 최종 LLM 출력만 스트리밍, 중간 단계 이벤트 스트리밍 없음 |
+| **Error Recovery** | try/catch + 폴백 | ★★★☆☆ | 스트리밍 실패 → 일반 모드 폴백, 그래프 수준 재시도 없음 |
+
+**LangGraph 종합: ★★☆☆☆ (2.1/5)**
+
+- 현재 코드는 LangGraph 패러다임을 채택하지 않음
+- 절차적 파이프라인으로 충분히 동작하지만, 복잡한 에이전트 워크플로우(반복 추론, 사용자 개입, 멀티 에이전트)를 위해서는 상태 그래프 도입 필요
+
+### 13-4. Graph RAG 기준 평가
+
+Microsoft Graph RAG 논문 기준으로 평가한다.
+
+| 요소 | 구현 상태 | 평가 | 상세 |
+|------|-----------|:----:|------|
+| **Entity Extraction** | 5타입 NER (법령/조문/기관/개념/의무) | ★★★★☆ | `knowledge-graph.js` 정규식+사전 기반, LLM NER 미사용 |
+| **Relationship Extraction** | 14개 관계 술어 | ★★★★★ | 준용/적용/예외/의거/위반 + 정의/위임/관할/소속/근거/제한/부과/보호/고지 |
+| **Knowledge Graph Storage** | PostgreSQL (entities + knowledge_triples) | ★★★★☆ | 이중 저장: PG 트리플 + 선택적 Neo4j, 그래프 순회 쿼리 지원 |
+| **Neo4j Integration** | 옵션 모듈 | ★★★★☆ | `knowledge-graph-neo4j.js`에서 최단경로/N-hop/커뮤니티 탐지 지원 |
+| **Community Detection** | Neo4j GDS 기반 Louvain | ★★★☆☆ | 코드 존재하나 GDS 플러그인 필수, PG만으로는 불가 |
+| **Graph-Enhanced Retrieval** | 교차참조 + 트리플 RAG 통합 | ★★★★☆ | `cross-references` + `findTriplesForRAG()` → 질문 엔티티 매칭 → 관련 트리플 프롬프트 주입 |
+| **Community Summaries** | 없음 | ★★☆☆☆ | 커뮤니티별 요약 생성/활용 미구현 |
+| **Global Search** | 없음 | ★★☆☆☆ | 커뮤니티 요약 기반 전역 질의 미구현 |
+| **Local Search** | 엔티티 중심 서브그래프 조회 | ★★★★☆ | `getEntityGraph()` 구현 완료 |
+| **Graph Visualization** | D3.js 기반 UI | ★★★★☆ | 법령 그래프 뷰 + 엔티티 그래프 뷰 |
+
+**Graph RAG 종합: ★★★½☆ (3.5/5)** (Graph-Enhanced Retrieval ★3→★4 반영)
+
+- 교차참조 + 트리플 모두 RAG 프롬프트에 통합 완료
+- `findTriplesForRAG()`: 질문 엔티티 추출 → 관련 트리플 DB 조회 → 프롬프트 주입
+- 커뮤니티 요약, Global Search는 미구현
+
+### 13-5. 종합 레이더 차트
+
+```
+                LangChain
+                  ★★★★
+                 /      \
+                /        \
+    Graph RAG ★★★½       ★★★★½ Hybrid RAG
+                \        /
+                 \      /
+                  ★★
+                LangGraph
+```
+
+| 프레임워크 | 점수 | 등급 |
+|-----------|:----:|:----:|
+| **Hybrid RAG** | 4.7/5 | A+ |
+| **LangChain** | 4.0/5 | B+ |
+| **Graph RAG** | 3.5/5 | B |
+| **LangGraph** | 2.1/5 | C |
+
+### 13-6. 개선 로드맵 (우선순위순)
+
+#### 1순위: Graph RAG → RAG 통합 (★3→★4)
+
+```
+현재: 트리플 추출 → DB 저장 → 별도 뷰어
+목표: 트리플 추출 → DB 저장 → RAG 프롬프트에 관련 트리플 주입
+```
+
+- `rag.js` 검색 단계에서 엔티티 매칭 → 관련 트리플 조회 → 컨텍스트에 추가
+- 수정 대상: `rag.js` + `knowledge-graph.js`
+
+#### 2순위: LangGraph 상태 그래프 도입 (★2→★3)
+
+```
+현재: rag.js 순차 실행 (if/else 분기)
+목표: 상태 머신 기반 파이프라인 (조건부 엣지, 재시도)
+```
+
+- `lib/rag-graph.js` 신규: 상태 정의 → 노드(검색/증강/생성) → 엣지(조건 분기)
+- 중간 단계 이벤트 스트리밍 추가
+
+#### 3순위: 커뮤니티 요약 (Graph RAG Global Search)
+
+```
+현재: 엔티티 로컬 검색만
+목표: Louvain 커뮤니티 → 요약 → 전역 질의
+```
+
+- Neo4j GDS 또는 PG 기반 간이 커뮤니티 탐지
+- 커뮤니티별 LLM 요약 생성 + 캐싱
+
+#### 4순위: LLM 기반 NER (엔티티 추출 고도화)
+
+```
+현재: 정규식 + 사전 매칭
+목표: LLM Few-shot NER + 정규식 하이브리드
+```
+
+- 정규식 미탐지 엔티티를 LLM이 보완하는 2단계 파이프라인

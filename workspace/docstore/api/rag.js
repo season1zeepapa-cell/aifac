@@ -96,6 +96,15 @@ module.exports = async (req, res) => {
       ? docIds.map(id => parseInt(id, 10))
       : docId ? [parseInt(docId, 10)] : [];
 
+    // SSE 스트리밍: 헤더를 먼저 설정해야 onProgress 콜백에서 sseWrite 가능
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+    }
+
     // SSE 스트리밍일 때 쿼리 강화 과정을 실시간 전송하는 콜백
     const onProgress = stream ? (progress) => {
       try { sseWrite(res, { type: 'enhancement', ...progress }); } catch {}
@@ -142,6 +151,11 @@ module.exports = async (req, res) => {
       await finalizeTrace(trace, { output: '관련 문서 없음' });
       tracer.setError({ message: '관련 문서 없음 (sources=0)' });
       await tracer.save();
+      if (stream) {
+        sseWrite(res, { type: 'token', token: '관련된 문서를 찾을 수 없습니다. 먼저 관련 법령이나 문서를 임포트해주세요.' });
+        sseWrite(res, { type: 'done' });
+        return res.end();
+      }
       return res.json({
         question: question.trim(),
         answer: '관련된 문서를 찾을 수 없습니다. 먼저 관련 법령이나 문서를 임포트해주세요.',
@@ -162,12 +176,14 @@ module.exports = async (req, res) => {
     let triplesText = '';
     let triplesData = null;
     try {
+      const kgStart = Date.now();
       const docIdsForTriples = sources.map(s => s.documentId).filter(Boolean);
       const triplesResult = await findTriplesForRAG(query, question.trim(), {
         docIds: [...new Set(docIdsForTriples)],
         maxTriples: 15,
         minConfidence: 0.6,
       });
+      console.log(`[RAG] 지식 그래프 조회 ${Date.now() - kgStart}ms (엔티티: ${triplesResult.entities.length}, 트리플: ${triplesResult.triples.length})`);
       if (triplesResult.triples.length > 0) {
         triplesText = '\n\n' + triplesResult.contextText;
         triplesData = {
@@ -234,35 +250,40 @@ module.exports = async (req, res) => {
     }));
 
     if (stream) {
-      // ── SSE 스트리밍 모드 ──
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.flushHeaders();
-
-      sseWrite(res, {
-        type: 'sources',
-        sources: sourcesData,
-        hops: searchResult.hops,
-        crossRefs: searchResult.crossRefs || [],
-        knowledgeGraph: triplesData,
-        enhancement: searchResult.enhancement || {},
-        provider,
-        promptTemplate: { category: promptResult.matchedCategory, fromDb: promptResult.fromDb },
-      });
+      // ── SSE 스트리밍 모드 (헤더는 이미 위에서 설정됨) ──
+      try {
+        sseWrite(res, {
+          type: 'sources',
+          sources: sourcesData,
+          hops: searchResult.hops,
+          crossRefs: searchResult.crossRefs || [],
+          knowledgeGraph: triplesData,
+          enhancement: searchResult.enhancement || {},
+          provider,
+          promptTemplate: { category: promptResult.matchedCategory, fromDb: promptResult.fromDb },
+        });
+      } catch (srcErr) {
+        console.error('[RAG] sources 이벤트 전송 실패:', srcErr.message);
+      }
 
       let accumulated = '';
       try {
         tracer.startLLM();
+        const llmStartTime = Date.now();
+        const promptLen = prompt ? prompt.length : 0;
+        console.log(`[RAG] LLM 스트리밍 시작 (${provider}, 프롬프트 ${promptLen}자)`);
+
+        try { sseWrite(res, { type: 'debug', message: `LLM 호출 시작 (${provider}, ${promptLen}자)` }); } catch {}
+
         await callLLMStream(prompt, callOpts, (token) => {
           accumulated += token;
-          sseWrite(res, { type: 'token', token });
+          try { sseWrite(res, { type: 'token', token }); } catch {}
         });
+        console.log(`[RAG] LLM 스트리밍 완료: ${accumulated.length}자, ${Date.now() - llmStartTime}ms`);
         tracer.setStreamOutput(accumulated);
         const parsed = parseRAGOutput(accumulated, sources);
         tracer.setParsedOutput(parsed);
-        sseWrite(res, { type: 'parsed', parsed });
+        try { sseWrite(res, { type: 'parsed', parsed }); } catch {}
 
         // 4) 선택적 답변 검증 (프롬프트 체인)
         if (useVerify && accumulated.length > 0) {
@@ -292,19 +313,30 @@ module.exports = async (req, res) => {
           }
         }
 
-        await tracer.save();
-        sseWrite(res, { type: 'done' });
+        try { await tracer.save(); } catch {}
+        try { sseWrite(res, { type: 'done' }); } catch {}
         await finalizeTrace(trace, { output: parsed.conclusion || accumulated.substring(0, 300) });
       } catch (streamErr) {
-        console.warn(`[RAG] 스트리밍 실패, 일반 모드로 fallback:`, streamErr.message);
+        console.error(`[RAG] 스트리밍 실패:`, streamErr.message);
+        try { sseWrite(res, { type: 'debug', message: `스트리밍 실패: ${streamErr.message}` }); } catch {}
+
+        // 비스트리밍 fallback
         try {
+          console.log('[RAG] 비스트리밍 fallback 시도...');
           const answer = await callLLM(prompt, callOpts);
+          if (!answer || answer.trim().length === 0) {
+            throw new Error('LLM이 빈 응답을 반환했습니다');
+          }
+          accumulated = answer;
           const parsed = parseRAGOutput(answer, sources);
-          sseWrite(res, { type: 'token', token: answer });
-          sseWrite(res, { type: 'parsed', parsed });
-          sseWrite(res, { type: 'done' });
+          try { sseWrite(res, { type: 'token', token: answer }); } catch {}
+          try { sseWrite(res, { type: 'parsed', parsed }); } catch {}
+          try { sseWrite(res, { type: 'done' }); } catch {}
         } catch (fallbackErr) {
-          sseWrite(res, { type: 'error', error: fallbackErr.message });
+          console.error(`[RAG] fallback도 실패:`, fallbackErr.message);
+          try {
+            sseWrite(res, { type: 'error', error: `스트리밍: ${streamErr.message} / Fallback: ${fallbackErr.message}` });
+          } catch {}
         }
       }
       res.end();
