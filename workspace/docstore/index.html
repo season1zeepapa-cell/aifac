@@ -1172,6 +1172,7 @@
       // 소스/키워드/제외 추가 폼
       const [newSourceName, setNewSourceName] = useState('');
       const [newSourceUrl, setNewSourceUrl] = useState('');
+      const [newSourceImportance, setNewSourceImportance] = useState(1.0);
       const [newKeyword, setNewKeyword] = useState('');
       const [newExclusion, setNewExclusion] = useState('');
       // 인라인 편집 state
@@ -1338,12 +1339,12 @@
           await authFetch(`${API_BASE_URL}/crawl-sources`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: newSourceName, boardUrl: newSourceUrl, baseUrl: new URL(newSourceUrl).origin }),
+            body: JSON.stringify({ name: newSourceName, boardUrl: newSourceUrl, baseUrl: new URL(newSourceUrl).origin, importance: newSourceImportance }),
           });
-          setNewSourceName(''); setNewSourceUrl('');
+          setNewSourceName(''); setNewSourceUrl(''); setNewSourceImportance(1.0);
           await loadCrawlData();
         } catch (err) { setCrawlError(err.message); }
-      }, [newSourceName, newSourceUrl, loadCrawlData]);
+      }, [newSourceName, newSourceUrl, newSourceImportance, loadCrawlData]);
 
       // 키워드 추가
       const handleAddKeyword = useCallback(async () => {
@@ -2425,6 +2426,12 @@
                       <p className="text-sm font-medium text-text">새 소스 추가</p>
                       <Input label="사이트 이름" value={newSourceName} onChange={e => setNewSourceName(e.target.value)} placeholder="예: KISA" />
                       <Input label="게시판 URL" value={newSourceUrl} onChange={e => setNewSourceUrl(e.target.value)} placeholder="https://www.kisa.or.kr/401" />
+                      <div>
+                        <label className="block text-xs font-medium text-text-secondary mb-1">사이트 중요도 (기본 1.0, 높을수록 점수에 곱셈)</label>
+                        <input type="number" min="0.1" max="10" step="0.1" value={newSourceImportance}
+                          onChange={e => setNewSourceImportance(parseFloat(e.target.value) || 1.0)}
+                          className="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-primary" />
+                      </div>
                       <Button variant="primary" size="sm" onClick={handleAddSource} disabled={!newSourceName.trim() || !newSourceUrl.trim()}>추가</Button>
                     </div>
                   </Card>

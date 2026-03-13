@@ -74,12 +74,12 @@ module.exports = async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { name, baseUrl, boardUrl, siteType, cssSelectors } = req.body || {};
+      const { name, baseUrl, boardUrl, siteType, cssSelectors, importance } = req.body || {};
       if (!name || !boardUrl) return res.status(400).json({ error: 'name과 boardUrl이 필요합니다.' });
       const result = await query(
-        `INSERT INTO crawl_sources (name, base_url, board_url, site_type, css_selectors, org_id)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [name, baseUrl || '', boardUrl, siteType || 'board', JSON.stringify(cssSelectors || {}), orgId]
+        `INSERT INTO crawl_sources (name, base_url, board_url, site_type, css_selectors, org_id, importance)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [name, baseUrl || '', boardUrl, siteType || 'board', JSON.stringify(cssSelectors || {}), orgId, importance != null ? parseFloat(importance) : 1.0]
       );
       return res.json({ source: result.rows[0] });
     }

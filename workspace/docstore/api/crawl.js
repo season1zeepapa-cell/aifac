@@ -15,16 +15,18 @@ function stripHtml(str) {
 }
 
 // URL 요청 (리다이렉트 포함)
+// 한국 정부기관 사이트는 GPKI 인증서를 사용하므로 SSL 검증 스킵 필요
 function fetchUrl(url, maxRedirects = 3) {
   return new Promise((resolve, reject) => {
     const protocol = url.startsWith('https') ? https : http;
     const req = protocol.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; DocStoreCrawler/1.0)',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'ko-KR,ko;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
       },
       timeout: 15000,
+      rejectUnauthorized: false, // 정부기관 GPKI 인증서 허용
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && maxRedirects > 0) {
         const redirectUrl = new URL(res.headers.location, url).href;
@@ -56,45 +58,94 @@ function fetchUrl(url, maxRedirects = 3) {
 }
 
 // 간이 HTML 파서: 게시판 목록에서 게시물 추출
+// 한국 정부기관 게시판의 다양한 패턴을 지원
 function parseBoard(html, selectors, baseUrl) {
   const results = [];
 
-  // 기본 전략: <a> 태그에서 제목 + href 추출
-  // 다양한 정부기관 게시판 패턴 지원
-  const patterns = [
-    // 패턴 1: <td class="subject"><a href="...">제목</a></td>
-    /<tr[^>]*>[\s\S]*?<td[^>]*class="[^"]*(?:subject|title|tit)[^"]*"[^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<td[^>]*class="[^"]*(?:date|reg)[^"]*"[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi,
-    // 패턴 2: <a href="..." class="...">제목</a> ... <span class="date">날짜</span>
-    /<a[^>]*href="([^"]*)"[^>]*class="[^"]*(?:subject|title|link)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi,
-    // 패턴 3: 일반적인 게시판 리스트 (li 기반)
-    /<li[^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<span[^>]*class="[^"]*date[^"]*"[^>]*>([\s\S]*?)<\/span>[\s\S]*?<\/li>/gi,
-  ];
+  // tbody 영역 추출 (게시판 본문만 파싱)
+  const tbodyMatch = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
+  const targetHtml = tbodyMatch ? tbodyMatch[1] : html;
 
-  for (const pattern of patterns) {
-    let match;
-    while ((match = pattern.exec(html)) !== null) {
-      const href = match[1];
-      const title = stripHtml(match[2]);
-      const dateStr = match[3] ? stripHtml(match[3]) : '';
+  // TR 단위로 분리
+  const trs = targetHtml.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
 
-      if (!title || title.length < 2) continue;
+  for (const tr of trs) {
+    let title = '';
+    let href = '';
+    let dateStr = '';
 
-      // 절대 URL 변환
-      let fullUrl;
-      try {
-        fullUrl = new URL(href, baseUrl).href;
-      } catch {
-        fullUrl = baseUrl + href;
-      }
-
-      results.push({
-        title,
-        url: fullUrl,
-        dateStr,
-        publishedAt: parseDateStr(dateStr),
-      });
+    // 제목 추출: <span class="ellipsis">제목</span> 또는 <a> 태그 텍스트
+    const ellipsisMatch = tr.match(/<span[^>]*class="[^"]*ellipsis[^"]*"[^>]*>([^<]+)</i);
+    if (ellipsisMatch) {
+      title = stripHtml(ellipsisMatch[1]);
+    } else {
+      // a 태그에서 제목 추출 (href="#"이나 javascript: 제외)
+      const aMatch = tr.match(/<a[^>]*>[\s\S]*?<\/a>/i);
+      if (aMatch) title = stripHtml(aMatch[0]);
     }
-    if (results.length > 0) break; // 첫 번째 매칭 패턴 사용
+
+    if (!title || title.length < 3) continue;
+
+    // URL 추출 방법 1: onclick="$bbs.view('id', 'viewPath', ...)" (정부 게시판 공통)
+    const onclickMatch = tr.match(/onclick="[^"]*(?:\$bbs\.view|fn_detail|goView|goDetail|viewArticle)\s*\(\s*'(\d+)'\s*,\s*'([^']*)'/i);
+    if (onclickMatch) {
+      const articleId = onclickMatch[1];
+      const viewPath = onclickMatch[2];
+      // viewPath에 ? 포함 여부에 따라 구분자 선택
+      const separator = viewPath.includes('?') ? '&' : '?';
+      href = `${viewPath}${separator}nttSn=${articleId}`;
+    }
+
+    // URL 추출 방법 2: 표준 href (javascript:, # 제외)
+    if (!href) {
+      const hrefMatch = tr.match(/<a[^>]*href="([^"]*)"[^>]*>/i);
+      if (hrefMatch && hrefMatch[1] !== '#' && !hrefMatch[1].startsWith('javascript:')) {
+        href = hrefMatch[1];
+      }
+    }
+
+    if (!href) continue;
+
+    // 날짜 추출: YYYY-MM-DD 또는 YYYY.MM.DD 패턴
+    const dateMatch = tr.match(/(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/);
+    if (dateMatch) dateStr = dateMatch[0];
+
+    // 절대 URL 변환
+    let fullUrl;
+    try {
+      fullUrl = new URL(href, baseUrl).href;
+    } catch {
+      fullUrl = baseUrl + (href.startsWith('/') ? '' : '/') + href;
+    }
+
+    results.push({
+      title,
+      url: fullUrl,
+      dateStr,
+      publishedAt: parseDateStr(dateStr),
+    });
+  }
+
+  // tbody가 없거나 결과가 없으면 기존 패턴으로 폴백
+  if (results.length === 0) {
+    const fallbackPatterns = [
+      // 패턴 1: <a href="실제URL">제목</a> (일반 링크)
+      /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi,
+    ];
+    for (const pattern of fallbackPatterns) {
+      let match;
+      while ((match = pattern.exec(html)) !== null) {
+        const h = match[1];
+        const t = stripHtml(match[2]);
+        if (!t || t.length < 5 || h === '#' || h.startsWith('javascript:')) continue;
+        // 게시물 링크 패턴 (postSeq, nttSn, boardSeq 등)
+        if (!/(?:postSeq|nttSn|boardSeq|articleId|bbsId|seq=|view)/i.test(h)) continue;
+        let fullUrl;
+        try { fullUrl = new URL(h, baseUrl).href; } catch { fullUrl = baseUrl + h; }
+        results.push({ title: t, url: fullUrl, dateStr: '', publishedAt: null });
+      }
+      if (results.length > 0) break;
+    }
   }
 
   return results;
@@ -150,6 +201,7 @@ module.exports = async function handler(req, res) {
   const { user, orgId, error: authError } = requireAuth(req);
   if (authError) return res.status(401).json({ error: authError });
 
+  let step = 'init';
   try {
     const { sourceId, keyword, keywords, maxResults, recentDays, titleWeight, contentWeight } = req.body || {};
 
@@ -163,13 +215,21 @@ module.exports = async function handler(req, res) {
     const tw = parseFloat(titleWeight) || 10.0;
     const cw = parseFloat(contentWeight) || 3.0;
 
+    // importance 컬럼 없으면 추가
+    step = 'alter-table';
+    try {
+      await query('ALTER TABLE crawl_sources ADD COLUMN IF NOT EXISTS importance NUMERIC(5,2) DEFAULT 1.0');
+    } catch (_) { /* 이미 존재하면 무시 */ }
+
     // 소스 정보 로드 (중요도 포함)
+    step = 'load-source';
     const srcResult = await query('SELECT * FROM crawl_sources WHERE id = $1', [sourceId]);
     if (srcResult.rows.length === 0) return res.status(404).json({ error: '소스를 찾을 수 없습니다.' });
     const source = srcResult.rows[0];
     const siteImportance = parseFloat(source.importance) || 1.0;
 
     // 제외 패턴 로드
+    step = 'load-exclusions';
     const exclResult = await query(
       'SELECT url_pattern FROM crawl_exclusions WHERE org_id IS NULL OR org_id = $1',
       [orgId]
@@ -177,10 +237,12 @@ module.exports = async function handler(req, res) {
     const exclusions = exclResult.rows.map(r => r.url_pattern);
 
     // 게시판 HTML 가져오기
+    step = `fetch-url:${source.board_url}`;
     const html = await fetchUrl(source.board_url);
     const selectors = source.css_selectors || {};
 
     // 게시물 목록 파싱
+    step = 'parse-board';
     let posts = parseBoard(html, selectors, source.base_url);
 
     const cutoffDate = new Date();
@@ -196,6 +258,7 @@ module.exports = async function handler(req, res) {
     posts = posts.filter(p => !exclusions.some(pattern => p.url.includes(pattern)));
 
     // 멀티 키워드 점수 합산 + 사이트 중요도 가산
+    step = 'score-calc';
     let results = posts.map(post => {
       let totalTitleScore = 0;
       let totalContentScore = 0;
@@ -228,6 +291,7 @@ module.exports = async function handler(req, res) {
     results = results.slice(0, topN);
 
     // crawl_results에 저장 (중복 스킵)
+    step = 'save-results';
     let savedCount = 0;
     for (const item of results) {
       try {
@@ -259,7 +323,10 @@ module.exports = async function handler(req, res) {
       results,
     });
   } catch (err) {
-    console.error('[Crawl] 에러:', err);
-    sendError(res, err, '[Crawl]');
+    console.error(`[Crawl] 에러 (step=${step}):`, err);
+    return res.status(500).json({
+      error: `[${step}] ${err.message}`,
+      step,
+    });
   }
 };

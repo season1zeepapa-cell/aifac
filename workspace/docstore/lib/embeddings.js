@@ -547,10 +547,30 @@ async function migrateVectorDimension(dbQuery, newDimensions) {
   try {
     const dim = parseInt(newDimensions);
     if (![1024, 1536, 4096].includes(dim)) throw new Error(`지원하지 않는 차원: ${dim}`);
+
+    // HNSW 인덱스는 2000차원 제한 → 가장 먼저 삭제해야 ALTER TABLE 가능
+    await dbQuery('DROP INDEX IF EXISTS idx_chunks_embedding_hnsw');
+    await dbQuery('DROP INDEX IF EXISTS idx_chunks_embedding');
+    await dbQuery('DROP INDEX IF EXISTS idx_documents_summary_embedding');
+
     // 기존 임베딩 NULL로 초기화 (차원이 다르면 유지 불가)
     await dbQuery('UPDATE document_chunks SET embedding = NULL');
+    await dbQuery('UPDATE documents SET summary_embedding = NULL');
+
     // 벡터 컬럼 차원 변경 (DDL은 파라미터 바인딩 불가)
     await dbQuery(`ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector(${dim}) USING NULL`);
+    try {
+      await dbQuery(`ALTER TABLE documents ALTER COLUMN summary_embedding TYPE vector(${dim}) USING NULL`);
+    } catch (_) { /* summary_embedding 컬럼 없을 수 있음 */ }
+
+    // IVFFlat 인덱스 재생성 (2000차원 이상도 지원)
+    if (dim <= 2000) {
+      try {
+        await dbQuery(`CREATE INDEX idx_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops)`);
+      } catch (_) { /* 데이터 없으면 실패 가능 - 나중에 재생성 */ }
+    }
+    // 2000차원 초과 시 IVFFlat은 데이터가 있어야 생성 가능하므로 나중으로 미룸
+
     // 문서 임베딩 상태 초기화
     await dbQuery("UPDATE documents SET embedding_status = 'pending' WHERE embedding_status = 'done'");
     DB_VECTOR_DIMENSIONS = newDimensions;
