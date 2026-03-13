@@ -2541,7 +2541,7 @@
     // ========================================
     // 문서 상세 모달 (장/절 접기/펼치기 지원)
     // ========================================
-    function DocumentDetailModal({ isOpen, onClose, documentId }) {
+    function DocumentDetailModal({ isOpen, onClose, documentId, initialSectionInfo }) {
       const [data, setData] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
@@ -2889,6 +2889,57 @@
           }, 100);
         }
       }, [sections]);
+
+      // 검색 결과에서 전달받은 섹션으로 자동 스크롤
+      useEffect(() => {
+        if (!initialSectionInfo || !sections.length) return;
+        const { sectionIndex, label } = initialSectionInfo;
+
+        // 1) label(예: "제2조(용어의 정의)")로 매칭 시도
+        let target = null;
+        if (label) {
+          // label에서 "제N조" 패턴 추출
+          const artMatch = label.match(/제(\d+)조(?:의(\d+))?/);
+          if (artMatch) {
+            const artNum = artMatch[1];
+            const branchNum = artMatch[2] || null;
+            target = sections.find(s => {
+              const m = s.metadata || {};
+              return String(m.articleNumber) === artNum &&
+                (branchNum ? String(m.branchNumber) === branchNum : !m.branchNumber);
+            });
+          }
+          // label 텍스트로 직접 매칭 (heading, section_title 등)
+          if (!target) {
+            target = sections.find(s => {
+              const m = s.metadata || {};
+              const titles = [m.label, m.heading, s.section_title, s.title].filter(Boolean);
+              return titles.some(t => t.includes(label) || label.includes(t));
+            });
+          }
+        }
+        // 2) sectionIndex로 폴백
+        if (!target && sectionIndex != null && sections[sectionIndex]) {
+          target = sections[sectionIndex];
+        }
+
+        if (target) {
+          // 해당 섹션이 속한 장을 펼침
+          const chapter = target.metadata?.chapter;
+          if (chapter) {
+            setExpandedChapters(prev => ({ ...prev, [chapter]: true }));
+          }
+          // DOM 스크롤 + 하이라이트
+          setTimeout(() => {
+            const el = document.getElementById(`section-${target.id}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
+              setTimeout(() => el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2'), 3000);
+            }
+          }, 300);
+        }
+      }, [sections, initialSectionInfo]);
 
       // 단일 섹션 렌더링
       const renderSection = (section, idx) => {
@@ -4740,22 +4791,27 @@
     // ========================================
     // 문서 목록 탭
     // ========================================
-    function DocumentsTab({ initialDocId, onInitialDocConsumed }) {
+    function DocumentsTab({ initialDocInfo, onInitialDocConsumed }) {
       const { categories: catList } = React.useContext(CategoriesContext);
       const CATEGORIES = getCategoriesWithAll(catList);
       const [documents, setDocuments] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
       const [categoryFilter, setCategoryFilter] = useState('');
-      const [selectedDocId, setSelectedDocId] = useState(initialDocId || null);
+      const [selectedDocId, setSelectedDocId] = useState(initialDocInfo?.docId || null);
+      // 검색 결과에서 전달받은 섹션 정보 (해당 조문으로 스크롤용)
+      const [initialSectionInfo, setInitialSectionInfo] = useState(
+        initialDocInfo ? { sectionIndex: initialDocInfo.sectionIndex, label: initialDocInfo.label } : null
+      );
 
-      // 검색 탭에서 전달받은 initialDocId 처리
+      // 검색 탭에서 전달받은 initialDocInfo 처리
       useEffect(() => {
-        if (initialDocId) {
-          setSelectedDocId(initialDocId);
+        if (initialDocInfo?.docId) {
+          setSelectedDocId(initialDocInfo.docId);
+          setInitialSectionInfo({ sectionIndex: initialDocInfo.sectionIndex, label: initialDocInfo.label });
           if (onInitialDocConsumed) onInitialDocConsumed();
         }
-      }, [initialDocId]);
+      }, [initialDocInfo]);
       const [deleting, setDeleting] = useState(null);
       // 휴지통 모드 토글
       const [showTrash, setShowTrash] = useState(false);
@@ -5227,11 +5283,13 @@
             isOpen={selectedDocId !== null}
             onClose={() => {
               setSelectedDocId(null);
+              setInitialSectionInfo(null);
               fetchDocuments();
               authFetch(`${API_BASE_URL}/documents?tags=all`)
                 .then(r => r.json()).then(d => setAllTags(d.tags || [])).catch(() => {});
             }}
             documentId={selectedDocId}
+            initialSectionInfo={initialSectionInfo}
           />
 
           {/* 맨 위로 스크롤 버튼 */}
@@ -5479,10 +5537,11 @@
         );
       }, []);
 
-      // 검색 결과 카드 (클릭 시 문서 탭으로 이동하여 상세 보기)
+      // 검색 결과 카드 (클릭 시 문서 탭으로 이동하여 해당 섹션까지 스크롤)
       const ResultCard = ({ r, children }) => (
         <Card hoverable onClick={() => {
-          if (r.documentId && onNavigateToDoc) onNavigateToDoc(r.documentId);
+          const sectionInfo = { sectionIndex: r.sectionIndex, label: r.label };
+          if (r.documentId && onNavigateToDoc) onNavigateToDoc(r.documentId, sectionInfo);
           else if (r.documentId) setSelectedDocId(r.documentId);
         }}>
           {children}
@@ -9485,8 +9544,8 @@
       const [refreshKey, setRefreshKey] = useState(0);
       const { theme, toggle: toggleTheme } = useTheme();
       const categoriesCtx = useCategoriesProvider();
-      // 검색 결과 → 문서 목록 탭 이동 시 열 문서 ID
-      const [navigateDocId, setNavigateDocId] = useState(null);
+      // 검색 결과 → 문서 목록 탭 이동 시 열 문서 정보 { docId, sectionIndex, label }
+      const [navigateDocInfo, setNavigateDocInfo] = useState(null);
 
       // 업로드 완료 시 문서 목록 새로고침 트리거
       const handleUploadComplete = useCallback(() => {
@@ -9494,8 +9553,8 @@
       }, []);
 
       // 검색 결과에서 문서 탭으로 이동 (refreshKey 증가로 DocumentsTab 강제 재마운트)
-      const handleNavigateToDoc = useCallback((docId) => {
-        setNavigateDocId(docId);
+      const handleNavigateToDoc = useCallback((docId, sectionInfo) => {
+        setNavigateDocInfo({ docId, ...(sectionInfo || {}) });
         setRefreshKey(k => k + 1);
         setActiveTab('documents');
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -9526,7 +9585,7 @@
                 <UploadTab onUploadComplete={handleUploadComplete} />
               )}
               {activeTab === 'documents' && (
-                <DocumentsTab key={refreshKey} initialDocId={navigateDocId} onInitialDocConsumed={() => setNavigateDocId(null)} />
+                <DocumentsTab key={refreshKey} initialDocInfo={navigateDocInfo} onInitialDocConsumed={() => setNavigateDocInfo(null)} />
               )}
               {activeTab === 'search' && (
                 <SearchTab onNavigateToDoc={handleNavigateToDoc} />
