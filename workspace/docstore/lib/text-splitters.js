@@ -781,6 +781,68 @@ function markdownHeaderChunk(text, chunkSize = 600, overlap = 50) {
 }
 
 // ============================================================
+// 6) Parent Document 분할 (Parent Document Retriever 전략)
+//    작은 청크(childSize)로 검색 → 부모 청크(parentSize) 반환
+//
+//    원리:
+//    ① 원문을 먼저 부모 크기(800자)로 분할
+//    ② 각 부모를 다시 자식 크기(200자)로 세분화
+//    ③ 자식 청크에 parentIndex 태그를 붙여 반환
+//    ④ 검색 시: 자식 매칭 → parentIndex로 부모 복원
+//
+//    비유: 책을 페이지(부모)로 나누고, 각 페이지를 문단(자식)으로 나눔
+//          검색은 문단 단위로 정밀하게 하고, 결과는 페이지 단위로 반환
+// ============================================================
+
+/**
+ * Parent Document 분할
+ *
+ * @param {string} text - 원본 텍스트
+ * @param {number} parentSize - 부모 청크 크기 (기본 800자)
+ * @param {number} childSize - 자식 청크 크기 (기본 200자)
+ * @param {number} childOverlap - 자식 청크 간 겹침 (기본 50자)
+ * @returns {{ parents: string[], children: Array<{ text: string, parentIndex: number, childIndex: number }> }}
+ */
+function parentDocChunk(text, parentSize = 800, childSize = 200, childOverlap = 50) {
+  if (!text || text.trim().length === 0) {
+    return { parents: [], children: [] };
+  }
+
+  // 텍스트가 부모 크기보다 짧으면 → 부모 1개, 자식으로만 분할
+  if (text.length <= parentSize) {
+    const childChunks = sentenceChunk(text, childSize, childOverlap);
+    return {
+      parents: [text.trim()],
+      children: childChunks.map((c, i) => ({
+        text: c,
+        parentIndex: 0,
+        childIndex: i,
+      })),
+    };
+  }
+
+  // 1단계: 부모 청크 생성 (문장 경계 유지)
+  const parents = sentenceChunk(text, parentSize, 0);
+
+  // 2단계: 각 부모를 자식으로 세분화
+  const children = [];
+  for (let pi = 0; pi < parents.length; pi++) {
+    const parentText = parents[pi];
+    const childChunks = sentenceChunk(parentText, childSize, childOverlap);
+
+    for (let ci = 0; ci < childChunks.length; ci++) {
+      children.push({
+        text: childChunks[ci],
+        parentIndex: pi,
+        childIndex: ci,
+      });
+    }
+  }
+
+  return { parents, children };
+}
+
+// ============================================================
 // 전략 디스패처: 전략 이름에 따라 적절한 분할 함수를 호출
 // ============================================================
 
@@ -812,6 +874,12 @@ async function smartChunk(text, strategy = 'sentence', options = {}) {
 
     case 'markdown':
       return markdownHeaderChunk(text, chunkSize || 600, overlap);
+
+    case 'parent-doc':
+      // Parent Document 전략: smartChunk에서는 자식 청크만 반환
+      // (부모-자식 구조는 embeddings.js에서 별도 처리)
+      // 여기서는 작은 자식 청크 크기로 분할
+      return sentenceChunk(text, options.childSize || 200, options.childOverlap || 50);
 
     case 'sentence':
     default:
@@ -859,6 +927,12 @@ const STRATEGIES = {
     icon: 'MD',
     aiRequired: false,
   },
+  'parent-doc': {
+    name: 'Parent Document',
+    description: '작은 청크(200자)로 검색 → 부모 섹션(800자) 반환. 검색 정확도와 컨텍스트를 동시에 확보합니다.',
+    icon: 'PD',
+    aiRequired: false,
+  },
 };
 
 module.exports = {
@@ -868,6 +942,7 @@ module.exports = {
   semanticChunk,
   semanticLlmChunk,
   markdownHeaderChunk,
+  parentDocChunk,
   smartChunk,
   STRATEGIES,
 };

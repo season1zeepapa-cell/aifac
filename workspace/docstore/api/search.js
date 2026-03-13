@@ -2,7 +2,7 @@
 // GET /api/search?q=검색어&type=text|vector|hybrid&limit=10&chapter=제1장&docId=5
 const { query } = require('../lib/db');
 const { generateEmbedding } = require('../lib/embeddings');
-const { hybridSearch } = require('../lib/hybrid-search');
+const { hybridSearch, deduplicateParentChunks } = require('../lib/hybrid-search');
 const { requireAuth, orgFilter } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
 const { checkRateLimit } = require('../lib/rate-limit');
@@ -78,16 +78,23 @@ module.exports = async function handler(req, res) {
   try {
     // 형태소 분석 사용 여부 (morpheme=true)
     const useMorpheme = req.query.morpheme === 'true';
+    // Parent Document Retriever 모드 (parentRetriever=true)
+    const useParentRetriever = req.query.parentRetriever === 'true';
 
     if (type === 'hybrid') {
       // ── 하이브리드 검색 (벡터 + 전문검색 + RRF 합산) ──
       const resolvedIds = docIds.length > 0 ? docIds : docId ? [parseInt(docId)] : [];
-      const results = await hybridSearch(query, q.trim(), {
-        topK: limit,
+      let results = await hybridSearch(query, q.trim(), {
+        topK: useParentRetriever ? limit * 3 : limit, // 부모 모드: 후처리 중복제거를 위해 넉넉히
         docIds: resolvedIds,
         orgId,
         useMorpheme,
       });
+
+      // Parent Document Retriever: 동일 부모 청크 중복 제거
+      if (useParentRetriever) {
+        results = deduplicateParentChunks(results, limit);
+      }
 
       // chapter/tag 필터는 후처리 (hybrid-search 내부에서는 docIds만 처리)
       let filtered = results;
@@ -106,6 +113,7 @@ module.exports = async function handler(req, res) {
         type: 'hybrid',
         query: q,
         count: filtered.length,
+        parentRetriever: useParentRetriever || undefined,
         results: filtered.map(row => {
           const meta = row.section_metadata || {};
           return {

@@ -419,9 +419,46 @@ async function hybridSearch(dbQuery, question, options = {}) {
   return reranked;
 }
 
+/**
+ * Parent Document Retriever 후처리
+ *
+ * Parent Doc 전략으로 저장된 청크는 chunk_text에 부모 텍스트가 들어있다.
+ * 작은 자식 임베딩으로 정밀 검색한 뒤, 결과에서 동일한 부모(chunk_text)를
+ * 중복 제거하여 부모 단위로 반환한다.
+ *
+ * 비유: 같은 페이지의 문단 3개가 검색되면, 페이지 1개만 반환
+ *
+ * @param {Array} results - 검색 결과 배열 (chunk_text가 부모 텍스트)
+ * @param {number} topK - 최종 반환 개수
+ * @returns {Array} 중복 제거된 결과
+ */
+function deduplicateParentChunks(results, topK = 10) {
+  const seen = new Map(); // chunk_text hash → result
+
+  for (const row of results) {
+    // 부모 텍스트의 앞 200자를 키로 사용 (전체 비교는 비용이 큼)
+    const key = `${row.document_id || ''}:${(row.chunk_text || '').substring(0, 200)}`;
+
+    if (!seen.has(key)) {
+      seen.set(key, row);
+    } else {
+      // 같은 부모가 이미 있으면, 더 높은 점수를 유지
+      const existing = seen.get(key);
+      const existingScore = existing.rrf_score || existing.similarity || 0;
+      const newScore = row.rrf_score || row.similarity || 0;
+      if (newScore > existingScore) {
+        seen.set(key, row);
+      }
+    }
+  }
+
+  return [...seen.values()].slice(0, topK);
+}
+
 module.exports = {
   hybridSearch,
   ftsSearch,
   vectorSearch,
   rrfFusion,
+  deduplicateParentChunks,
 };

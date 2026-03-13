@@ -9,7 +9,7 @@
 // 모델 변경 시 차원이 달라지므로 기존 임베딩 재생성 필요.
 
 const OpenAI = require('openai');
-const { smartChunk } = require('./text-splitters');
+const { smartChunk, parentDocChunk } = require('./text-splitters');
 const { trackUsage } = require('./api-tracker');
 const { buildMorphemeTsvector } = require('./korean-tokenizer');
 const { trackEmbeddingCall } = require('./langfuse');
@@ -339,6 +339,9 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
   const validSections = savedSections.rows.filter(s => s.raw_text && s.raw_text.trim().length > 0);
   const CONCURRENCY = 5;
 
+  // Parent Document 전략 여부
+  const isParentDoc = chunkStrategy === 'parent-doc';
+
   for (let batchStart = 0; batchStart < validSections.length; batchStart += CONCURRENCY) {
     const batch = validSections.slice(batchStart, batchStart + CONCURRENCY);
 
@@ -346,6 +349,61 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
       const sectionMeta = section.metadata || {};
       const sectionSummary = section.summary || '';
 
+      // ── Parent Document 전략: 부모+자식 이중 저장 ──
+      if (isParentDoc) {
+        const parentSize = chunkOptions.chunkSize || 800;
+        const childSize = chunkOptions.childSize || 200;
+        const childOverlap = chunkOptions.childOverlap || 50;
+
+        const { parents, children } = parentDocChunk(
+          section.raw_text, parentSize, childSize, childOverlap
+        );
+        if (children.length === 0) return [];
+
+        // 자식 청크의 enriched 텍스트 생성 (검색용 임베딩에 사용)
+        const enrichedTexts = children.map(child => buildEnrichedText({
+          chunkText: child.text,
+          docTitle: title,
+          docSummary: summary,
+          category,
+          tags,
+          keywords,
+          sectionSummary,
+          sectionMeta,
+        }));
+
+        // 자식 청크에 대한 임베딩 생성 (작은 200자 → 정밀 검색)
+        const embeddings = await generateEmbeddings(enrichedTexts, modelId, 'search_document');
+
+        // 형태소 분석 tsvector (자식 기준)
+        let morphTexts = [];
+        try {
+          morphTexts = await Promise.all(
+            children.map(child => buildMorphemeTsvector(child.text))
+          );
+        } catch (e) {
+          console.warn('[Embeddings] 형태소 tsvector 생성 건너뜀:', e.message);
+          morphTexts = children.map(() => '');
+        }
+
+        // chunk_text에는 부모 텍스트를 저장 (RAG 컨텍스트용)
+        // enriched_text에는 자식 enriched를 저장 (임베딩과 매칭)
+        // metadata에 parentIndex, childIndex를 기록
+        return children.map((child, i) => ({
+          sectionId: section.id,
+          // chunk_text = 부모 텍스트 (RAG에서 읽히는 값)
+          chunkText: parents[child.parentIndex] || child.text,
+          enrichedText: enrichedTexts[i],
+          // embedding = 자식 기준 임베딩 (검색에 사용되는 값)
+          embedding: embeddings[i],
+          chunkIndex: i,
+          morphemeText: morphTexts[i] || '',
+          // 부모-자식 메타 (검색 후 중복 제거에 활용)
+          parentIndex: child.parentIndex,
+        }));
+      }
+
+      // ── 기존 전략: 단일 청크 저장 ──
       const chunks = await smartChunk(section.raw_text, chunkStrategy, chunkOptions);
       if (chunks.length === 0) return [];
 
