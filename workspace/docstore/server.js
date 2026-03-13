@@ -106,6 +106,12 @@ app.get('/api/knowledge-graph', (req, res) => knowledgeGraphHandler(req, res));
 app.post('/api/knowledge-graph', (req, res) => knowledgeGraphHandler(req, res));
 app.delete('/api/knowledge-graph', (req, res) => knowledgeGraphHandler(req, res));
 
+// ── /api/communities (GET, POST, DELETE) — 커뮤니티 탐지 + 요약 + 글로벌 검색 ──
+const communitiesHandler = require('./api/communities');
+app.get('/api/communities', (req, res) => communitiesHandler(req, res));
+app.post('/api/communities', (req, res) => communitiesHandler(req, res));
+app.delete('/api/communities', (req, res) => communitiesHandler(req, res));
+
 // ── /api/knowledge-graph-neo4j (GET, POST, DELETE) — Neo4j 지식 그래프 + 비교 ──
 const kgNeo4jHandler = require('./api/knowledge-graph-neo4j');
 app.get('/api/knowledge-graph-neo4j', (req, res) => kgNeo4jHandler(req, res));

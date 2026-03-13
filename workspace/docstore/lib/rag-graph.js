@@ -20,6 +20,7 @@ const { parseRAGOutput } = require('./output-parser');
 const { findTriplesForRAG } = require('./knowledge-graph');
 const { buildPrompt } = require('./prompt-manager');
 const { createSpan, endSpan } = require('./langfuse');
+const { globalSearch } = require('./community-summary');
 
 // ── 특수 종료 심볼 ──
 const END = Symbol('END');
@@ -235,7 +236,23 @@ async function augmentNode(state) {
     console.warn('[RAG-Graph] 지식그래프 조회 실패 (무시):', kgErr.message);
   }
 
-  state.contextText = contextText + triplesText;
+  // 3.5) 커뮤니티 요약 기반 글로벌 컨텍스트
+  let communityText = '';
+  try {
+    const docIdsForComm = sources.map(s => s.documentId).filter(Boolean);
+    const commResult = await globalSearch(state.dbQuery, question, {
+      docIds: [...new Set(docIdsForComm)],
+      maxCommunities: 3,
+    });
+    if (commResult.contextText) {
+      communityText = '\n\n' + commResult.contextText;
+      console.log(`[RAG-Graph] 커뮤니티 컨텍스트: ${commResult.communities.length}개 매칭`);
+    }
+  } catch (commErr) {
+    console.warn('[RAG-Graph] 커뮤니티 검색 실패 (무시):', commErr.message);
+  }
+
+  state.contextText = contextText + triplesText + communityText;
 
   // 4) 대화 히스토리
   const recentHistory = Array.isArray(history) ? history.slice(-20) : [];

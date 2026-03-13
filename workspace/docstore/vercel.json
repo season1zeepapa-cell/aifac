@@ -18,6 +18,7 @@
     "api/cross-references.js": { "maxDuration": 120 },
     "api/knowledge-graph.js": { "maxDuration": 120 },
     "api/knowledge-graph-neo4j.js": { "maxDuration": 120 },
+    "api/communities.js": { "maxDuration": 120 },
     "api/chat-sessions.js": { "maxDuration": 10 },
     "api/crawl-sources.js": { "maxDuration": 10 },
     "api/crawl-keywords.js": { "maxDuration": 10 },
