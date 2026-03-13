@@ -5,7 +5,7 @@
 const { query } = require('../lib/db');
 const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
-const { getAvailableModels, resetModelCache } = require('../lib/embeddings');
+const { getAvailableModels, resetModelCache, EMBEDDING_MODELS, migrateVectorDimension } = require('../lib/embeddings');
 
 // 기본 카테고리 (테이블/데이터가 없을 때 사용)
 const DEFAULT_CATEGORIES = [
@@ -87,12 +87,29 @@ module.exports = async function handler(req, res) {
         return res.status(400).json({ error: 'value가 필요합니다.' });
       }
 
-      // 임베딩 모델 변경 시 캐시 초기화
+      // 임베딩 모델 변경 시 캐시 초기화 + DB 차원 변경
       if (key === 'embeddingModel') {
-        const validIds = ['openai', 'upstage', 'cohere'];
+        const validIds = Object.keys(EMBEDDING_MODELS);
         if (!validIds.includes(value)) {
           return res.status(400).json({ error: `유효하지 않은 모델입니다. 사용 가능: ${validIds.join(', ')}` });
         }
+
+        // 현재 모델과 다른 차원이면 DB 벡터 컬럼 마이그레이션
+        const newModel = EMBEDDING_MODELS[value];
+        const currentResult = await query("SELECT value FROM app_settings WHERE key = 'embeddingModel'");
+        const currentModelId = currentResult.rows.length > 0
+          ? (typeof currentResult.rows[0].value === 'string' ? currentResult.rows[0].value : 'openai')
+          : 'openai';
+        const currentModel = EMBEDDING_MODELS[currentModelId] || EMBEDDING_MODELS['openai'];
+
+        if (newModel.dimensions !== currentModel.dimensions) {
+          try {
+            await migrateVectorDimension(query, newModel.dimensions);
+          } catch (err) {
+            return res.status(500).json({ error: `벡터 차원 변경 실패: ${err.message}` });
+          }
+        }
+
         resetModelCache();
       }
 

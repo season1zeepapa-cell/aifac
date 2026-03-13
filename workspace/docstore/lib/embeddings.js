@@ -58,13 +58,12 @@ let _activeModelId = null;
 // OpenAI 호환 클라이언트 캐시 (provider별)
 const _clients = {};
 
-// DB 벡터 컬럼 차원 (create-tables.js: vector(1536))
-const DB_VECTOR_DIMENSIONS = 1536;
+// DB 벡터 컬럼 차원 (동적으로 변경 가능)
+let DB_VECTOR_DIMENSIONS = 1536;
 
 /**
  * 현재 활성 임베딩 모델 ID 조회
  * DB app_settings에서 읽되, 캐시하여 매번 DB를 치지 않음
- * DB 벡터 차원과 모델 차원이 다르면 openai로 폴백
  */
 async function getActiveModelId(dbQuery) {
   if (_activeModelId) return _activeModelId;
@@ -79,14 +78,9 @@ async function getActiveModelId(dbQuery) {
         // JSONB이므로 문자열이거나 객체일 수 있음
         const modelId = typeof val === 'string' ? val : val?.id || 'openai';
         if (EMBEDDING_MODELS[modelId]) {
-          // DB 벡터 차원과 모델 차원 일치 여부 확인
-          const modelDim = EMBEDDING_MODELS[modelId].dimensions;
-          if (modelDim !== DB_VECTOR_DIMENSIONS) {
-            console.warn(`[Embeddings] 모델 ${modelId} (${modelDim}차원)과 DB 벡터 컬럼 (${DB_VECTOR_DIMENSIONS}차원) 불일치 → openai로 폴백`);
-            _activeModelId = 'openai';
-            return 'openai';
-          }
           _activeModelId = modelId;
+          // DB 벡터 차원을 현재 모델에 맞춤
+          DB_VECTOR_DIMENSIONS = EMBEDDING_MODELS[modelId].dimensions;
           return modelId;
         }
       }
@@ -545,6 +539,29 @@ async function createEmbeddingsForDocument(db, documentId, label = 'Embed', chun
   }
 }
 
+/**
+ * DB 벡터 컬럼 차원을 변경 (모델 변경 시 호출)
+ * 기존 임베딩 데이터는 삭제됨 → 재생성 필요
+ */
+async function migrateVectorDimension(dbQuery, newDimensions) {
+  try {
+    const dim = parseInt(newDimensions);
+    if (![1024, 1536, 4096].includes(dim)) throw new Error(`지원하지 않는 차원: ${dim}`);
+    // 기존 임베딩 NULL로 초기화 (차원이 다르면 유지 불가)
+    await dbQuery('UPDATE document_chunks SET embedding = NULL');
+    // 벡터 컬럼 차원 변경 (DDL은 파라미터 바인딩 불가)
+    await dbQuery(`ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector(${dim}) USING NULL`);
+    // 문서 임베딩 상태 초기화
+    await dbQuery("UPDATE documents SET embedding_status = 'pending' WHERE embedding_status = 'done'");
+    DB_VECTOR_DIMENSIONS = newDimensions;
+    console.log(`[Embeddings] DB 벡터 차원 변경: ${newDimensions}차원`);
+    return { success: true, dimensions: newDimensions };
+  } catch (err) {
+    console.error('[Embeddings] 벡터 차원 변경 실패:', err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   chunkText,
   generateEmbeddings,
@@ -558,4 +575,5 @@ module.exports = {
   getActiveModelId,
   getModelConfig,
   resetModelCache,
+  migrateVectorDimension,
 };
