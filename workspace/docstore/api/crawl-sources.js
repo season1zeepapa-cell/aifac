@@ -5,6 +5,7 @@
 // DELETE /api/crawl-sources?id=N       → 소스 삭제
 // GET  /api/crawl-sources?exclusions=1 → 제외 패턴 목록
 // POST /api/crawl-sources?exclusion=1  → 제외 패턴 추가
+// PUT  /api/crawl-sources?exclusionId=N → 제외 패턴 수정
 // DELETE /api/crawl-sources?exclusionId=N → 제외 패턴 삭제
 const { query } = require('../lib/db');
 const { requireAuth, orgFilter } = require('../lib/auth');
@@ -36,6 +37,20 @@ module.exports = async function handler(req, res) {
           `INSERT INTO crawl_exclusions (url_pattern, reason, org_id) VALUES ($1, $2, $3) RETURNING *`,
           [urlPattern, reason || '', orgId]
         );
+        return res.json({ exclusion: result.rows[0] });
+      }
+      if (req.method === 'PUT') {
+        const id = parseInt(req.query.exclusionId);
+        if (!id) return res.status(400).json({ error: 'exclusionId가 필요합니다.' });
+        const { urlPattern, reason } = req.body || {};
+        const result = await query(
+          `UPDATE crawl_exclusions
+           SET url_pattern = COALESCE($1, url_pattern),
+               reason = COALESCE($2, reason)
+           WHERE id = $3 RETURNING *`,
+          [urlPattern, reason, id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '제외 패턴을 찾을 수 없습니다.' });
         return res.json({ exclusion: result.rows[0] });
       }
       if (req.method === 'DELETE') {

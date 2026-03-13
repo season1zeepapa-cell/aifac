@@ -1174,6 +1174,18 @@
       const [newSourceUrl, setNewSourceUrl] = useState('');
       const [newKeyword, setNewKeyword] = useState('');
       const [newExclusion, setNewExclusion] = useState('');
+      // 인라인 편집 state
+      const [editingSourceId, setEditingSourceId] = useState(null);
+      const [editSourceName, setEditSourceName] = useState('');
+      const [editSourceUrl, setEditSourceUrl] = useState('');
+      const [editingKeywordId, setEditingKeywordId] = useState(null);
+      const [editKeywordText, setEditKeywordText] = useState('');
+      const [editKeywordMaxResults, setEditKeywordMaxResults] = useState(20);
+      const [editKeywordTitleWeight, setEditKeywordTitleWeight] = useState(10);
+      const [editKeywordContentWeight, setEditKeywordContentWeight] = useState(3);
+      const [editingExclusionId, setEditingExclusionId] = useState(null);
+      const [editExclusionPattern, setEditExclusionPattern] = useState('');
+      const [editExclusionReason, setEditExclusionReason] = useState('');
       // 크롤링 결과 탭 필터 ('all' | 'naver' | 'board')
       const [crawlResultFilter, setCrawlResultFilter] = useState('all');
       const [crawlVisibleCount, setCrawlVisibleCount] = useState(10);
@@ -2408,29 +2420,57 @@
                     <p className="text-sm font-medium text-text">등록된 소스 ({crawlSources.length})</p>
                     {crawlSources.map(src => (
                       <Card key={src.id}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-text">{src.name}</p>
-                            <p className="text-xs text-text-secondary truncate">{src.board_url}</p>
+                        {editingSourceId === src.id ? (
+                          <div className="space-y-2">
+                            <Input label="사이트 이름" value={editSourceName} onChange={e => setEditSourceName(e.target.value)} />
+                            <Input label="게시판 URL" value={editSourceUrl} onChange={e => setEditSourceUrl(e.target.value)} />
+                            <div className="flex gap-2">
+                              <Button variant="primary" size="sm" onClick={async () => {
+                                await authFetch(`${API_BASE_URL}/crawl-sources?id=${src.id}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ name: editSourceName, boardUrl: editSourceUrl }),
+                                });
+                                setEditingSourceId(null);
+                                await loadCrawlData();
+                              }}>저장</Button>
+                              <Button variant="ghost" size="sm" onClick={() => setEditingSourceId(null)}>취소</Button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <button onClick={async () => {
-                              await authFetch(`${API_BASE_URL}/crawl-sources?id=${src.id}`, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ isActive: !src.is_active }),
-                              });
-                              await loadCrawlData();
-                            }} className={`text-xs px-2 py-1 rounded ${src.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                              {src.is_active ? '활성' : '비활성'}
-                            </button>
-                            <button onClick={async () => {
-                              if (!confirm('이 소스를 삭제하시겠습니까?')) return;
-                              await authFetch(`${API_BASE_URL}/crawl-sources?id=${src.id}`, { method: 'DELETE' });
-                              await loadCrawlData();
-                            }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
+                              setEditingSourceId(src.id);
+                              setEditSourceName(src.name);
+                              setEditSourceUrl(src.board_url);
+                            }} title="클릭하여 편집">
+                              <p className="text-sm font-medium text-text">{src.name}</p>
+                              <p className="text-xs text-text-secondary truncate">{src.board_url}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button onClick={async () => {
+                                await authFetch(`${API_BASE_URL}/crawl-sources?id=${src.id}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ isActive: !src.is_active }),
+                                });
+                                await loadCrawlData();
+                              }} className={`text-xs px-2 py-1 rounded ${src.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                {src.is_active ? '활성' : '비활성'}
+                              </button>
+                              <button onClick={() => {
+                                setEditingSourceId(src.id);
+                                setEditSourceName(src.name);
+                                setEditSourceUrl(src.board_url);
+                              }} className="text-xs text-blue-500 hover:text-blue-700">수정</button>
+                              <button onClick={async () => {
+                                if (!confirm('이 소스를 삭제하시겠습니까?')) return;
+                                await authFetch(`${API_BASE_URL}/crawl-sources?id=${src.id}`, { method: 'DELETE' });
+                                await loadCrawlData();
+                              }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </Card>
                     ))}
                   </div>
@@ -2469,31 +2509,84 @@
                     <p className="text-sm font-medium text-text">등록된 키워드 ({crawlKeywords.length})</p>
                     {crawlKeywords.map(kw => (
                       <Card key={kw.id}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-text">{kw.keyword}</p>
-                            <p className="text-xs text-text-secondary">
-                              최대 {kw.max_results}건 | 제목 x{parseFloat(kw.title_weight)} | 내용 x{parseFloat(kw.content_weight)}
-                            </p>
+                        {editingKeywordId === kw.id ? (
+                          <div className="space-y-2">
+                            <Input label="키워드" value={editKeywordText} onChange={e => setEditKeywordText(e.target.value)} />
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className="block text-xs font-medium text-text-secondary mb-1">최대 건수</label>
+                                <input type="number" min="1" max="100" value={editKeywordMaxResults} onChange={e => setEditKeywordMaxResults(parseInt(e.target.value) || 20)}
+                                  className="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-primary" />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-text-secondary mb-1">제목 가중치</label>
+                                <input type="number" min="0" step="0.5" value={editKeywordTitleWeight} onChange={e => setEditKeywordTitleWeight(parseFloat(e.target.value) || 0)}
+                                  className="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-primary" />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-text-secondary mb-1">내용 가중치</label>
+                                <input type="number" min="0" step="0.5" value={editKeywordContentWeight} onChange={e => setEditKeywordContentWeight(parseFloat(e.target.value) || 0)}
+                                  className="w-full px-2 py-1.5 bg-bg border border-border rounded-lg text-xs text-text focus:outline-none focus:border-primary" />
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button variant="primary" size="sm" onClick={async () => {
+                                await authFetch(`${API_BASE_URL}/crawl-keywords?id=${kw.id}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    keyword: editKeywordText,
+                                    maxResults: editKeywordMaxResults,
+                                    titleWeight: editKeywordTitleWeight,
+                                    contentWeight: editKeywordContentWeight,
+                                  }),
+                                });
+                                setEditingKeywordId(null);
+                                await loadCrawlData();
+                              }}>저장</Button>
+                              <Button variant="ghost" size="sm" onClick={() => setEditingKeywordId(null)}>취소</Button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <button onClick={async () => {
-                              await authFetch(`${API_BASE_URL}/crawl-keywords?id=${kw.id}`, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ isActive: !kw.is_active }),
-                              });
-                              await loadCrawlData();
-                            }} className={`text-xs px-2 py-1 rounded ${kw.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                              {kw.is_active ? '활성' : '비활성'}
-                            </button>
-                            <button onClick={async () => {
-                              if (!confirm('이 키워드를 삭제하시겠습니까?')) return;
-                              await authFetch(`${API_BASE_URL}/crawl-keywords?id=${kw.id}`, { method: 'DELETE' });
-                              await loadCrawlData();
-                            }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1 cursor-pointer" onClick={() => {
+                              setEditingKeywordId(kw.id);
+                              setEditKeywordText(kw.keyword);
+                              setEditKeywordMaxResults(kw.max_results);
+                              setEditKeywordTitleWeight(parseFloat(kw.title_weight));
+                              setEditKeywordContentWeight(parseFloat(kw.content_weight));
+                            }} title="클릭하여 편집">
+                              <p className="text-sm font-medium text-text">{kw.keyword}</p>
+                              <p className="text-xs text-text-secondary">
+                                최대 {kw.max_results}건 | 제목 x{parseFloat(kw.title_weight)} | 내용 x{parseFloat(kw.content_weight)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button onClick={async () => {
+                                await authFetch(`${API_BASE_URL}/crawl-keywords?id=${kw.id}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ isActive: !kw.is_active }),
+                                });
+                                await loadCrawlData();
+                              }} className={`text-xs px-2 py-1 rounded ${kw.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                {kw.is_active ? '활성' : '비활성'}
+                              </button>
+                              <button onClick={() => {
+                                setEditingKeywordId(kw.id);
+                                setEditKeywordText(kw.keyword);
+                                setEditKeywordMaxResults(kw.max_results);
+                                setEditKeywordTitleWeight(parseFloat(kw.title_weight));
+                                setEditKeywordContentWeight(parseFloat(kw.content_weight));
+                              }} className="text-xs text-blue-500 hover:text-blue-700">수정</button>
+                              <button onClick={async () => {
+                                if (!confirm('이 키워드를 삭제하시겠습니까?')) return;
+                                await authFetch(`${API_BASE_URL}/crawl-keywords?id=${kw.id}`, { method: 'DELETE' });
+                                await loadCrawlData();
+                              }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </Card>
                     ))}
                   </div>
@@ -2516,16 +2609,46 @@
                     <p className="text-sm font-medium text-text">등록된 제외 패턴 ({crawlExclusions.length})</p>
                     {crawlExclusions.map(ex => (
                       <Card key={ex.id}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <p className="text-sm font-mono text-text">{ex.url_pattern}</p>
-                            {ex.reason && <p className="text-xs text-text-secondary">{ex.reason}</p>}
+                        {editingExclusionId === ex.id ? (
+                          <div className="space-y-2">
+                            <Input label="URL 패턴" value={editExclusionPattern} onChange={e => setEditExclusionPattern(e.target.value)} />
+                            <Input label="사유 (선택)" value={editExclusionReason} onChange={e => setEditExclusionReason(e.target.value)} placeholder="제외 사유" />
+                            <div className="flex gap-2">
+                              <Button variant="primary" size="sm" onClick={async () => {
+                                await authFetch(`${API_BASE_URL}/crawl-sources?exclusionId=${ex.id}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ urlPattern: editExclusionPattern, reason: editExclusionReason }),
+                                });
+                                setEditingExclusionId(null);
+                                await loadCrawlData();
+                              }}>저장</Button>
+                              <Button variant="ghost" size="sm" onClick={() => setEditingExclusionId(null)}>취소</Button>
+                            </div>
                           </div>
-                          <button onClick={async () => {
-                            await authFetch(`${API_BASE_URL}/crawl-sources?exclusionId=${ex.id}`, { method: 'DELETE' });
-                            await loadCrawlData();
-                          }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
-                        </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1 cursor-pointer" onClick={() => {
+                              setEditingExclusionId(ex.id);
+                              setEditExclusionPattern(ex.url_pattern);
+                              setEditExclusionReason(ex.reason || '');
+                            }} title="클릭하여 편집">
+                              <p className="text-sm font-mono text-text">{ex.url_pattern}</p>
+                              {ex.reason && <p className="text-xs text-text-secondary">{ex.reason}</p>}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => {
+                                setEditingExclusionId(ex.id);
+                                setEditExclusionPattern(ex.url_pattern);
+                                setEditExclusionReason(ex.reason || '');
+                              }} className="text-xs text-blue-500 hover:text-blue-700">수정</button>
+                              <button onClick={async () => {
+                                await authFetch(`${API_BASE_URL}/crawl-sources?exclusionId=${ex.id}`, { method: 'DELETE' });
+                                await loadCrawlData();
+                              }} className="text-xs text-red-500 hover:text-red-700">삭제</button>
+                            </div>
+                          </div>
+                        )}
                       </Card>
                     ))}
                     {crawlExclusions.length === 0 && (
