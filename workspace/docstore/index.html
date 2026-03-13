@@ -6793,6 +6793,11 @@
                 updated[updated.length - 1] = last;
                 return updated;
               });
+            } else if (event.type === 'stage') {
+              // 상태 그래프 노드 진행 이벤트
+              const stageMsg = `[${event.node}] ${event.status}${event.error ? ': ' + event.error : ''}`;
+              console.log('[RAG Graph]', stageMsg);
+              debugMessages.push(stageMsg);
             } else if (event.type === 'debug') {
               // 서버 디버깅 메시지 → 콘솔에 표시
               console.log('[RAG Debug]', event.message);
