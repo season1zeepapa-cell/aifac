@@ -6720,8 +6720,9 @@
       // 답변 가이드: 주제, 관점, 답변형식
       const [chatGuide, setChatGuide] = useState({ topic: '', perspective: '', format: '' });
       const [showGuide, setShowGuide] = useState(false);
-      // Few-shot: 유사 과거 Q&A 제안
+      // Few-shot: 유사 과거 Q&A 제안 + 선택
       const [fewShotSuggestions, setFewShotSuggestions] = useState([]);
+      const [selectedFewShots, setSelectedFewShots] = useState([]); // 사용자가 선택한 few-shot ID
       const [showFewShot, setShowFewShot] = useState(false);
       const fewShotTimer = useRef(null);
       // 근거자료 접기/펼치기 (메시지 인덱스별)
@@ -6764,6 +6765,7 @@
             const data = await res.json();
             if (data.similar && data.similar.length > 0) {
               setFewShotSuggestions(data.similar);
+              setShowFewShot(true); // 자동으로 펼치기
             } else {
               setFewShotSuggestions([]);
             }
@@ -6805,6 +6807,9 @@
         setInputText('');
         setLoading(true);
         setError(null);
+        // 전송 후 few-shot 제안 초기화
+        setFewShotSuggestions([]);
+        setSelectedFewShots([]);
 
         try {
           // history: 이전 메시지에서 content만 추출 (sources 제외)
@@ -6822,6 +6827,11 @@
             questionWithGuide = `${guideLines.join(' | ')}\n\n${text}`;
           }
 
+          // 선택된 few-shot 예시 준비
+          const activeFewShots = selectedFewShots.length > 0
+            ? fewShotSuggestions.filter(s => selectedFewShots.includes(s.id))
+            : null;
+
           const body = {
             question: questionWithGuide, topK: 5, provider: llmProvider, history,
             stream: true,
@@ -6834,6 +6844,7 @@
               ...(llmProvider === 'gemini' && providerSettings.thinkingLevel ? { thinkingLevel: providerSettings.thinkingLevel } : {}),
               ...(llmProvider === 'openai' && providerSettings.reasoningEffort ? { reasoningEffort: providerSettings.reasoningEffort } : {}),
             },
+            ...(activeFewShots ? { userFewShots: activeFewShots } : {}),
           };
           if (filterDocIds.length > 0) body.docIds = filterDocIds.map(id => parseInt(id, 10));
 
@@ -7411,41 +7422,92 @@
                 )}
               </div>
             )}
-            {/* Few-shot: 유사 과거 질문 제안 */}
+            {/* Few-shot: 유사 과거 질문 제안 (체크박스로 선택/제거) */}
             {fewShotSuggestions.length > 0 && (
-              <div className="mb-2">
-                <div className="flex items-center justify-between mb-1">
+              <div className="mb-2 p-2.5 bg-amber-500/5 border border-amber-500/20 rounded-xl">
+                <div className="flex items-center justify-between mb-1.5">
                   <button onClick={() => setShowFewShot(v => !v)}
                     className="flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300 transition-colors">
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                     </svg>
-                    유사한 과거 질문 {fewShotSuggestions.length}건
+                    <span>참고 예시</span>
+                    {selectedFewShots.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[9px] font-bold">
+                        {selectedFewShots.length}개 선택
+                      </span>
+                    )}
                     <svg className={`w-3 h-3 transition-transform ${showFewShot ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-                  <button onClick={() => setFewShotSuggestions([])}
-                    className="text-[10px] text-text-secondary hover:text-red-400 transition-colors">닫기</button>
+                  <div className="flex items-center gap-2">
+                    {selectedFewShots.length > 0 && (
+                      <button onClick={() => setSelectedFewShots([])}
+                        className="text-[10px] text-text-secondary hover:text-amber-400 transition-colors">선택 해제</button>
+                    )}
+                    <button onClick={() => { setFewShotSuggestions([]); setSelectedFewShots([]); }}
+                      className="text-[10px] text-text-secondary hover:text-red-400 transition-colors">닫기</button>
+                  </div>
                 </div>
-                {showFewShot && (
-                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                    {fewShotSuggestions.map((s, i) => (
-                      <button key={s.id || i}
-                        onClick={() => { setInputText(s.question); setFewShotSuggestions([]); }}
-                        className="w-full text-left p-2 bg-amber-500/5 border border-amber-500/20 rounded-lg hover:bg-amber-500/10 transition-colors group">
-                        <div className="text-xs text-text truncate">{s.question}</div>
-                        {s.conclusion && (
-                          <div className="text-[10px] text-text-secondary mt-0.5 line-clamp-1">{s.conclusion}</div>
-                        )}
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[9px] text-amber-500/70">유사도 {(s.score * 100).toFixed(0)}%</span>
-                          {s.category && s.category !== 'default' && (
-                            <span className="text-[9px] px-1 py-0.5 rounded bg-border/50 text-text-secondary">{s.category}</span>
-                          )}
-                        </div>
-                      </button>
+
+                {/* 접혀 있을 때: 선택된 항목만 뱃지로 표시 */}
+                {!showFewShot && selectedFewShots.length > 0 && (
+                  <div className="flex gap-1 flex-wrap">
+                    {fewShotSuggestions.filter(s => selectedFewShots.includes(s.id)).map(s => (
+                      <span key={s.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-amber-500/20 text-amber-300">
+                        {s.question.length > 25 ? s.question.substring(0, 25) + '...' : s.question}
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedFewShots(prev => prev.filter(id => id !== s.id)); }}
+                          className="hover:text-red-400 transition-colors ml-0.5">x</button>
+                      </span>
                     ))}
+                  </div>
+                )}
+
+                {/* 펼쳤을 때: 체크박스 리스트 */}
+                {showFewShot && (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {fewShotSuggestions.map((s, i) => {
+                      const isSelected = selectedFewShots.includes(s.id);
+                      return (
+                        <div key={s.id || i}
+                          className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
+                            isSelected ? 'bg-amber-500/15 border border-amber-500/30' : 'bg-background/50 border border-transparent hover:bg-amber-500/5'
+                          }`}
+                          onClick={() => {
+                            setSelectedFewShots(prev =>
+                              isSelected ? prev.filter(id => id !== s.id) : [...prev, s.id]
+                            );
+                          }}>
+                          {/* 체크박스 */}
+                          <div className={`flex-shrink-0 w-4 h-4 mt-0.5 rounded border-2 flex items-center justify-center transition-colors ${
+                            isSelected ? 'bg-amber-500 border-amber-500' : 'border-text-secondary/30'
+                          }`}>
+                            {isSelected && (
+                              <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                          {/* 내용 */}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs text-text">{s.question}</div>
+                            {s.conclusion && (
+                              <div className="text-[10px] text-text-secondary mt-0.5 line-clamp-2">{s.conclusion}</div>
+                            )}
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[9px] text-amber-500/70">유사도 {(s.score * 100).toFixed(0)}%</span>
+                              {s.category && s.category !== 'default' && (
+                                <span className="text-[9px] px-1 py-0.5 rounded bg-border/50 text-text-secondary">{s.category}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <p className="text-[9px] text-text-secondary/50 text-center pt-1">
+                      선택한 예시가 AI 답변의 참고자료로 포함됩니다
+                    </p>
                   </div>
                 )}
               </div>

@@ -39,6 +39,7 @@ module.exports = async (req, res) => {
     provider = 'gemini', history = [], llmOptions = {}, stream = false,
     useQueryRewrite = true, useHyDE = true, useMorpheme = false,
     useVerify = false,
+    userFewShots = null,
   } = req.body;
   if (!question || question.trim().length === 0) {
     return res.status(400).json({ error: '질문(question)이 필요합니다.' });
@@ -115,6 +116,8 @@ module.exports = async (req, res) => {
     rawAnswer: '',
     parsed: null,
     verification: null,
+    // 사용자 선택 few-shot (null이면 자동 매칭)
+    userFewShots: Array.isArray(userFewShots) ? userFewShots : null,
     // 제어
     error: null,
     currentNode: null,

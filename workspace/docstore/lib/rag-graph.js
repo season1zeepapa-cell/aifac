@@ -263,23 +263,35 @@ async function augmentNode(state) {
       ).join('\n\n')
     : '';
 
-  // 5) 동적 Few-shot 예시 자동 매칭
+  // 5) Few-shot 예시 결정 (사용자 선택 > 자동 매칭)
   let dynamicFewShots = [];
-  try {
-    const fewShotResult = await findRelevantFewShots(state.dbQuery, question, {
-      category: state.category !== 'default' ? state.category : undefined,
-      maxExamples: 2,
-    });
-    if (fewShotResult.examples.length > 0) {
-      dynamicFewShots = fewShotResult.examples;
-      console.log(`[RAG-Graph] Few-shot 매칭: ${fewShotResult.examples.length}개 (후보: ${fewShotResult.meta.candidates})`);
-      state.fewShotMeta = fewShotResult.meta;
+
+  if (state.userFewShots && state.userFewShots.length > 0) {
+    // 사용자가 UI에서 직접 선택한 few-shot 사용
+    dynamicFewShots = state.userFewShots.map(fs => ({
+      input: fs.question || fs.input,
+      output: fs.conclusion || fs.output,
+    })).filter(fs => fs.input && fs.output);
+    console.log(`[RAG-Graph] Few-shot 사용자 선택: ${dynamicFewShots.length}개`);
+    state.fewShotMeta = { source: 'user-selected', count: dynamicFewShots.length };
+  } else {
+    // 자동 매칭
+    try {
+      const fewShotResult = await findRelevantFewShots(state.dbQuery, question, {
+        category: state.category !== 'default' ? state.category : undefined,
+        maxExamples: 2,
+      });
+      if (fewShotResult.examples.length > 0) {
+        dynamicFewShots = fewShotResult.examples;
+        console.log(`[RAG-Graph] Few-shot 자동 매칭: ${fewShotResult.examples.length}개 (후보: ${fewShotResult.meta.candidates})`);
+        state.fewShotMeta = fewShotResult.meta;
+      }
+    } catch (fsErr) {
+      console.warn('[RAG-Graph] Few-shot 매칭 실패 (무시):', fsErr.message);
     }
-  } catch (fsErr) {
-    console.warn('[RAG-Graph] Few-shot 매칭 실패 (무시):', fsErr.message);
   }
 
-  // 6) 프롬프트 빌드 (동적 few-shot 주입)
+  // 6) 프롬프트 빌드 (few-shot 주입)
   const promptResult = await buildPrompt('rag-answer', state.category, {
     question,
     contextText: state.contextText,
@@ -287,9 +299,9 @@ async function augmentNode(state) {
     sourceCount: String(sources.length),
   });
 
-  // 동적 few-shot이 있으면 템플릿 예시에 병합하여 프롬프트 재렌더링
+  // few-shot이 있으면 템플릿 예시에 병합하여 프롬프트 재렌더링
   if (dynamicFewShots.length > 0) {
-    const { renderTemplate, formatFewShotExamples } = require('./prompt-manager');
+    const { renderTemplate } = require('./prompt-manager');
     const { loadTemplate } = require('./prompt-manager');
     const tpl = await loadTemplate('rag-answer', state.category);
     const allExamples = [...(tpl?.few_shot_examples || []), ...dynamicFewShots];
