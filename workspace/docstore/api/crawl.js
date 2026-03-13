@@ -164,7 +164,7 @@ module.exports = async function handler(req, res) {
     const cw = parseFloat(contentWeight) || 3.0;
 
     // 소스 정보 로드 (중요도 포함)
-    const srcResult = await query('SELECT *, COALESCE(importance, 1.0) as importance FROM crawl_sources WHERE id = $1', [sourceId]);
+    const srcResult = await query('SELECT * FROM crawl_sources WHERE id = $1', [sourceId]);
     if (srcResult.rows.length === 0) return res.status(404).json({ error: '소스를 찾을 수 없습니다.' });
     const source = srcResult.rows[0];
     const siteImportance = parseFloat(source.importance) || 1.0;
@@ -260,7 +260,6 @@ module.exports = async function handler(req, res) {
     });
   } catch (err) {
     console.error('[Crawl] 에러:', err);
-    const msg = err.message || '크롤링 실패';
-    return res.status(500).json({ error: `크롤링 실패: ${msg}` });
+    sendError(res, err, '[Crawl]');
   }
 };

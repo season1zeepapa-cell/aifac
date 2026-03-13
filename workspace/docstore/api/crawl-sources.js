@@ -66,7 +66,7 @@ module.exports = async function handler(req, res) {
       const { clause, params } = orgFilter(orgId, 's', 1);
       const where = clause ? `WHERE ${clause}` : '';
       const result = await query(
-        `SELECT id, name, base_url, board_url, site_type, css_selectors, is_active, importance, created_at, updated_at
+        `SELECT id, name, base_url, board_url, site_type, css_selectors, is_active, COALESCE(importance, 1.0) as importance, created_at, updated_at
          FROM crawl_sources s ${where} ORDER BY created_at DESC`,
         params
       );
