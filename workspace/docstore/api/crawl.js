@@ -1,6 +1,6 @@
 // 사이트 게시판 크롤링 실행 API
-// POST /api/crawl { sourceId, keyword, recentDays, titleWeight, contentWeight }
-// → 등록된 사이트 게시판에서 게시물 목록 수집 → 점수 계산 → crawl_results 저장
+// POST /api/crawl { sourceId, keywords[], maxResults, recentDays, titleWeight, contentWeight }
+// → 등록된 사이트 게시판에서 게시물 수집 → 사이트중요도 + 멀티키워드 점수 합산 → 상위 N건 저장
 const https = require('https');
 const http = require('http');
 const { query } = require('../lib/db');
@@ -151,19 +151,23 @@ module.exports = async function handler(req, res) {
   if (authError) return res.status(401).json({ error: authError });
 
   try {
-    const { sourceId, keyword, recentDays, titleWeight, contentWeight } = req.body || {};
+    const { sourceId, keyword, keywords, maxResults, recentDays, titleWeight, contentWeight } = req.body || {};
 
     if (!sourceId) return res.status(400).json({ error: 'sourceId가 필요합니다.' });
-    if (!keyword) return res.status(400).json({ error: 'keyword가 필요합니다.' });
+    // 멀티 키워드 지원 (하위 호환: 단일 keyword도 허용)
+    const kwList = keywords || (keyword ? [keyword] : []);
+    if (kwList.length === 0) return res.status(400).json({ error: 'keywords가 필요합니다.' });
 
+    const topN = Math.min(parseInt(maxResults) || 20, 100);
     const days = parseInt(recentDays) || 7;
     const tw = parseFloat(titleWeight) || 10.0;
     const cw = parseFloat(contentWeight) || 3.0;
 
-    // 소스 정보 로드
-    const srcResult = await query('SELECT * FROM crawl_sources WHERE id = $1', [sourceId]);
+    // 소스 정보 로드 (중요도 포함)
+    const srcResult = await query('SELECT *, COALESCE(importance, 1.0) as importance FROM crawl_sources WHERE id = $1', [sourceId]);
     if (srcResult.rows.length === 0) return res.status(404).json({ error: '소스를 찾을 수 없습니다.' });
     const source = srcResult.rows[0];
+    const siteImportance = parseFloat(source.importance) || 1.0;
 
     // 제외 패턴 로드
     const exclResult = await query(
@@ -184,16 +188,27 @@ module.exports = async function handler(req, res) {
 
     // 최근 N일 필터
     posts = posts.filter(p => {
-      if (!p.publishedAt) return true; // 날짜 파싱 실패 시 포함
+      if (!p.publishedAt) return true;
       return new Date(p.publishedAt) >= cutoffDate;
     });
 
     // 제외 패턴 필터
     posts = posts.filter(p => !exclusions.some(pattern => p.url.includes(pattern)));
 
-    // 점수 계산
+    // 멀티 키워드 점수 합산 + 사이트 중요도 가산
     let results = posts.map(post => {
-      const scores = calculateScore(post.title, '', keyword, tw, cw);
+      let totalTitleScore = 0;
+      let totalContentScore = 0;
+
+      for (const kw of kwList) {
+        const scores = calculateScore(post.title, '', kw, tw, cw);
+        totalTitleScore += scores.titleScore;
+        totalContentScore += scores.contentScore;
+      }
+
+      // 사이트 중요도를 가산 (기본 1.0, 높을수록 우선순위 올라감)
+      const totalScore = (totalTitleScore + totalContentScore) * siteImportance;
+
       return {
         title: post.title,
         url: post.url,
@@ -201,12 +216,16 @@ module.exports = async function handler(req, res) {
         publishedAt: post.publishedAt,
         source: 'board',
         sourceName: source.name,
-        ...scores,
+        titleScore: Math.round(totalTitleScore * 100) / 100,
+        contentScore: Math.round(totalContentScore * 100) / 100,
+        totalScore: Math.round(totalScore * 100) / 100,
+        siteImportance,
       };
     });
 
-    // 점수 내림차순 정렬
+    // 스코어 상위 N건 필터
     results.sort((a, b) => b.totalScore - a.totalScore);
+    results = results.slice(0, topN);
 
     // crawl_results에 저장 (중복 스킵)
     let savedCount = 0;
@@ -232,7 +251,8 @@ module.exports = async function handler(req, res) {
 
     return res.json({
       source: source.name,
-      keyword,
+      keywords: kwList,
+      topN,
       recentDays: days,
       totalParsed: posts.length,
       savedCount,

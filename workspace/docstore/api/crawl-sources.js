@@ -66,7 +66,7 @@ module.exports = async function handler(req, res) {
       const { clause, params } = orgFilter(orgId, 's', 1);
       const where = clause ? `WHERE ${clause}` : '';
       const result = await query(
-        `SELECT id, name, base_url, board_url, site_type, css_selectors, is_active, created_at, updated_at
+        `SELECT id, name, base_url, board_url, site_type, css_selectors, is_active, importance, created_at, updated_at
          FROM crawl_sources s ${where} ORDER BY created_at DESC`,
         params
       );
@@ -87,7 +87,7 @@ module.exports = async function handler(req, res) {
     if (req.method === 'PUT') {
       const id = parseInt(req.query.id);
       if (!id) return res.status(400).json({ error: 'id가 필요합니다.' });
-      const { name, baseUrl, boardUrl, siteType, cssSelectors, isActive } = req.body || {};
+      const { name, baseUrl, boardUrl, siteType, cssSelectors, isActive, importance } = req.body || {};
       const result = await query(
         `UPDATE crawl_sources
          SET name = COALESCE($1, name),
@@ -96,9 +96,10 @@ module.exports = async function handler(req, res) {
              site_type = COALESCE($4, site_type),
              css_selectors = COALESCE($5, css_selectors),
              is_active = COALESCE($6, is_active),
+             importance = COALESCE($7, importance),
              updated_at = NOW()
-         WHERE id = $7 RETURNING *`,
-        [name, baseUrl, boardUrl, siteType, cssSelectors ? JSON.stringify(cssSelectors) : null, isActive, id]
+         WHERE id = $8 RETURNING *`,
+        [name, baseUrl, boardUrl, siteType, cssSelectors ? JSON.stringify(cssSelectors) : null, isActive, importance != null ? parseFloat(importance) : null, id]
       );
       if (result.rows.length === 0) return res.status(404).json({ error: '소스를 찾을 수 없습니다.' });
       return res.json({ source: result.rows[0] });
