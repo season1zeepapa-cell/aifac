@@ -38,7 +38,7 @@ module.exports = async (req, res) => {
     question, topK = 5, docId, docIds,
     provider = 'gemini', history = [], llmOptions = {}, stream = false,
     useQueryRewrite = true, useHyDE = true, useMorpheme = false,
-    useVerify = false,
+    useVerify = false, useToolRouter = false,
     userFewShots = null,
   } = req.body;
   if (!question || question.trim().length === 0) {
@@ -116,6 +116,17 @@ module.exports = async (req, res) => {
     rawAnswer: '',
     parsed: null,
     verification: null,
+    // Tool Use (에이전틱 RAG)
+    useToolRouter,
+    selectedTools: null,
+    toolResults: null,
+    extraContext: '',
+    skipSearch: false,
+    // Corrective RAG
+    correctiveRetries: 0,
+    correctiveNeedsRetry: false,
+    correctiveRetryQuery: null,
+    originalQuestion: null,
     // 사용자 선택 few-shot (null이면 자동 매칭)
     userFewShots: Array.isArray(userFewShots) ? userFewShots : null,
     // 제어

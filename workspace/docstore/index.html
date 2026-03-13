@@ -7051,6 +7051,8 @@
       const [useQueryRewrite, setUseQueryRewrite] = useState(true);
       const [useHyDE, setUseHyDE] = useState(true);
       const [useMorpheme, setUseMorpheme] = useState(false);
+      const [useToolRouter, setUseToolRouter] = useState(false); // Tool Use (에이전틱 RAG)
+      const [useVerify, setUseVerify] = useState(false); // Corrective RAG (검증+재검색)
       const [enhancementInfo, setEnhancementInfo] = useState(null);
       // 답변 가이드: 주제, 관점, 답변형식
       const [chatGuide, setChatGuide] = useState({ topic: '', perspective: '', format: '' });
@@ -7171,6 +7173,7 @@
             question: questionWithGuide, topK: 5, provider: llmProvider, history,
             stream: true,
             useQueryRewrite, useHyDE, useMorpheme,
+            useToolRouter, useVerify,
             llmOptions: {
               model: providerSettings.model,
               temperature: providerSettings.temperature,
@@ -7218,7 +7221,28 @@
           setChatMessages(prev => [...prev, placeholderMsg]);
 
           for await (const event of parseSSE(res)) {
-            if (event.type === 'enhancement') {
+            if (event.type === 'tools') {
+              // Tool Use: 선택된 도구 정보 수신
+              setChatMessages(prev => {
+                const updated = [...prev];
+                const last = { ...updated[updated.length - 1] };
+                last.selectedTools = event.selectedTools;
+                updated[updated.length - 1] = last;
+                return updated;
+              });
+            } else if (event.type === 'corrective') {
+              // Corrective RAG: 재검색 알림
+              setChatMessages(prev => {
+                const updated = [...prev];
+                const last = { ...updated[updated.length - 1] };
+                last.corrective = event;
+                if (event.action === 'retry') {
+                  last.content += `\n\n> 답변 품질 부족 (${event.score}/10) — "${event.retryQuery}"로 재검색 중... (${event.attempt}/2)\n\n`;
+                }
+                updated[updated.length - 1] = last;
+                return updated;
+              });
+            } else if (event.type === 'enhancement') {
               // 쿼리 강화 과정 실시간 수신
               setEnhancementInfo(prev => ({ ...prev, [event.data?.type || event.type]: event.data || event }));
             } else if (event.type === 'sources') {
@@ -7505,6 +7529,22 @@
                       <span className="text-xs text-text">형태소 분석</span>
                       <span className="text-[10px] text-text-secondary">(한국어 FTS 정확도 향상)</span>
                     </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <div className={`relative w-9 h-5 rounded-full transition-colors ${useToolRouter ? 'bg-violet-500' : 'bg-border'}`}
+                        onClick={() => setUseToolRouter(v => !v)}>
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useToolRouter ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-xs text-text">Tool Use</span>
+                      <span className="text-[10px] text-text-secondary">(AI가 도구 자동 선택)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <div className={`relative w-9 h-5 rounded-full transition-colors ${useVerify ? 'bg-amber-500' : 'bg-border'}`}
+                        onClick={() => setUseVerify(v => !v)}>
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useVerify ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-xs text-text">Corrective RAG</span>
+                      <span className="text-[10px] text-text-secondary">(답변 불충분 시 자동 재검색)</span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -7579,6 +7619,18 @@
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium"
                               title={msg.enhancement.hyde.hypotheticalDoc ? `가상문서: ${msg.enhancement.hyde.hypotheticalDoc.substring(0, 100)}...` : ''}>
                               HyDE {msg.enhancement.hyde.timing}ms
+                            </span>
+                          )}
+                          {msg.selectedTools && msg.selectedTools.length > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium"
+                              title={`선택된 도구: ${msg.selectedTools.join(', ')}`}>
+                              Tool: {msg.selectedTools.join(', ')}
+                            </span>
+                          )}
+                          {msg.corrective && msg.corrective.action === 'retry' && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium"
+                              title={`재검색 사유: ${msg.corrective.reason}`}>
+                              Corrective {msg.corrective.attempt}/2
                             </span>
                           )}
                         </div>
