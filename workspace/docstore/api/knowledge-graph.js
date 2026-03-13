@@ -35,14 +35,15 @@ module.exports = async (req, res) => {
 
     // POST: 지식 그래프 구축
     if (req.method === 'POST') {
-      const { docId } = req.body;
+      const { docId, useLLM, llmModel } = req.body;
       if (!docId) return res.status(400).json({ error: 'docId가 필요합니다.' });
 
       const id = parseInt(docId, 10);
-      console.log(`[KnowledgeGraph] 트리플 구축 시작: 문서 ${id}`);
+      const mode = useLLM ? 'Hybrid(정규식+LLM)' : '정규식';
+      console.log(`[KnowledgeGraph] 트리플 구축 시작: 문서 ${id} (${mode})`);
 
-      const stats = await buildKnowledgeGraph(query, id);
-      console.log(`[KnowledgeGraph] 완료: 엔티티 ${stats.entities.total}개, 트리플 ${stats.triples.total}개`);
+      const stats = await buildKnowledgeGraph(query, id, { useLLM: !!useLLM, llmModel });
+      console.log(`[KnowledgeGraph] 완료: 엔티티 ${stats.entities.total}개 (정규식: ${stats.entities.bySource?.regex || 0}, LLM: ${stats.entities.bySource?.llm || 0}), 트리플 ${stats.triples.total}개`);
 
       return res.json({ success: true, documentId: id, stats });
     }

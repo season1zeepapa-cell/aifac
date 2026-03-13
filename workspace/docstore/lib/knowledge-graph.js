@@ -234,9 +234,11 @@ function extractTriples(text, entities) {
  * buildExplicitCrossRefs 패턴 따름
  * @param {Function} dbQuery - DB 쿼리 함수
  * @param {number} documentId - 문서 ID
- * @returns {{ entities: { total, byType }, triples: { total, byPredicate } }}
+ * @param {object} [options] - { useLLM: boolean, llmModel: string }
+ * @returns {{ entities: { total, byType, bySource }, triples: { total, byPredicate, bySource } }}
  */
-async function buildKnowledgeGraph(dbQuery, documentId) {
+async function buildKnowledgeGraph(dbQuery, documentId, options = {}) {
+  const { useLLM = false, llmModel } = options;
   // 1) 문서 정보 조회
   const docRow = await dbQuery('SELECT title, file_type FROM documents WHERE id = $1', [documentId]);
   if (docRow.rows.length === 0) throw new Error('문서를 찾을 수 없습니다.');
@@ -260,29 +262,73 @@ async function buildKnowledgeGraph(dbQuery, documentId) {
 
   // 통계 수집
   const stats = {
-    entities: { total: 0, byType: {} },
-    triples: { total: 0, byPredicate: {} },
+    entities: { total: 0, byType: {}, bySource: { regex: 0, llm: 0 } },
+    triples: { total: 0, byPredicate: {}, bySource: { regex: 0, llm: 0 } },
   };
 
+  // LLM NER 모듈 (필요 시 로드)
+  let hybridExtractEntities, extractTriplesWithLLM;
+  if (useLLM) {
+    try {
+      const llmNer = require('./llm-ner');
+      hybridExtractEntities = llmNer.hybridExtractEntities;
+      extractTriplesWithLLM = llmNer.extractTriplesWithLLM;
+      console.log('[KnowledgeGraph] LLM NER 활성화');
+    } catch (err) {
+      console.warn('[KnowledgeGraph] LLM NER 모듈 로드 실패, 정규식만 사용:', err.message);
+    }
+  }
+
   // 4) 모든 섹션에서 엔티티/트리플 추출 (메모리에서)
-  // key: "type:name" → { name, type, sectionId, offset }
+  // key: "type:name" → { name, type, sectionId, offset, source }
   const uniqueEntities = new Map();
   const allTriples = []; // { subject, subjectType, object, objectType, predicate, confidence, sectionId, context }
 
   for (const section of sections.rows) {
     if (!section.raw_text) continue;
 
-    const entities = extractEntities(section.raw_text, docTitle);
+    // 1단계: 정규식 NER (항상 실행)
+    let entities;
+    if (useLLM && hybridExtractEntities) {
+      // 하이브리드 모드: 정규식 + LLM 2단계
+      entities = await hybridExtractEntities(section.raw_text, docTitle, {
+        useLLM: true,
+        model: llmModel,
+      });
+    } else {
+      // 정규식 전용 모드
+      entities = extractEntities(section.raw_text, docTitle)
+        .map(e => ({ ...e, source: 'regex' }));
+    }
+
     for (const ent of entities) {
       const key = `${ent.type}:${ent.name}`;
       if (!uniqueEntities.has(key)) {
-        uniqueEntities.set(key, { name: ent.name, type: ent.type, sectionId: section.id, offset: ent.offset });
+        uniqueEntities.set(key, {
+          name: ent.name, type: ent.type, sectionId: section.id,
+          offset: ent.offset, source: ent.source || 'regex',
+        });
       }
     }
 
-    const triples = extractTriples(section.raw_text, entities);
-    for (const triple of triples) {
-      allTriples.push({ ...triple, sectionId: section.id });
+    // 트리플 추출 — 정규식
+    const regexTriples = extractTriples(section.raw_text, entities);
+    for (const triple of regexTriples) {
+      allTriples.push({ ...triple, sectionId: section.id, source: 'regex' });
+    }
+
+    // 트리플 추출 — LLM 보완 (엔티티가 3개 이상일 때만)
+    if (useLLM && extractTriplesWithLLM && entities.length >= 3) {
+      try {
+        const llmTriples = await extractTriplesWithLLM(
+          section.raw_text, entities, regexTriples, { model: llmModel }
+        );
+        for (const triple of llmTriples) {
+          allTriples.push({ ...triple, sectionId: section.id, source: 'llm' });
+        }
+      } catch (err) {
+        console.warn('[KnowledgeGraph] LLM 트리플 추출 실패 (섹션 건너뜀):', err.message);
+      }
     }
   }
 
@@ -298,7 +344,7 @@ async function buildKnowledgeGraph(dbQuery, documentId) {
     batch.forEach(([key, ent], idx) => {
       const base = idx * 5;
       values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
-      params.push(ent.name, ent.type, documentId, ent.sectionId, JSON.stringify({ offset: ent.offset }));
+      params.push(ent.name, ent.type, documentId, ent.sectionId, JSON.stringify({ offset: ent.offset, source: ent.source || 'regex' }));
     });
     const result = await dbQuery(
       `INSERT INTO entities (name, entity_type, document_id, section_id, metadata)
@@ -312,10 +358,12 @@ async function buildKnowledgeGraph(dbQuery, documentId) {
     }
   }
 
-  // 통계: 엔티티
+  // 통계: 엔티티 (타입별 + 출처별)
   stats.entities.total = uniqueEntities.size;
   for (const [, ent] of uniqueEntities) {
     stats.entities.byType[ent.type] = (stats.entities.byType[ent.type] || 0) + 1;
+    const src = ent.source || 'regex';
+    stats.entities.bySource[src] = (stats.entities.bySource[src] || 0) + 1;
   }
 
   // 6) 트리플 배치 INSERT (10개씩)
@@ -327,7 +375,7 @@ async function buildKnowledgeGraph(dbQuery, documentId) {
     if (!subjectId || !objectId) continue;
     const key = `${subjectId}|${t.predicate}|${objectId}`;
     if (!tripleDedup.has(key) || t.confidence > tripleDedup.get(key).confidence) {
-      tripleDedup.set(key, { subjectId, predicate: t.predicate, objectId, confidence: t.confidence, sectionId: t.sectionId, context: t.context });
+      tripleDedup.set(key, { subjectId, predicate: t.predicate, objectId, confidence: t.confidence, sectionId: t.sectionId, context: t.context, source: t.source || 'regex' });
     }
   }
 
@@ -350,10 +398,12 @@ async function buildKnowledgeGraph(dbQuery, documentId) {
     );
   }
 
-  // 통계: 트리플
+  // 통계: 트리플 (술어별 + 출처별)
   stats.triples.total = tripleDedup.size;
   for (const [, t] of tripleDedup) {
     stats.triples.byPredicate[t.predicate] = (stats.triples.byPredicate[t.predicate] || 0) + 1;
+    const src = t.source || 'regex';
+    stats.triples.bySource[src] = (stats.triples.bySource[src] || 0) + 1;
   }
 
   return stats;
