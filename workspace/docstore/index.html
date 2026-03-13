@@ -116,7 +116,7 @@
     }
     .scroll-top-btn:hover { transform: scale(1.1); }
     /* 마크다운 렌더링 스타일 */
-    .markdown-body { line-height: 1.7; }
+    .markdown-body { line-height: 1.7; word-break: break-word; overflow-wrap: anywhere; }
     .markdown-body p { margin-bottom: 0.5em; }
     .markdown-body ul, .markdown-body ol { padding-left: 1.5em; margin-bottom: 0.5em; }
     .markdown-body li { margin-bottom: 0.25em; }
@@ -6369,24 +6369,50 @@
             '답변 생성 중...'
           );
         }
-        // 스트리밍 완료 후 JSON이면 conclusion만 추출해서 표시
+        // 스트리밍 완료 후 JSON이면 본문 텍스트를 추출해서 표시
         if (looksLikeJson) {
           try {
-            const jsonStr = raw.replace(/^```(?:json)?\s*\n?|\n?\s*```$/g, '').trim();
+            // 코드 블록 제거 + 불완전 JSON 복구 시도
+            let jsonStr = raw.replace(/^```(?:json)?\s*\n?|\n?\s*```$/g, '').trim();
+            // 닫는 중괄호 누락 시 추가
+            const opens = (jsonStr.match(/\{/g) || []).length;
+            const closes = (jsonStr.match(/\}/g) || []).length;
+            if (opens > closes) jsonStr += '}'.repeat(opens - closes);
+            // 마지막에 쉼표가 있으면 제거
+            jsonStr = jsonStr.replace(/,\s*\}/g, '}');
+
             const obj = JSON.parse(jsonStr);
-            if (obj.conclusion || obj['결론']) {
-              const text = obj.conclusion || obj['결론'];
+            // 다양한 키명 지원: conclusion, 결론, answer, summary, response 등
+            const text = obj.conclusion || obj['결론'] || obj.answer || obj.summary
+              || obj.response || obj['답변'] || obj['요약']
+              // 위 키가 모두 없으면 모든 문자열 값을 합침
+              || Object.values(obj).filter(v => typeof v === 'string' && v.length > 20).join('\n\n');
+
+            if (text) {
               return React.createElement('div', {
-                className: 'text-sm text-text leading-relaxed markdown-body',
+                className: 'text-sm text-text leading-relaxed markdown-body break-words',
                 dangerouslySetInnerHTML: {
                   __html: typeof marked !== 'undefined' ? marked.parse(text) : text
                 }
               });
             }
-          } catch {}
+          } catch {
+            // JSON 파싱 완전 실패 시 → JSON 속 텍스트 부분만 정규식으로 추출
+            const textMatch = raw.match(/"(?:conclusion|결론|answer|summary|response|답변)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+            if (textMatch) {
+              const extracted = textMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+              return React.createElement('div', {
+                className: 'text-sm text-text leading-relaxed markdown-body break-words',
+                dangerouslySetInnerHTML: {
+                  __html: typeof marked !== 'undefined' ? marked.parse(extracted) : extracted
+                }
+              });
+            }
+          }
         }
+        // 일반 텍스트/마크다운 렌더링
         return React.createElement('div', {
-          className: 'text-sm text-text leading-relaxed markdown-body',
+          className: 'text-sm text-text leading-relaxed markdown-body break-words',
           dangerouslySetInnerHTML: {
             __html: typeof marked !== 'undefined' ? marked.parse(raw || '') : (raw || '')
           }
@@ -6444,7 +6470,7 @@
             React.createElement('span', { className: 'text-blue-600 dark:text-blue-400 text-xs font-bold' }, '\u{1F4A1} 결론')
           ),
           React.createElement('div', {
-            className: 'text-sm text-text leading-relaxed markdown-body',
+            className: 'text-sm text-text leading-relaxed markdown-body break-words',
             dangerouslySetInnerHTML: {
               __html: typeof marked !== 'undefined' ? marked.parse(conclusion) : conclusion
             }
@@ -7099,7 +7125,7 @@
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] ${msg.role === 'user' ? 'order-last' : ''}`}>
                   {/* 말풍선 */}
-                  <div className={`rounded-2xl px-4 py-3 ${
+                  <div className={`rounded-2xl px-4 py-3 overflow-hidden break-words ${
                     msg.role === 'user'
                       ? 'bg-primary text-white rounded-br-md'
                       : 'bg-card-bg border border-border rounded-bl-md shadow-sm'
