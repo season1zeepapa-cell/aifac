@@ -1,14 +1,15 @@
 // 신규 기능 E2E 테스트
 // 테스트 대상: RAG 트레이싱, 프롬프트 템플릿, HWP 업로드 지원, 관측성
+// UI 구조 변경: 관리 탭이 설정/튜닝으로 분리됨
 const { test, expect } = require('@playwright/test');
 
-// ── 관리 탭 진입 헬퍼 ──
-async function goToManageTab(page) {
+// ── 튜닝 탭 진입 헬퍼 ──
+async function goToTuningTab(page) {
   await page.goto('/');
   await page.waitForSelector('nav', { timeout: 15000 });
-  // 하단 네비게이션에서 "관리" 탭 클릭
-  await page.locator('nav button').filter({ hasText: '관리' }).click();
-  // 관리 탭 서브탭 렌더 대기
+  // 하단 네비게이션에서 "튜닝" 탭 클릭
+  await page.locator('nav button').filter({ hasText: '튜닝' }).click();
+  // 서브탭 렌더 대기
   await page.waitForSelector('button', { timeout: 5000 });
 }
 
@@ -35,15 +36,15 @@ async function authApiFetch(page, url) {
 // ========================================
 test.describe('RAG 트레이싱 탭', () => {
 
-  test('관리 탭에서 RAG 트레이싱 서브탭이 존재한다', async ({ page }) => {
-    await goToManageTab(page);
+  test('튜닝 탭에서 RAG 트레이싱 서브탭이 존재한다', async ({ page }) => {
+    await goToTuningTab(page);
     const tracingTab = page.getByRole('button', { name: 'RAG 트레이싱' });
     await tracingTab.scrollIntoViewIfNeeded();
     await expect(tracingTab).toBeVisible();
   });
 
   test('RAG 트레이싱 탭 클릭 시 패널이 로드된다', async ({ page }) => {
-    await goToManageTab(page);
+    await goToTuningTab(page);
     await clickSubTab(page, 'RAG 트레이싱');
 
     // 패널 제목 확인
@@ -54,7 +55,7 @@ test.describe('RAG 트레이싱 탭', () => {
   });
 
   test('RAG 트레이싱 상태 필터가 동작한다', async ({ page }) => {
-    await goToManageTab(page);
+    await goToTuningTab(page);
     await clickSubTab(page, 'RAG 트레이싱');
     await page.waitForSelector('text=RAG 파이프라인 트레이싱', { timeout: 10000 });
 
@@ -68,7 +69,7 @@ test.describe('RAG 트레이싱 탭', () => {
   });
 
   test('RAG 트레이싱 설명 문구가 표시된다', async ({ page }) => {
-    await goToManageTab(page);
+    await goToTuningTab(page);
     await clickSubTab(page, 'RAG 트레이싱');
 
     // 안내 문구 확인
@@ -92,15 +93,15 @@ test.describe('RAG 트레이싱 탭', () => {
 // ========================================
 test.describe('프롬프트 템플릿 탭', () => {
 
-  test('관리 탭에서 프롬프트 서브탭이 존재한다', async ({ page }) => {
-    await goToManageTab(page);
+  test('튜닝 탭에서 프롬프트 서브탭이 존재한다', async ({ page }) => {
+    await goToTuningTab(page);
     const promptTab = page.getByRole('button', { name: '프롬프트', exact: true });
     await promptTab.scrollIntoViewIfNeeded();
     await expect(promptTab).toBeVisible();
   });
 
   test('프롬프트 탭에서 템플릿 관련 UI가 로드된다', async ({ page }) => {
-    await goToManageTab(page);
+    await goToTuningTab(page);
     await clickSubTab(page, '프롬프트');
 
     // 프롬프트 템플릿 제목이 표시되는지 확인
@@ -108,7 +109,7 @@ test.describe('프롬프트 템플릿 탭', () => {
   });
 
   test('프롬프트 체인 구조 설명이 표시된다', async ({ page }) => {
-    await goToManageTab(page);
+    await goToTuningTab(page);
     await clickSubTab(page, '프롬프트');
 
     // 프롬프트 체인 설명 영역 확인
@@ -131,15 +132,15 @@ test.describe('프롬프트 템플릿 탭', () => {
 // ========================================
 test.describe('관측성 탭', () => {
 
-  test('관리 탭에서 관측성 서브탭이 존재한다', async ({ page }) => {
-    await goToManageTab(page);
+  test('튜닝 탭에서 관측성 서브탭이 존재한다', async ({ page }) => {
+    await goToTuningTab(page);
     const obsTab = page.getByRole('button', { name: '관측성', exact: true });
     await obsTab.scrollIntoViewIfNeeded();
     await expect(obsTab).toBeVisible();
   });
 
   test('관측성 탭 클릭 시 LangFuse 관측성 제목이 표시된다', async ({ page }) => {
-    await goToManageTab(page);
+    await goToTuningTab(page);
     await clickSubTab(page, '관측성');
 
     // heading으로 정확히 찾기 (strict mode 대응)
@@ -198,17 +199,28 @@ test.describe('HWP 파일 업로드 지원', () => {
 });
 
 // ========================================
-// 5. 관리 탭 서브탭 구조 테스트
+// 5. 탭 구조 테스트 (설정/튜닝 분리)
 // ========================================
-test.describe('관리 탭 서브탭 구조', () => {
+test.describe('설정/튜닝 탭 구조', () => {
 
-  test('관리 탭에 신규 추가된 서브탭들이 존재한다', async ({ page }) => {
-    await goToManageTab(page);
+  test('설정 탭에 핵심 서브탭들이 존재한다', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForSelector('nav', { timeout: 15000 });
+    await page.locator('nav button').filter({ hasText: '설정' }).click();
 
-    // 최근 추가된 핵심 서브탭들만 확인
-    const newTabs = ['프롬프트', '관측성', 'RAG 트레이싱'];
+    const settingsTabs = ['API 키 관리', 'LLM 모델', '임베딩 모델'];
+    for (const tabName of settingsTabs) {
+      const tab = page.getByRole('button', { name: tabName, exact: true });
+      await tab.scrollIntoViewIfNeeded();
+      await expect(tab).toBeVisible({ timeout: 5000 });
+    }
+  });
 
-    for (const tabName of newTabs) {
+  test('튜닝 탭에 핵심 서브탭들이 존재한다', async ({ page }) => {
+    await goToTuningTab(page);
+
+    const tuningTabs = ['프롬프트', 'RAG 트레이싱', '관측성'];
+    for (const tabName of tuningTabs) {
       const tab = page.getByRole('button', { name: tabName, exact: true });
       await tab.scrollIntoViewIfNeeded();
       await expect(tab).toBeVisible({ timeout: 5000 });
@@ -216,7 +228,7 @@ test.describe('관리 탭 서브탭 구조', () => {
   });
 
   test('서브탭 간 전환이 정상 동작한다', async ({ page }) => {
-    await goToManageTab(page);
+    await goToTuningTab(page);
 
     // 프롬프트 → RAG 트레이싱 → 관측성 순서로 전환
     await clickSubTab(page, '프롬프트');
