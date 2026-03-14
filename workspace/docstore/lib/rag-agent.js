@@ -1,7 +1,7 @@
 // 멀티홉 RAG 검색 엔진
 // 쿼리 리라이팅 → HyDE → 1차 하이브리드 검색 → 참조 추출 → 2차 벡터 검색 → 병합/중복제거/재순위화
 const { generateEmbedding, getActiveModelId } = require('./embeddings');
-const { hybridSearch, vectorSearch: hvVectorSearch, ftsSearch } = require('./hybrid-search');
+const { hybridSearch, vectorSearch: hvVectorSearch, ftsSearch, deduplicateParentChunks } = require('./hybrid-search');
 const { rerankResults } = require('./reranker');
 const { rewriteQuery, generateHyDE, blendEmbeddings } = require('./query-enhancer');
 
@@ -51,6 +51,7 @@ async function multiHopSearch(dbQuery, question, options = {}) {
   const {
     topK = 5, docIds = [], orgId = null,
     useQueryRewrite = true, useHyDE = true, useMorpheme = false,
+    useParentRetriever = false,
     provider = 'gemini', history = [],
     onProgress = null,
   } = options;
@@ -99,6 +100,8 @@ async function multiHopSearch(dbQuery, question, options = {}) {
   }
 
   // ── Phase 1: 1차 검색 (확장된 쿼리들로 검색) ──
+  // Parent Retriever 모드: 자식 청크가 여러 개 매칭되므로 넉넉히 가져옴
+  const searchTopK = useParentRetriever ? topK * 3 : topK;
   let hop1Chunks = [];
 
   try {
@@ -107,21 +110,28 @@ async function multiHopSearch(dbQuery, question, options = {}) {
       // HyDE 블렌드 임베딩으로 벡터 검색 + 원본 질문으로 FTS 동시
       const blendedEmbedding = await blendEmbeddings(question, hydeEmbedding);
       const [vecResults, ftsResults] = await Promise.all([
-        hvVectorSearch(dbQuery, blendedEmbedding, { topK: topK * 2, docIds, orgId }),
-        ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId, useMorpheme }),
+        hvVectorSearch(dbQuery, blendedEmbedding, { topK: searchTopK * 2, docIds, orgId }),
+        ftsSearch(dbQuery, question, { topK: searchTopK * 2, docIds, orgId, useMorpheme }),
       ]);
 
       // RRF 합산
       const { rrfFusion } = require('./hybrid-search');
-      hop1Chunks = rrfFusion(vecResults, ftsResults, topK * 2);
+      hop1Chunks = rrfFusion(vecResults, ftsResults, searchTopK * 2);
     } else {
       // HyDE 없으면 기존 하이브리드 검색
-      hop1Chunks = await hybridSearch(dbQuery, question, { topK, docIds, orgId, useMorpheme });
+      hop1Chunks = await hybridSearch(dbQuery, question, { topK: searchTopK, docIds, orgId, useMorpheme });
     }
   } catch (err) {
     console.warn('[RAG Agent] 1차 검색 실패, 벡터 검색 fallback:', err.message);
     const embedding = hydeEmbedding || await generateEmbedding(question.trim());
-    hop1Chunks = await vectorSearch(dbQuery, embedding, { topK, docIds });
+    hop1Chunks = await vectorSearch(dbQuery, embedding, { topK: searchTopK, docIds });
+  }
+
+  // Parent Retriever: 동일 부모 청크 중복 제거
+  if (useParentRetriever && hop1Chunks.length > 0) {
+    const before = hop1Chunks.length;
+    hop1Chunks = deduplicateParentChunks(hop1Chunks, topK * 2);
+    console.log(`[RAG Agent] Parent Retriever: ${before}건 → ${hop1Chunks.length}건 (부모 중복 제거)`);
   }
 
   // 리라이팅된 추가 쿼리들로 보충 검색 (원본 질문 외 추가 쿼리가 있을 때)

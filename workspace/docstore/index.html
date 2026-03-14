@@ -7275,6 +7275,7 @@
       const [useMorpheme, setUseMorpheme] = useState(false);
       const [useToolRouter, setUseToolRouter] = useState(false); // Tool Use (에이전틱 RAG)
       const [useVerify, setUseVerify] = useState(false); // Corrective RAG (검증+재검색)
+      const [useParentRetriever, setUseParentRetriever] = useState(false); // Parent Document Retriever
       const [enhancementInfo, setEnhancementInfo] = useState(null);
       // 답변 가이드: 주제, 관점, 답변형식
       const [chatGuide, setChatGuide] = useState({ topic: '', perspective: '', format: '' });
@@ -7395,7 +7396,7 @@
             question: questionWithGuide, topK: 5, provider: llmProvider, history,
             stream: true,
             useQueryRewrite, useHyDE, useMorpheme,
-            useToolRouter, useVerify,
+            useToolRouter, useVerify, useParentRetriever,
             llmOptions: {
               model: providerSettings.model,
               temperature: providerSettings.temperature,
@@ -7771,6 +7772,14 @@
                       </div>
                       <span className="text-xs text-text">Corrective RAG</span>
                       <span className="text-[10px] text-text-secondary">(답변 불충분 시 자동 재검색)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <div className={`relative w-9 h-5 rounded-full transition-colors ${useParentRetriever ? 'bg-emerald-500' : 'bg-border'}`}
+                        onClick={() => setUseParentRetriever(v => !v)}>
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useParentRetriever ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-xs text-text">Parent Doc</span>
+                      <span className="text-[10px] text-text-secondary">(정밀 검색 + 부모 컨텍스트)</span>
                     </label>
                   </div>
                 </div>

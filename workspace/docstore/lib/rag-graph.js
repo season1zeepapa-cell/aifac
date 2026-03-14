@@ -344,6 +344,7 @@ async function searchNode(state) {
     useQueryRewrite: state.useQueryRewrite,
     useHyDE: state.useHyDE,
     useMorpheme: state.useMorpheme,
+    useParentRetriever: state.useParentRetriever,
     provider: state.provider,
     history: state.history,
     onProgress,

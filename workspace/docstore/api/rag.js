@@ -38,7 +38,7 @@ module.exports = async (req, res) => {
     question, topK = 5, docId, docIds,
     provider = 'gemini', history = [], llmOptions = {}, stream = false,
     useQueryRewrite = true, useHyDE = true, useMorpheme = false,
-    useVerify = false, useToolRouter = false,
+    useVerify = false, useToolRouter = false, useParentRetriever = false,
     userFewShots = null,
   } = req.body;
   if (!question || question.trim().length === 0) {
@@ -97,6 +97,7 @@ module.exports = async (req, res) => {
     useHyDE,
     useMorpheme,
     useVerify,
+    useParentRetriever,
     // 컨텍스트
     trace,
     tracer,
