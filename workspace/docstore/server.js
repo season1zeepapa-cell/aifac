@@ -17,6 +17,9 @@ const PORT = process.env.PORT || 3001;
 
 // ── 미들웨어 ──────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
+// Vite 빌드 결과물(dist/) 정적 서빙 (프로덕션)
+app.use(express.static(path.join(__dirname, 'dist')));
+// 개발 환경 폴백: 기존 루트 디렉토리 서빙
 app.use(express.static(path.join(__dirname)));
 
 // ── POST /api/login ─────────────────────────────────
@@ -197,6 +200,18 @@ const crawlIngestHandler = require('./api/crawl-ingest');
 app.get('/api/crawl-ingest', (req, res) => crawlIngestHandler(req, res));
 app.post('/api/crawl-ingest', (req, res) => crawlIngestHandler(req, res));
 app.delete('/api/crawl-ingest', (req, res) => crawlIngestHandler(req, res));
+
+// ── SPA 폴백: API 라우트 이외 모든 경로를 dist/index.html로 서빙 ──
+app.get('*', (req, res) => {
+  const distIndex = path.join(__dirname, 'dist', 'index.html');
+  const rootIndex = path.join(__dirname, 'index.html');
+  const fs = require('fs');
+  if (fs.existsSync(distIndex)) {
+    res.sendFile(distIndex);
+  } else {
+    res.sendFile(rootIndex);
+  }
+});
 
 // ── 서버 시작 / Vercel 서버리스 export ────────────────
 if (require.main === module) {
