@@ -3,7 +3,7 @@
 // 모델명·엔드포인트를 한 곳에서 관리
 // callLLM/callLLMStream 호출 시 api-tracker를 통해 자동으로 사용량 DB 기록
 const https = require('https');
-const { trackUsage, isCreditError, updateKeyStatus } = require('./api-tracker');
+const { trackUsage, isCreditError, updateKeyStatus, checkDailyLimit } = require('./api-tracker');
 const { trackLLMCall } = require('./langfuse');
 
 // ── 프로바이더별 모델 설정 ──
@@ -236,6 +236,15 @@ async function callLLM(prompt, options = {}) {
   const provider = options.provider || 'gemini';
   const model = options.model || LLM_PROVIDERS[provider]?.model || 'unknown';
   const endpoint = options._endpoint || 'llm-call';
+
+  // API 키 비활성/한도 체크
+  const limitCheck = await checkDailyLimit(provider);
+  if (!limitCheck.allowed) {
+    const msg = limitCheck.reason === 'key_disabled'
+      ? `${provider} API 키가 비활성 상태입니다. 설정에서 활성화해주세요.`
+      : `${provider} 일일 호출 한도 초과 (${limitCheck.usage}/${limitCheck.limit})`;
+    throw new Error(msg);
+  }
 
   // _usage 객체를 전달 → 프로바이더 함수가 토큰 수를 여기에 기록
   const usage = {};
@@ -550,6 +559,15 @@ async function callLLMStream(prompt, options = {}, onToken) {
   const model = options.model || LLM_PROVIDERS[provider]?.model || 'unknown';
   const endpoint = options._endpoint || 'llm-stream';
   const startTime = Date.now();
+
+  // API 키 비활성/한도 체크
+  const limitCheck = await checkDailyLimit(provider);
+  if (!limitCheck.allowed) {
+    const msg = limitCheck.reason === 'key_disabled'
+      ? `${provider} API 키가 비활성 상태입니다. 설정에서 활성화해주세요.`
+      : `${provider} 일일 호출 한도 초과 (${limitCheck.usage}/${limitCheck.limit})`;
+    throw new Error(msg);
+  }
 
   // LangFuse 트레이스 연동
   const lf = trackLLMCall(options._langfuseParent || null, {

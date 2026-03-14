@@ -10,7 +10,7 @@
 
 const OpenAI = require('openai');
 const { smartChunk, parentDocChunk } = require('./text-splitters');
-const { trackUsage } = require('./api-tracker');
+const { trackUsage, checkDailyLimit } = require('./api-tracker');
 const { buildMorphemeTsvector } = require('./korean-tokenizer');
 const { trackEmbeddingCall } = require('./langfuse');
 
@@ -181,6 +181,15 @@ async function generateEmbeddings(chunks, modelId, inputType = 'search_document'
   const resolvedId = modelId || _activeModelId || 'openai';
   const config = getModelConfig(resolvedId);
 
+  // API 키 비활성/한도 체크
+  const limitCheck = await checkDailyLimit(config.provider);
+  if (!limitCheck.allowed) {
+    const msg = limitCheck.reason === 'key_disabled'
+      ? `${config.provider} API 키가 비활성 상태입니다. 설정에서 활성화해주세요.`
+      : `${config.provider} 일일 호출 한도 초과 (${limitCheck.usage}/${limitCheck.limit})`;
+    throw new Error(msg);
+  }
+
   if (config.provider === 'cohere') {
     // Cohere: 배치 크기 제한
     const allEmbeddings = [];
@@ -227,6 +236,15 @@ async function generateEmbeddings(chunks, modelId, inputType = 'search_document'
 async function generateEmbedding(text, modelId, inputType = 'search_query') {
   const resolvedId = modelId || _activeModelId || 'openai';
   const config = getModelConfig(resolvedId);
+
+  // API 키 비활성/한도 체크
+  const limitCheck = await checkDailyLimit(config.provider);
+  if (!limitCheck.allowed) {
+    const msg = limitCheck.reason === 'key_disabled'
+      ? `${config.provider} API 키가 비활성 상태입니다. 설정에서 활성화해주세요.`
+      : `${config.provider} 일일 호출 한도 초과 (${limitCheck.usage}/${limitCheck.limit})`;
+    throw new Error(msg);
+  }
 
   if (config.provider === 'cohere') {
     const embeddings = await cohereEmbed([text], inputType);

@@ -576,6 +576,37 @@
       { value: '기타', label: '기타' },
     ];
 
+    // API 키 활성 상태 전역 Context
+    const ApiKeyStatusContext = React.createContext({
+      disabledApis: {},  // { provider: true } 비활성 API 맵
+      isApiDisabled: () => false,
+      reload: () => {},
+    });
+
+    function useApiKeyStatusProvider() {
+      const [disabledApis, setDisabledApis] = React.useState({});
+      const reload = React.useCallback(async () => {
+        try {
+          const res = await authFetch(`${API_BASE_URL}/api-usage?range=today`);
+          if (res.ok) {
+            const data = await res.json();
+            const disabled = {};
+            (data.keys || []).forEach(k => {
+              if (k.configured && !k.is_active) disabled[k.provider] = true;
+            });
+            setDisabledApis(disabled);
+          }
+        } catch {}
+      }, []);
+      // 특정 provider가 비활성인지 확인하는 헬퍼
+      const isApiDisabled = React.useCallback((provider) => {
+        if (Array.isArray(provider)) return provider.some(p => !!disabledApis[p]);
+        return !!disabledApis[provider];
+      }, [disabledApis]);
+      React.useEffect(() => { reload(); }, []);
+      return { disabledApis, isApiDisabled, reload };
+    }
+
     // 카테고리 전역 상태 (API 로드 후 갱신)
     const CategoriesContext = React.createContext({
       categories: DEFAULT_CATEGORIES,
@@ -963,6 +994,24 @@
           <div className="text-4xl mb-4 opacity-30">{icon}</div>
           <h3 className="text-lg font-medium text-text-secondary mb-2">{title}</h3>
           {description && <p className="text-sm text-text-secondary/70">{description}</p>}
+        </div>
+      );
+    }
+
+    // 비활성 API 경고 배너
+    function DisabledApiBanner({ providers, featureName }) {
+      const { isApiDisabled, disabledApis } = React.useContext(ApiKeyStatusContext);
+      const providerLabels = {
+        openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini',
+        cohere: 'Cohere', upstage: 'Upstage', 'law-api': '국가법령정보센터',
+      };
+      const disabled = (Array.isArray(providers) ? providers : [providers]).filter(p => disabledApis[p]);
+      if (disabled.length === 0) return null;
+      return (
+        <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          <span className="font-bold">API 비활성:</span>{' '}
+          {disabled.map(p => providerLabels[p] || p).join(', ')}이(가) 비활성 상태입니다.
+          {featureName && <span> <b>{featureName}</b> 기능을 사용하려면 설정 &gt; API 키에서 활성화해주세요.</span>}
         </div>
       );
     }
@@ -1651,6 +1700,7 @@
 
       return (
         <div className="space-y-5 fade-in">
+          <DisabledApiBanner providers={['openai', 'gemini', 'law-api']} featureName="문서 등록/분석" />
           {/* 모드 토글 — 3개 균등 배분 */}
           <div className="grid grid-cols-3 gap-2 bg-gray-100 p-1 rounded-xl">
             <button
@@ -2683,6 +2733,7 @@
     // 문서 상세 모달 (장/절 접기/펼치기 지원)
     // ========================================
     function DocumentDetailModal({ isOpen, onClose, documentId, initialSectionInfo }) {
+      const { isApiDisabled } = React.useContext(ApiKeyStatusContext);
       const [data, setData] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
@@ -3376,17 +3427,20 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/></svg>
                     CoD
                   </button>
-                  <Button variant="ghost" size="sm" onClick={handleBulkSummarize} disabled={bulkSummarizing}>
-                    {bulkSummarizing ? (useCoD ? 'CoD 요약 중...' : '요약 중...') : (useCoD ? '전체 CoD 요약' : '전체 요약')}
+                  <Button variant="ghost" size="sm" onClick={handleBulkSummarize} disabled={bulkSummarizing || isApiDisabled('gemini')}
+                    title={isApiDisabled('gemini') ? 'Gemini API 비활성' : ''}>
+                    {isApiDisabled('gemini') ? 'API 비활성' : bulkSummarizing ? (useCoD ? 'CoD 요약 중...' : '요약 중...') : (useCoD ? '전체 CoD 요약' : '전체 요약')}
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={handleAnalyze} disabled={analyzing}>
-                    {analyzing ? 'AI 분석 중...' : 'AI 분석'}
+                  <Button variant="secondary" size="sm" onClick={handleAnalyze} disabled={analyzing || isApiDisabled('gemini')}
+                    title={isApiDisabled('gemini') ? 'Gemini API 비활성' : ''}>
+                    {isApiDisabled('gemini') ? 'API 비활성' : analyzing ? 'AI 분석 중...' : 'AI 분석'}
                   </Button>
                   {/* UX2: 임베딩 상태 + 재생성 버튼 */}
                   {(doc.embedding_status === 'failed' || doc.embedding_status === 'pending') && (
-                    <Button variant="ghost" size="sm" onClick={handleRebuildEmbeddings} disabled={rebuildingEmb}
-                      className="text-red-500 hover:text-red-600">
-                      {rebuildingEmb ? '재생성 중...' : '임베딩 재시도'}
+                    <Button variant="ghost" size="sm" onClick={handleRebuildEmbeddings} disabled={rebuildingEmb || isApiDisabled('openai')}
+                      className="text-red-500 hover:text-red-600"
+                      title={isApiDisabled('openai') ? 'OpenAI API 비활성' : ''}>
+                      {isApiDisabled('openai') ? 'API 비활성' : rebuildingEmb ? '재생성 중...' : '임베딩 재시도'}
                     </Button>
                   )}
                 </div>
@@ -6053,8 +6107,13 @@
         </Card>
       );
 
+      const { isApiDisabled } = React.useContext(ApiKeyStatusContext);
+      const searchDisabled = searchType === 'vector' ? isApiDisabled('openai') :
+                             searchType === 'hybrid' ? isApiDisabled('openai') : false;
+
       return (
         <div className="space-y-4 fade-in">
+          <DisabledApiBanner providers={['openai', 'cohere']} featureName="검색" />
           {/* 검색 입력 */}
           <Card>
             <div className="space-y-3">
@@ -6152,8 +6211,8 @@
                     </div>
                   )}
                 </div>
-                <Button onClick={handleSearch} disabled={loading || !searchQuery.trim()}>
-                  {loading ? '검색 중...' : '검색'}
+                <Button onClick={handleSearch} disabled={loading || !searchQuery.trim() || searchDisabled}>
+                  {searchDisabled ? 'API 비활성' : loading ? '검색 중...' : '검색'}
                 </Button>
               </div>
               {/* 검색 타입 선택 */}
@@ -7545,8 +7604,13 @@
       const providerColor = (id) => id === 'gemini' ? 'blue' : id === 'openai' ? 'green' : 'orange';
       const providerName = (id) => id === 'gemini' ? 'Gemini' : id === 'openai' ? 'OpenAI' : 'Claude';
 
+      const { isApiDisabled } = React.useContext(ApiKeyStatusContext);
+      const chatLlmDisabled = isApiDisabled(llmProvider);
+      const chatEmbedDisabled = isApiDisabled('openai');
+
       return (
         <div className="flex flex-col fade-in" style={{ height: 'calc(100vh - 130px)' }}>
+          <DisabledApiBanner providers={[llmProvider, 'openai']} featureName="AI 채팅" />
           {/* 상단 바: 새 대화 + 설정 */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -8101,7 +8165,8 @@
               </button>
               <button
                 onClick={handleSend}
-                disabled={loading || !inputText.trim()}
+                disabled={loading || !inputText.trim() || chatLlmDisabled || chatEmbedDisabled}
+                title={chatLlmDisabled ? `${llmProvider} API 비활성` : chatEmbedDisabled ? 'OpenAI(임베딩) API 비활성' : ''}
                 className="flex-shrink-0 w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -8506,6 +8571,7 @@
         } finally { setActionLoading(null); }
       }, [fetchData]);
 
+      const { reload: reloadApiKeyStatus } = React.useContext(ApiKeyStatusContext);
       const handleToggleKey = useCallback(async (provider, currentActive) => {
         setActionLoading(`toggle-${provider}`);
         try {
@@ -8514,8 +8580,9 @@
             body: JSON.stringify({ action: 'toggleKey', provider, isActive: !currentActive }),
           });
           fetchData();
+          reloadApiKeyStatus(); // 전역 API 키 상태 갱신
         } finally { setActionLoading(null); }
-      }, [fetchData]);
+      }, [fetchData, reloadApiKeyStatus]);
 
       const handleUpdateLimit = useCallback(async (provider, value) => {
         setActionLoading(`limit-${provider}`);
@@ -10683,6 +10750,7 @@
       const [refreshKey, setRefreshKey] = useState(0);
       const { theme, toggle: toggleTheme } = useTheme();
       const categoriesCtx = useCategoriesProvider();
+      const apiKeyStatusCtx = useApiKeyStatusProvider();
       // 검색 결과 → 문서 목록 탭 이동 시 열 문서 정보 { docId, sectionIndex, label }
       const [navigateDocInfo, setNavigateDocInfo] = useState(null);
 
@@ -10716,6 +10784,7 @@
       }
 
       return (
+        <ApiKeyStatusContext.Provider value={apiKeyStatusCtx}>
         <CategoriesContext.Provider value={categoriesCtx}>
           <div className="min-h-screen pb-16">
             <Header onLogout={handleLogout} onHomeClick={handleHomeClick} theme={theme} onToggleTheme={toggleTheme} />
@@ -10743,6 +10812,7 @@
             <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
           </div>
         </CategoriesContext.Provider>
+        </ApiKeyStatusContext.Provider>
       );
     }
 
