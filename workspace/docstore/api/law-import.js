@@ -3,6 +3,7 @@
 // + 조문 간 참조 관계 파싱
 const { getLawDetail } = require('../lib/law-fetcher');
 const { createEmbeddingsForDocument } = require('../lib/embeddings');
+const { incrementalUpdateGraph } = require('../lib/knowledge-graph');
 const { query: dbQuery } = require('../lib/db');
 const { requireAuth, orgFilter } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -182,6 +183,15 @@ module.exports = async (req, res) => {
       console.warn(`[Law Import] 교차 참조 구축 실패 (무시):`, crErr.message);
     }
 
+    // 8) 지식 그래프 증분 업데이트
+    let graphResult = null;
+    try {
+      graphResult = await incrementalUpdateGraph(dbQuery, documentId, { useLLM: false });
+      console.log(`[Law Import] 지식그래프 증분: 추가 ${graphResult.added}, 변경 ${graphResult.updated}`);
+    } catch (gErr) {
+      console.warn(`[Law Import] 지식그래프 증분 실패 (무시):`, gErr.message);
+    }
+
     res.json({
       success: true,
       documentId,
@@ -190,6 +200,7 @@ module.exports = async (req, res) => {
       info,
       embedding: embeddingResult,
       crossReferences: crossRefResult,
+      knowledgeGraph: graphResult ? { added: graphResult.added, updated: graphResult.updated } : undefined,
     });
   } catch (err) {
     sendError(res, err, '[Law Import]');

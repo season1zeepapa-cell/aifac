@@ -5,6 +5,7 @@ const https = require('https');
 const http = require('http');
 const iconv = require('iconv-lite');
 const { createEmbeddingsForDocument } = require('../lib/embeddings');
+const { incrementalUpdateGraph } = require('../lib/knowledge-graph');
 const { query } = require('../lib/db');
 const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -240,6 +241,15 @@ module.exports = async (req, res) => {
     // 6) 임베딩 생성
     const embeddingResult = await createEmbeddingsForDocument({ query }, documentId, 'URL Import');
 
+    // 7) 지식 그래프 증분 업데이트
+    let graphResult = null;
+    try {
+      graphResult = await incrementalUpdateGraph(query, documentId, { useLLM: false });
+      console.log(`[URL Import] 지식그래프 증분: 추가 ${graphResult.added}, 변경 ${graphResult.updated}`);
+    } catch (gErr) {
+      console.warn(`[URL Import] 지식그래프 증분 실패 (무시):`, gErr.message);
+    }
+
     res.json({
       success: true,
       documentId,
@@ -248,6 +258,7 @@ module.exports = async (req, res) => {
       charCount: extractedText.length,
       sectionCount: paragraphs.length,
       embedding: embeddingResult,
+      knowledgeGraph: graphResult ? { added: graphResult.added, updated: graphResult.updated } : undefined,
     });
   } catch (err) {
     sendError(res, err, '[URL Import]');

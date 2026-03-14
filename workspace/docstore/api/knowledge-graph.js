@@ -16,6 +16,7 @@ const {
   bfsTraversal,
   dfsTraversal,
 } = require('../lib/knowledge-graph');
+const { detectCommunities, saveCommunities } = require('../lib/community-detection');
 
 module.exports = async (req, res) => {
   if (setCors(req, res, { methods: 'GET, POST, DELETE, OPTIONS' })) return;
@@ -67,7 +68,20 @@ module.exports = async (req, res) => {
         const stats = await incrementalUpdateGraph(query, id, { useLLM: !!useLLM, llmModel });
         console.log(`[KnowledgeGraph] 증분 완료: 추가 ${stats.added}, 변경 ${stats.updated}, 삭제 ${stats.removed}, 유지 ${stats.unchanged}`);
 
-        return res.json({ success: true, documentId: id, incremental: true, stats });
+        // 변경 사항이 있으면 커뮤니티 자동 재계산
+        let communityResult = null;
+        if (stats.added > 0 || stats.updated > 0 || stats.removed > 0) {
+          try {
+            const commResult = await detectCommunities(query, { documentId: id, algorithm: 'auto' });
+            await saveCommunities(query, id, commResult);
+            communityResult = { communities: commResult.communities?.length || 0, algorithm: commResult.algorithm };
+            console.log(`[KnowledgeGraph] 커뮤니티 재계산: ${communityResult.communities}개 (${communityResult.algorithm})`);
+          } catch (commErr) {
+            console.warn(`[KnowledgeGraph] 커뮤니티 재계산 실패 (무시):`, commErr.message);
+          }
+        }
+
+        return res.json({ success: true, documentId: id, incremental: true, stats, community: communityResult });
       }
 
       // 전체 재구축 모드 (기존)

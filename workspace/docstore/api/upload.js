@@ -13,6 +13,7 @@ const multer = require('multer');
 const { extractFromPdf } = require('../lib/pdf-extractor');
 const { detectFileType, extractFromFile } = require('../lib/text-extractor');
 const { createEmbeddingsForDocument } = require('../lib/embeddings');
+const { incrementalUpdateGraph } = require('../lib/knowledge-graph');
 const { query } = require('../lib/db');
 const { requireAuth } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -260,6 +261,15 @@ module.exports = async function handler(req, res) {
       );
     }
 
+    // 4) 지식 그래프 증분 업데이트 (비차단 — 실패해도 업로드 응답에 영향 없음)
+    let graphResult = null;
+    try {
+      graphResult = await incrementalUpdateGraph(query, documentId, { useLLM: false });
+      console.log(`[Upload] 지식그래프 증분: 추가 ${graphResult.added}, 변경 ${graphResult.updated}`);
+    } catch (gErr) {
+      console.warn(`[Upload] 지식그래프 증분 실패 (무시):`, gErr.message);
+    }
+
     res.json({
       success: true,
       documentId,
@@ -273,6 +283,7 @@ module.exports = async function handler(req, res) {
       fields: extracted.fields || null,
       embedding: embeddingResult,
       deidentify: enableDeidentify ? deidentifyResult : undefined,
+      knowledgeGraph: graphResult ? { added: graphResult.added, updated: graphResult.updated } : undefined,
     });
   } catch (err) {
     // 에러 발생 시에도 임시 파일 정리
