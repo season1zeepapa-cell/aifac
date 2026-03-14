@@ -95,6 +95,14 @@
       to { opacity: 1; transform: translateY(0); }
     }
     .fade-in { animation: fadeIn 0.3s ease-out; }
+    /* 모바일 보호 — overflow 방지 + 터치 타깃 확보 */
+    @media (max-width: 639px) {
+      .drop-zone { padding: 28px 16px; }
+      body { -webkit-text-size-adjust: 100%; }
+    }
+    /* 스크롤바 숨기기 (모바일 서브탭 등) */
+    .scrollbar-none::-webkit-scrollbar { display: none; }
+    .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
     /* 맨 위로 버튼 */
     .scroll-top-btn {
       position: fixed;
@@ -921,7 +929,7 @@
     function Card({ children, onClick, className = '', hoverable = false }) {
       return (
         <div
-          className={`bg-card-bg border border-border rounded-xl p-4 shadow-sm ${hoverable ? 'cursor-pointer hover:bg-card-bg-hover hover:border-primary/30 hover:shadow-md transition-all duration-200' : ''} ${className}`}
+          className={`bg-card-bg border border-border rounded-xl p-3 sm:p-4 shadow-sm ${hoverable ? 'cursor-pointer hover:bg-card-bg-hover hover:border-primary/30 hover:shadow-md transition-all duration-200' : ''} ${className}`}
           onClick={onClick}
         >
           {children}
@@ -951,7 +959,7 @@
       if (!isOpen) return null;
       const sizes = { sm: 'max-w-sm', md: 'max-w-2xl', lg: 'max-w-4xl', full: 'max-w-full mx-4' };
       return (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 pb-4 overflow-y-auto" onClick={onClose}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-4 sm:pt-10 px-2 sm:px-4 pb-4 overflow-y-auto" onClick={onClose}>
           {/* 배경 오버레이 */}
           <div className="fixed inset-0 bg-black/30" />
           {/* 모달 본체 */}
@@ -960,14 +968,14 @@
             onClick={e => e.stopPropagation()}
           >
             {/* 헤더 */}
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h3 className="text-lg font-semibold text-text">{title}</h3>
-              <button onClick={onClose} className="p-1 text-text-secondary hover:text-text transition-colors" aria-label="닫기">
+            <div className="flex items-center justify-between p-3 sm:p-4 border-b border-border gap-2">
+              <h3 className="text-base sm:text-lg font-semibold text-text truncate min-w-0">{title}</h3>
+              <button onClick={onClose} className="p-1.5 text-text-secondary hover:text-text transition-colors shrink-0" aria-label="닫기">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
             {/* 내용 */}
-            <div className="p-4 max-h-[70vh] overflow-y-auto">
+            <div className="p-3 sm:p-4 max-h-[75vh] overflow-y-auto">
               {children}
             </div>
           </div>
@@ -1061,22 +1069,22 @@
     function BottomNav({ activeTab, onTabChange }) {
       const tabs = [
         { id: 'upload', label: '등록', icon: (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
         )},
-        { id: 'documents', label: '문서 목록', icon: (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+        { id: 'documents', label: '문서', icon: (
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
         )},
         { id: 'search', label: '검색', icon: (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
         ) },
-        { id: 'chat', label: 'AI 채팅', icon: (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+        { id: 'chat', label: '채팅', icon: (
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
         ) },
         { id: 'settings', label: '설정', icon: (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
         ) },
         { id: 'tuning', label: '튜닝', icon: (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
         ) },
       ];
 
@@ -1088,7 +1096,7 @@
                 key={tab.id}
                 onClick={() => !tab.disabled && onTabChange(tab.id)}
                 disabled={tab.disabled}
-                className={`flex flex-col items-center gap-1 py-2.5 transition-colors ${
+                className={`flex flex-col items-center gap-0.5 py-2 sm:py-2.5 transition-colors ${
                   tab.disabled
                     ? 'opacity-30 cursor-not-allowed'
                     : activeTab === tab.id
@@ -1097,7 +1105,7 @@
                 }`}
               >
                 {tab.icon}
-                <span className="text-xs font-medium">{tab.label}</span>
+                <span className="text-[10px] sm:text-xs font-medium leading-tight">{tab.label}</span>
               </button>
             ))}
           </div>
@@ -1699,7 +1707,7 @@
       const currentConfig = fileType ? FILE_TYPE_CONFIG[fileType] : null;
 
       return (
-        <div className="space-y-5 fade-in">
+        <div className="space-y-3 sm:space-y-5 fade-in">
           <DisabledApiBanner providers={['openai', 'gemini', 'law-api']} featureName="문서 등록/분석" />
           {/* 모드 토글 — 3개 균등 배분 */}
           <div className="grid grid-cols-3 gap-2 bg-gray-100 p-1 rounded-xl">
@@ -1727,14 +1735,13 @@
           {uploadMode === 'file' && (
             <>
               {/* 파일 드롭존 (모든 형식 허용) */}
-              <div
-                className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
+              <label
+                className={`drop-zone block ${dragOver ? 'drag-over' : ''}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
               >
-                <input ref={fileInputRef} type="file" accept={ALL_ACCEPTED} className="hidden" onChange={e => handleFileSelect(e.target.files[0])} />
+                <input ref={fileInputRef} type="file" accept={ALL_ACCEPTED} style={{position:'absolute',width:0,height:0,opacity:0,overflow:'hidden',pointerEvents:'none'}} onChange={e => { if(e.target.files[0]) handleFileSelect(e.target.files[0]); }} />
                 {file && currentConfig ? (
                   <div className="space-y-2">
                     <div className="text-4xl">{currentConfig.icon}</div>
@@ -1750,11 +1757,11 @@
                 ) : (
                   <div className="space-y-2">
                     <svg className="w-10 h-10 mx-auto text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                    <p className="text-text-secondary">파일을 드래그하거나 클릭하여 선택</p>
-                    <p className="text-xs text-text-secondary/60">PDF, TXT, MD, DOCX, XLSX, CSV, JSON, 이미지</p>
+                    <p className="text-text-secondary">터치하여 파일 선택</p>
+                    <p className="text-xs text-text-secondary/60">PDF, TXT, MD, DOCX, XLSX, CSV, JSON, HWP, 이미지</p>
                   </div>
                 )}
-              </div>
+              </label>
 
               {/* 파일 감지 후 옵션 표시 */}
               {file && currentConfig && (
@@ -5555,7 +5562,7 @@
                   <button
                     key={cat.value}
                     onClick={() => setCategoryFilter(cat.value)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
+                    className={`px-2.5 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap transition-all ${
                       categoryFilter === cat.value
                         ? 'bg-primary text-white shadow-sm'
                         : 'bg-card-bg border border-border text-text-secondary hover:text-text hover:border-primary/30'
@@ -8323,7 +8330,7 @@
                         {preset.strategy || 'recursive'} / {preset.chunkSize || 500}자 / 겹침 {preset.overlap ?? 100}자
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                       <div>
                         <label className="block text-[10px] text-text-secondary mb-0.5">전략</label>
                         <select value={preset.strategy || 'recursive'}
@@ -8768,10 +8775,10 @@
       return (
         <div className="space-y-4 fade-in">
           {/* 서브 탭 네비게이션 */}
-          <div className="flex gap-1 bg-card-bg rounded-lg p-1 border border-border overflow-x-auto">
+          <div className="flex gap-1 bg-card-bg rounded-lg p-1 border border-border overflow-x-auto scrollbar-none" style={{WebkitOverflowScrolling:'touch'}}>
             {SUB_TABS.map(tab => (
               <button key={tab.id} onClick={() => setSubTab(tab.id)}
-                className={`flex-1 px-2 py-2 rounded-md text-xs font-medium transition-all whitespace-nowrap ${
+                className={`shrink-0 sm:flex-1 px-2.5 sm:px-2 py-2 rounded-md text-[11px] sm:text-xs font-medium transition-all whitespace-nowrap ${
                   subTab === tab.id
                     ? 'bg-primary text-white shadow-sm'
                     : 'text-text-secondary hover:text-text hover:bg-border/50'
@@ -8802,10 +8809,10 @@
 
                 return (
                   <Card key={key.provider}>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-sm text-text">{providerLabels[key.provider] || key.provider}</span>
+                    <div className="space-y-2 sm:space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-wrap">
+                          <span className="font-bold text-xs sm:text-sm text-text">{providerLabels[key.provider] || key.provider}</span>
                           {key.configured ? (
                             <Badge color={key.is_active ? 'green' : 'red'}>{key.is_active ? '활성' : '비활성'}</Badge>
                           ) : (
@@ -8813,20 +8820,20 @@
                           )}
                           {creditErrors > 0 && <Badge color="red">크레딧 소진</Badge>}
                         </div>
-                        <div className="flex gap-1">
+                        <div className="flex gap-1 shrink-0">
                           <button onClick={() => handleTestKey(key.provider)}
                             disabled={!key.configured || actionLoading === `test-${key.provider}`}
-                            className="px-2.5 py-1 text-xs bg-primary/10 border border-primary/30 rounded-md hover:bg-primary/20 text-primary disabled:opacity-30 transition-colors"
+                            className="px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs bg-primary/10 border border-primary/30 rounded-md hover:bg-primary/20 text-primary disabled:opacity-30 transition-colors"
                           >{actionLoading === `test-${key.provider}` ? '...' : '테스트'}</button>
                           <button onClick={() => handleToggleKey(key.provider, key.is_active)}
                             disabled={!key.configured}
-                            className="px-2.5 py-1 text-xs bg-border rounded-md hover:bg-card-bg-hover text-text-secondary disabled:opacity-30 transition-colors"
+                            className="px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs bg-border rounded-md hover:bg-card-bg-hover text-text-secondary disabled:opacity-30 transition-colors"
                           >{key.is_active ? '비활성화' : '활성화'}</button>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between text-xs text-text-secondary">
-                        <div className="flex gap-4">
+                      <div className="flex items-center justify-between text-[11px] sm:text-xs text-text-secondary">
+                        <div className="flex gap-2 sm:gap-4">
                           <span>호출: <span className="text-text font-medium">{callCount}</span></span>
                           <span>비용: <span className="text-primary font-medium">${parseFloat(usage?.total_cost || 0).toFixed(4)}</span></span>
                         </div>
@@ -9107,10 +9114,10 @@
       return (
         <div className="space-y-4 fade-in">
           {/* 서브 탭 네비게이션 */}
-          <div className="flex gap-1 bg-card-bg rounded-lg p-1 border border-border overflow-x-auto">
+          <div className="flex gap-1 bg-card-bg rounded-lg p-1 border border-border overflow-x-auto scrollbar-none" style={{WebkitOverflowScrolling:'touch'}}>
             {SUB_TABS.map(tab => (
               <button key={tab.id} onClick={() => setSubTab(tab.id)}
-                className={`flex-1 px-2 py-2 rounded-md text-xs font-medium transition-all whitespace-nowrap ${
+                className={`shrink-0 sm:flex-1 px-2.5 sm:px-2 py-2 rounded-md text-[11px] sm:text-xs font-medium transition-all whitespace-nowrap ${
                   subTab === tab.id
                     ? 'bg-primary text-white shadow-sm'
                     : 'text-text-secondary hover:text-text hover:bg-border/50'
@@ -9147,25 +9154,25 @@
                   return <span className={`text-[10px] font-medium ${pct > 0 ? 'text-red-400' : 'text-green-500'}`}>{pct > 0 ? '\u2191' : '\u2193'}{Math.abs(pct)}%</span>;
                 };
                 return (
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     <Card>
                       <p className="text-[10px] text-text-secondary uppercase tracking-wider">총 호출</p>
-                      <div className="flex items-end gap-1.5 mt-1">
-                        <p className="text-2xl font-bold text-text">{totalCalls.toLocaleString()}</p>
+                      <div className="flex items-end gap-1 mt-1">
+                        <p className="text-base sm:text-2xl font-bold text-text">{totalCalls.toLocaleString()}</p>
                         {today && yesterday && diffBadge(parseInt(today.call_count), parseInt(yesterday.call_count))}
                       </div>
                     </Card>
                     <Card>
                       <p className="text-[10px] text-text-secondary uppercase tracking-wider">예상 비용</p>
-                      <div className="flex items-end gap-1.5 mt-1">
-                        <p className="text-2xl font-bold text-primary">${totalCost.toFixed(4)}</p>
+                      <div className="flex items-end gap-1 mt-1">
+                        <p className="text-base sm:text-2xl font-bold text-primary truncate">${totalCost.toFixed(4)}</p>
                         {today && yesterday && diffBadge(parseFloat(today.total_cost), parseFloat(yesterday.total_cost))}
                       </div>
                     </Card>
                     <Card>
                       <p className="text-[10px] text-text-secondary uppercase tracking-wider">에러</p>
-                      <div className="flex items-end gap-1.5 mt-1">
-                        <p className={`text-2xl font-bold ${totalErrors > 0 ? 'text-red-500' : 'text-green-500'}`}>{totalErrors}</p>
+                      <div className="flex items-end gap-1 mt-1">
+                        <p className={`text-base sm:text-2xl font-bold ${totalErrors > 0 ? 'text-red-500' : 'text-green-500'}`}>{totalErrors}</p>
                         {today && yesterday && diffBadge(parseInt(today.error_count), parseInt(yesterday.error_count))}
                       </div>
                     </Card>
@@ -9226,16 +9233,16 @@
                         const pct = (d.calls / maxCalls) * 100;
                         const pList = Object.entries(d.providers);
                         return (
-                          <div key={date} className="flex items-center gap-2 text-xs">
-                            <span className="w-10 text-text-secondary text-[10px] shrink-0">{date.slice(5)}</span>
+                          <div key={date} className="flex items-center gap-1.5 sm:gap-2 text-xs">
+                            <span className="w-9 sm:w-10 text-text-secondary text-[10px] shrink-0">{date.slice(5)}</span>
                             <div className="flex-1 h-4 bg-border/50 rounded overflow-hidden flex">
                               {pList.map(([prov, cnt]) => (
                                 <div key={prov} style={{ width: `${(cnt / maxCalls) * 100}%`, backgroundColor: pColors[prov] || '#9ca3af' }}
                                   className="h-full transition-all" title={`${providerLabels[prov] || prov}: ${cnt}회`} />
                               ))}
                             </div>
-                            <span className="w-8 text-right text-text shrink-0">{d.calls}</span>
-                            <span className="w-14 text-right text-primary text-[10px] shrink-0">${d.cost.toFixed(3)}</span>
+                            <span className="w-7 sm:w-8 text-right text-text shrink-0 text-[10px] sm:text-xs">{d.calls}</span>
+                            <span className="w-12 sm:w-14 text-right text-primary text-[10px] shrink-0">${d.cost.toFixed(3)}</span>
                           </div>
                         );
                       })}
@@ -9307,15 +9314,15 @@
                   <h4 className="text-xs font-bold text-text mb-3">모델별 사용량</h4>
                   <div className="space-y-1">
                     {data.usageByModel.map((m, i) => (
-                      <div key={i} className="flex items-center justify-between text-xs py-2 border-b border-border/50">
-                        <div className="flex items-center gap-2 min-w-0">
+                      <div key={i} className="flex items-center justify-between text-xs py-2 border-b border-border/50 gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                           <Badge color={providerColors[m.provider] || 'gray'}>{m.provider}</Badge>
-                          <span className="text-text truncate">{m.model}</span>
+                          <span className="text-text truncate text-[11px] sm:text-xs">{m.model}</span>
                           <span className="text-text-secondary text-[10px] hidden sm:inline">({m.endpoint})</span>
                         </div>
-                        <div className="flex gap-3 text-text-secondary shrink-0">
-                          <span>{m.call_count}회</span>
-                          <span className="text-primary font-medium">${parseFloat(m.total_cost).toFixed(4)}</span>
+                        <div className="flex gap-2 sm:gap-3 text-text-secondary shrink-0">
+                          <span className="text-[11px] sm:text-xs">{m.call_count}회</span>
+                          <span className="text-primary font-medium text-[11px] sm:text-xs">${parseFloat(m.total_cost).toFixed(4)}</span>
                         </div>
                       </div>
                     ))}
@@ -9329,11 +9336,11 @@
                       }), { calls: 0, tIn: 0, tOut: 0, cost: 0 });
                       return (
                         <div className="flex items-center justify-between text-xs py-2.5 mt-1 border-t-2 border-border">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-text">합계</span>
-                            <span className="text-text-secondary text-[10px]">토큰: 입력 {t.tIn.toLocaleString()} / 출력 {t.tOut.toLocaleString()}</span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-bold text-text shrink-0">합계</span>
+                            <span className="text-text-secondary text-[10px] hidden sm:inline">토큰: 입력 {t.tIn.toLocaleString()} / 출력 {t.tOut.toLocaleString()}</span>
                           </div>
-                          <div className="flex gap-3 shrink-0">
+                          <div className="flex gap-2 sm:gap-3 shrink-0">
                             <span className="font-bold text-text">{t.calls}회</span>
                             <span className="text-primary font-bold">${t.cost.toFixed(4)}</span>
                           </div>
@@ -9772,18 +9779,18 @@
             {/* 타이밍 */}
             <div className="bg-card-bg border border-border rounded-lg p-4">
               <h4 className="font-semibold text-sm mb-3">실행 시간</h4>
-              <div className="grid grid-cols-3 gap-3 text-xs text-center">
-                <div className="bg-blue-50 rounded-lg p-3">
-                  <div className="text-blue-600 font-bold text-lg">{(t.total_duration_ms / 1000).toFixed(1)}s</div>
-                  <div className="text-text-secondary">전체</div>
+              <div className="grid grid-cols-3 gap-2 sm:gap-3 text-xs text-center">
+                <div className="bg-blue-50 rounded-lg p-2 sm:p-3">
+                  <div className="text-blue-600 font-bold text-sm sm:text-lg">{(t.total_duration_ms / 1000).toFixed(1)}s</div>
+                  <div className="text-text-secondary text-[10px] sm:text-xs">전체</div>
                 </div>
-                <div className="bg-green-50 rounded-lg p-3">
-                  <div className="text-green-600 font-bold text-lg">{(t.search_duration_ms / 1000).toFixed(1)}s</div>
-                  <div className="text-text-secondary">검색</div>
+                <div className="bg-green-50 rounded-lg p-2 sm:p-3">
+                  <div className="text-green-600 font-bold text-sm sm:text-lg">{(t.search_duration_ms / 1000).toFixed(1)}s</div>
+                  <div className="text-text-secondary text-[10px] sm:text-xs">검색</div>
                 </div>
-                <div className="bg-purple-50 rounded-lg p-3">
-                  <div className="text-purple-600 font-bold text-lg">{(t.llm_duration_ms / 1000).toFixed(1)}s</div>
-                  <div className="text-text-secondary">LLM</div>
+                <div className="bg-purple-50 rounded-lg p-2 sm:p-3">
+                  <div className="text-purple-600 font-bold text-sm sm:text-lg">{(t.llm_duration_ms / 1000).toFixed(1)}s</div>
+                  <div className="text-text-secondary text-[10px] sm:text-xs">LLM</div>
                 </div>
               </div>
             </div>
@@ -9791,10 +9798,10 @@
             {/* 토큰 / 비용 */}
             <div className="bg-card-bg border border-border rounded-lg p-4">
               <h4 className="font-semibold text-sm mb-3">토큰 & 비용</h4>
-              <div className="grid grid-cols-3 gap-3 text-xs text-center">
-                <div><span className="text-text-secondary">입력 토큰</span><div className="font-bold">{(t.tokens_in || 0).toLocaleString()}</div></div>
-                <div><span className="text-text-secondary">출력 토큰</span><div className="font-bold">{(t.tokens_out || 0).toLocaleString()}</div></div>
-                <div><span className="text-text-secondary">추정 비용</span><div className="font-bold">${parseFloat(t.cost_estimate || 0).toFixed(4)}</div></div>
+              <div className="grid grid-cols-3 gap-2 sm:gap-3 text-xs text-center">
+                <div className="min-w-0"><span className="text-text-secondary text-[10px] sm:text-xs">입력 토큰</span><div className="font-bold truncate text-[11px] sm:text-xs">{(t.tokens_in || 0).toLocaleString()}</div></div>
+                <div className="min-w-0"><span className="text-text-secondary text-[10px] sm:text-xs">출력 토큰</span><div className="font-bold truncate text-[11px] sm:text-xs">{(t.tokens_out || 0).toLocaleString()}</div></div>
+                <div className="min-w-0"><span className="text-text-secondary text-[10px] sm:text-xs">추정 비용</span><div className="font-bold truncate text-[11px] sm:text-xs">${parseFloat(t.cost_estimate || 0).toFixed(4)}</div></div>
               </div>
             </div>
 
@@ -10810,7 +10817,7 @@
         <CategoriesContext.Provider value={categoriesCtx}>
           <div className="min-h-screen pb-16">
             <Header onLogout={handleLogout} onHomeClick={handleHomeClick} theme={theme} onToggleTheme={toggleTheme} />
-            <main className="max-w-3xl mx-auto px-4 py-5">
+            <main className="max-w-3xl mx-auto px-3 sm:px-4 py-4 sm:py-5 pb-20">
               {activeTab === 'upload' && (
                 <UploadTab onUploadComplete={handleUploadComplete} />
               )}
