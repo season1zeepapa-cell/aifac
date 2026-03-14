@@ -4502,6 +4502,7 @@
       const [traverseStartId, setTraverseStartId] = useState('');
       const [traverseResult, setTraverseResult] = useState(null);
       const [traverseLoading, setTraverseLoading] = useState(false);
+      const [highlightedChain, setHighlightedChain] = useState(null); // DFS 선택된 체인 인덱스
       const traverseSvgRef = useRef(null);
       const traverseContainerRef = useRef(null);
 
@@ -4736,6 +4737,198 @@
 
         return () => simulation.stop();
       }, [data, viewMode]);
+
+      // BFS/DFS 탐색 결과 D3 그래프 렌더링
+      useEffect(() => {
+        if (viewMode !== 'traverse' || !traverseResult || !traverseResult.nodes?.length || !traverseSvgRef.current) return;
+
+        const container = traverseContainerRef.current;
+        const width = container?.clientWidth || 600;
+        const height = 400;
+
+        const svgEl = d3.select(traverseSvgRef.current);
+        svgEl.selectAll('*').remove();
+        svgEl.attr('viewBox', `0 0 ${width} ${height}`);
+
+        // 노드/엣지 복사
+        const nodes = traverseResult.nodes.map(n => ({ ...n }));
+        const edges = (traverseResult.edges || []).map(e => ({
+          ...e,
+          source: e.sourceId || e.source,
+          target: e.targetId || e.target,
+        }));
+
+        // 노드 ID → 이름 매핑 (하이라이트용)
+        const nodeMap = {};
+        nodes.forEach(n => { nodeMap[n.id] = n; });
+
+        // 하이라이트할 노드/엣지 ID 세트
+        const hlNodeIds = new Set();
+        const hlEdgePairs = new Set();
+        if (highlightedChain !== null && traverseResult.chains?.[highlightedChain]) {
+          const chain = traverseResult.chains[highlightedChain];
+          chain.path.forEach(p => hlNodeIds.add(p.id));
+          for (let i = 0; i < chain.path.length - 1; i++) {
+            hlEdgePairs.add(`${chain.path[i].id}-${chain.path[i+1].id}`);
+            hlEdgePairs.add(`${chain.path[i+1].id}-${chain.path[i].id}`);
+          }
+        }
+        const hasHighlight = hlNodeIds.size > 0;
+
+        const svg = svgEl;
+        const g = svg.append('g');
+        const zoom = d3.zoom()
+          .scaleExtent([0.3, 4])
+          .on('zoom', (event) => g.attr('transform', event.transform));
+        svg.call(zoom);
+
+        // 화살표 마커
+        const defs = svg.append('defs');
+        Object.entries(predColorMap).forEach(([pred, color]) => {
+          defs.append('marker')
+            .attr('id', `tr-arrow-${pred}`)
+            .attr('viewBox', '0 -5 10 10')
+            .attr('refX', 20).attr('refY', 0)
+            .attr('markerWidth', 6).attr('markerHeight', 6)
+            .attr('orient', 'auto')
+            .append('path')
+            .attr('d', 'M0,-5L10,0L0,5')
+            .attr('fill', color);
+        });
+        // 하이라이트용 마커
+        defs.append('marker')
+          .attr('id', 'tr-arrow-hl')
+          .attr('viewBox', '0 -5 10 10')
+          .attr('refX', 20).attr('refY', 0)
+          .attr('markerWidth', 7).attr('markerHeight', 7)
+          .attr('orient', 'auto')
+          .append('path')
+          .attr('d', 'M0,-5L10,0L0,5')
+          .attr('fill', '#F59E0B');
+
+        // 깊이별 반지름
+        const maxLink = d3.max(nodes, d => d.linkCount || d.depth || 1) || 1;
+        const radiusScale = d3.scaleSqrt().domain([0, maxLink]).range([10, 24]);
+
+        const simulation = d3.forceSimulation(nodes)
+          .force('link', d3.forceLink(edges).id(d => d.id).distance(110))
+          .force('charge', d3.forceManyBody().strength(-350))
+          .force('center', d3.forceCenter(width / 2, height / 2))
+          .force('collision', d3.forceCollide().radius(d => radiusScale(d.linkCount || d.depth || 1) + 12));
+
+        // 엣지 렌더링
+        const link = g.append('g')
+          .selectAll('line').data(edges).enter().append('line')
+          .attr('stroke', d => {
+            const sid = typeof d.source === 'object' ? d.source.id : d.source;
+            const tid = typeof d.target === 'object' ? d.target.id : d.target;
+            if (hasHighlight && hlEdgePairs.has(`${sid}-${tid}`)) return '#F59E0B';
+            return predColorMap[d.predicate] || '#6B7280';
+          })
+          .attr('stroke-opacity', d => {
+            if (!hasHighlight) return 0.6;
+            const sid = typeof d.source === 'object' ? d.source.id : d.source;
+            const tid = typeof d.target === 'object' ? d.target.id : d.target;
+            return hlEdgePairs.has(`${sid}-${tid}`) ? 1 : 0.15;
+          })
+          .attr('stroke-width', d => {
+            const sid = typeof d.source === 'object' ? d.source.id : d.source;
+            const tid = typeof d.target === 'object' ? d.target.id : d.target;
+            if (hasHighlight && hlEdgePairs.has(`${sid}-${tid}`)) return 3;
+            return d.confidence >= 0.9 ? 2 : 1;
+          })
+          .attr('marker-end', d => {
+            const sid = typeof d.source === 'object' ? d.source.id : d.source;
+            const tid = typeof d.target === 'object' ? d.target.id : d.target;
+            if (hasHighlight && hlEdgePairs.has(`${sid}-${tid}`)) return 'url(#tr-arrow-hl)';
+            return `url(#tr-arrow-${d.predicate})`;
+          });
+
+        // 엣지 라벨
+        const linkLabel = g.append('g')
+          .selectAll('text').data(edges).enter().append('text')
+          .attr('text-anchor', 'middle')
+          .attr('fill', d => {
+            const sid = typeof d.source === 'object' ? d.source.id : d.source;
+            const tid = typeof d.target === 'object' ? d.target.id : d.target;
+            if (hasHighlight && hlEdgePairs.has(`${sid}-${tid}`)) return '#F59E0B';
+            if (hasHighlight) return '#CBD5E1';
+            return predColorMap[d.predicate] || '#6B7280';
+          })
+          .attr('font-size', d => {
+            const sid = typeof d.source === 'object' ? d.source.id : d.source;
+            const tid = typeof d.target === 'object' ? d.target.id : d.target;
+            return (hasHighlight && hlEdgePairs.has(`${sid}-${tid}`)) ? '10px' : '8px';
+          })
+          .attr('font-weight', d => {
+            const sid = typeof d.source === 'object' ? d.source.id : d.source;
+            const tid = typeof d.target === 'object' ? d.target.id : d.target;
+            return (hasHighlight && hlEdgePairs.has(`${sid}-${tid}`)) ? 'bold' : 'normal';
+          })
+          .attr('dy', -5)
+          .text(d => d.predicate);
+
+        // 노드 렌더링
+        const node = g.append('g')
+          .selectAll('g').data(nodes).enter().append('g')
+          .style('cursor', 'pointer')
+          .call(d3.drag()
+            .on('start', (event, d) => {
+              if (!event.active) simulation.alphaTarget(0.3).restart();
+              d.fx = d.x; d.fy = d.y;
+            })
+            .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+            .on('end', (event, d) => {
+              if (!event.active) simulation.alphaTarget(0);
+              d.fx = null; d.fy = null;
+            })
+          );
+
+        // 노드 원
+        node.append('circle')
+          .attr('r', d => radiusScale(d.linkCount || d.depth || 1))
+          .attr('fill', d => {
+            if (hasHighlight && !hlNodeIds.has(d.id)) return '#D1D5DB';
+            return typeColorMap[d.type]?.hex || '#6B7280';
+          })
+          .attr('stroke', d => {
+            if (hasHighlight && hlNodeIds.has(d.id)) return '#F59E0B';
+            return '#fff';
+          })
+          .attr('stroke-width', d => (hasHighlight && hlNodeIds.has(d.id)) ? 3 : 1.5)
+          .attr('opacity', d => {
+            if (!hasHighlight) return 0.9;
+            return hlNodeIds.has(d.id) ? 1 : 0.3;
+          });
+
+        // 깊이 뱃지 (시작점 = 0)
+        node.filter(d => d.depth === 0).append('text')
+          .attr('text-anchor', 'middle').attr('dy', 4)
+          .attr('fill', '#fff').attr('font-size', '9px').attr('font-weight', 'bold')
+          .text('S');
+
+        // 노드 라벨
+        node.append('text')
+          .attr('dy', d => radiusScale(d.linkCount || d.depth || 1) + 13)
+          .attr('text-anchor', 'middle')
+          .attr('fill', d => {
+            if (hasHighlight && !hlNodeIds.has(d.id)) return '#94A3B8';
+            return 'var(--text)';
+          })
+          .attr('font-size', d => (hasHighlight && hlNodeIds.has(d.id)) ? '10px' : '9px')
+          .attr('font-weight', d => (hasHighlight && hlNodeIds.has(d.id)) ? 'bold' : 'normal')
+          .text(d => d.name.length > 12 ? d.name.substring(0, 12) + '…' : d.name);
+
+        simulation.on('tick', () => {
+          link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+            .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+          linkLabel.attr('x', d => (d.source.x + d.target.x) / 2)
+            .attr('y', d => (d.source.y + d.target.y) / 2);
+          node.attr('transform', d => `translate(${d.x},${d.y})`);
+        });
+
+        return () => simulation.stop();
+      }, [traverseResult, viewMode, highlightedChain]);
 
       // 필터링
       const filteredEntities = (data?.entities || []).filter(e => {
@@ -5018,6 +5211,7 @@
                   try {
                     setTraverseLoading(true);
                     setTraverseResult(null);
+                    setHighlightedChain(null);
                     const params = new URLSearchParams({
                       traverse: traverseAlgo,
                       startId: traverseStartId,
@@ -5081,11 +5275,23 @@
 
             // DFS 결과: 연쇄 참조 체인 목록
             traverseResult.algorithm === 'dfs' && traverseResult.chains && React.createElement('div', { className: 'space-y-2' },
-              React.createElement('div', { className: 'text-xs font-semibold text-text mb-1' }, '발견된 연쇄 참조 경로'),
+              React.createElement('div', { className: 'flex items-center gap-2 mb-1' },
+                React.createElement('span', { className: 'text-xs font-semibold text-text' }, '발견된 연쇄 참조 경로'),
+                highlightedChain !== null && React.createElement('button', {
+                  onClick: () => setHighlightedChain(null),
+                  className: 'px-2 py-0.5 text-[10px] bg-amber-100 text-amber-700 rounded-full hover:bg-amber-200',
+                }, '하이라이트 해제'),
+                React.createElement('span', { className: 'text-[10px] text-text-secondary' }, '(클릭하면 그래프에서 경로 강조)'),
+              ),
               ...traverseResult.chains.slice(0, 30).map((chain, idx) =>
                 React.createElement('div', {
                   key: idx,
-                  className: 'bg-card-bg border border-border rounded-lg p-3 hover:border-purple-300 transition-colors',
+                  onClick: () => setHighlightedChain(highlightedChain === idx ? null : idx),
+                  className: `bg-card-bg border rounded-lg p-3 cursor-pointer transition-all ${
+                    highlightedChain === idx
+                      ? 'border-amber-400 ring-2 ring-amber-200 shadow-md'
+                      : 'border-border hover:border-purple-300'
+                  }`,
                 },
                   // 깊이 + 신뢰도 뱃지
                   React.createElement('div', { className: 'flex items-center gap-2 mb-2' },
@@ -5093,6 +5299,9 @@
                       `${chain.depth}홉`),
                     React.createElement('span', { className: 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 text-gray-600' },
                       `신뢰도: ${chain.confidence}`),
+                    highlightedChain === idx && React.createElement('span', {
+                      className: 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700',
+                    }, '그래프에 표시 중'),
                   ),
                   // 경로 시각화: A →[관계]→ B →[관계]→ C
                   React.createElement('div', { className: 'flex flex-wrap items-center gap-1 text-[11px]' },
@@ -5101,7 +5310,7 @@
                         React.createElement('span', {
                           key: `e${i}`,
                           className: 'px-2 py-0.5 rounded-full font-medium text-white',
-                          style: { backgroundColor: typeColorMap[entity.type] || '#6B7280' },
+                          style: { backgroundColor: highlightedChain === idx ? '#F59E0B' : (typeColorMap[entity.type]?.hex || '#6B7280') },
                         }, entity.name),
                       ];
                       if (i < chain.predicates.length) {
@@ -5119,6 +5328,28 @@
               ),
               traverseResult.chains.length > 30 && React.createElement('div', { className: 'text-center text-[11px] text-text-secondary py-2' },
                 `... 외 ${traverseResult.chains.length - 30}개 경로`),
+            ),
+
+            // D3 그래프 시각화 (탐색 결과)
+            traverseResult.nodes?.length > 0 && React.createElement('div', {
+              ref: traverseContainerRef,
+              className: 'bg-card-bg border border-border rounded-xl overflow-hidden',
+            },
+              React.createElement('div', { className: 'px-3 py-2 border-b border-border flex items-center justify-between' },
+                React.createElement('span', { className: 'text-[11px] font-semibold text-text' },
+                  `${traverseResult.algorithm?.toUpperCase()} 그래프 시각화`),
+                React.createElement('div', { className: 'flex items-center gap-2' },
+                  highlightedChain !== null && React.createElement('span', {
+                    className: 'text-[10px] text-amber-600 font-medium',
+                  }, `경로 #${highlightedChain + 1} 강조 중`),
+                  React.createElement('span', { className: 'text-[10px] text-text-secondary' }, '드래그: 이동 | 스크롤: 확대/축소'),
+                ),
+              ),
+              React.createElement('svg', {
+                ref: traverseSvgRef,
+                className: 'w-full',
+                style: { height: '400px', background: 'var(--bg)' },
+              }),
             ),
 
             // 탐색 엣지 목록 (접혀 있음)
