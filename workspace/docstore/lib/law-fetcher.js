@@ -31,7 +31,8 @@ function fetchLawAPI(url) {
  * @returns {Promise<Object>} { totalCount, results, target }
  */
 async function searchLaw(query, oc, target = 'law') {
-  const encoded = encodeURIComponent(query);
+  // 공백 제거 후 검색 (법제처 API는 공백 없이 검색해야 정확한 결과)
+  const encoded = encodeURIComponent(query.replace(/\s+/g, ''));
   const validTargets = ['law', 'admrul', 'ordin'];
   const t = validTargets.includes(target) ? target : 'law';
   const url = `https://www.law.go.kr/DRF/lawSearch.do?OC=${oc}&target=${t}&type=JSON&query=${encoded}&display=20`;
