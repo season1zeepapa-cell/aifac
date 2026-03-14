@@ -6108,8 +6108,8 @@
       );
 
       const { isApiDisabled } = React.useContext(ApiKeyStatusContext);
-      const searchDisabled = searchType === 'vector' ? isApiDisabled('openai') :
-                             searchType === 'hybrid' ? isApiDisabled('openai') : false;
+      // vector 검색만 완전 차단, hybrid는 FTS fallback 가능하므로 허용
+      const searchDisabled = searchType === 'vector' ? isApiDisabled('openai') : false;
 
       return (
         <div className="space-y-4 fade-in">

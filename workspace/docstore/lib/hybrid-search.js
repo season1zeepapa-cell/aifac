@@ -403,14 +403,27 @@ async function hybridSearch(dbQuery, question, options = {}) {
   // 활성 모델을 DB에서 최신으로 확인 (서버리스 인스턴스 간 동기화)
   await getActiveModelId(dbQuery);
 
-  // 임베딩 생성
-  const embedding = await generateEmbedding(question.trim());
+  // 임베딩 생성 (실패 시 텍스트 검색만으로 fallback)
+  let embedding = null;
+  let embeddingError = null;
+  try {
+    embedding = await generateEmbedding(question.trim());
+  } catch (err) {
+    embeddingError = err.message;
+    console.warn('[HybridSearch] 임베딩 생성 실패, FTS만으로 검색:', err.message);
+  }
 
-  // 벡터 검색과 전문 검색을 병렬 실행 (성능 최적화, 조직별 격리)
-  const [vecResults, ftsResults] = await Promise.all([
-    vectorSearch(dbQuery, embedding, { topK: topK * 2, docIds, orgId }),
+  // 벡터 검색과 전문 검색을 병렬 실행 (임베딩 실패 시 FTS만 실행)
+  const searches = [
     ftsSearch(dbQuery, question, { topK: topK * 2, docIds, orgId, useMorpheme }),
-  ]);
+  ];
+  if (embedding) {
+    searches.unshift(vectorSearch(dbQuery, embedding, { topK: topK * 2, docIds, orgId }));
+  }
+
+  const results = await Promise.all(searches);
+  const vecResults = embedding ? results[0] : [];
+  const ftsResults = embedding ? results[1] : results[0];
 
   // RRF로 두 결과를 합산하여 최종 순위 결정
   // rerank용 후보는 넉넉하게 확보 (topK * 2)
@@ -418,6 +431,11 @@ async function hybridSearch(dbQuery, question, options = {}) {
 
   // Cohere Rerank 적용 (COHERE_API_KEY 있을 때만, 없으면 RRF 순서 유지)
   const reranked = await rerankResults(question, fused, topK);
+
+  // 임베딩 실패 경고를 결과에 첨부
+  if (embeddingError && reranked.length > 0) {
+    reranked._embeddingWarning = `임베딩 API 오류로 텍스트 검색만 사용됨: ${embeddingError}`;
+  }
 
   return reranked;
 }
