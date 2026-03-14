@@ -8,11 +8,71 @@
 // 모델 선택은 app_settings 테이블의 'embeddingModel' 키로 관리.
 // 모델 변경 시 차원이 달라지므로 기존 임베딩 재생성 필요.
 
+const crypto = require('crypto');
 const OpenAI = require('openai');
 const { smartChunk, parentDocChunk } = require('./text-splitters');
 const { trackUsage, checkDailyLimit } = require('./api-tracker');
 const { buildMorphemeTsvector } = require('./korean-tokenizer');
 const { trackEmbeddingCall } = require('./langfuse');
+
+// ── 임베딩 캐시 (해시 기반 LRU) ──
+// 동일 텍스트 재임베딩 방지 → API 비용 30~50% 절감
+const CACHE_MAX_SIZE = 2000;
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30분
+const _embeddingCache = new Map(); // key: hash → { embedding, createdAt }
+let _cacheHits = 0;
+let _cacheMisses = 0;
+
+/**
+ * 텍스트+모델 조합의 SHA-256 해시 생성
+ */
+function embeddingCacheKey(text, modelId) {
+  return crypto.createHash('sha256').update(`${modelId}:${text}`).digest('hex');
+}
+
+/**
+ * 캐시에서 임베딩 조회 (TTL 만료 시 삭제)
+ */
+function getCachedEmbedding(text, modelId) {
+  const key = embeddingCacheKey(text, modelId);
+  const entry = _embeddingCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > CACHE_TTL_MS) {
+    _embeddingCache.delete(key);
+    return null;
+  }
+  _cacheHits++;
+  return entry.embedding;
+}
+
+/**
+ * 캐시에 임베딩 저장 (LRU: 초과 시 가장 오래된 항목 제거)
+ */
+function setCachedEmbedding(text, modelId, embedding) {
+  if (_embeddingCache.size >= CACHE_MAX_SIZE) {
+    // Map은 삽입 순서 유지 → 첫 항목이 가장 오래됨
+    const oldestKey = _embeddingCache.keys().next().value;
+    _embeddingCache.delete(oldestKey);
+  }
+  const key = embeddingCacheKey(text, modelId);
+  _embeddingCache.set(key, { embedding, createdAt: Date.now() });
+  _cacheMisses++;
+}
+
+/**
+ * 캐시 통계 반환
+ */
+function getEmbeddingCacheStats() {
+  return {
+    size: _embeddingCache.size,
+    maxSize: CACHE_MAX_SIZE,
+    hits: _cacheHits,
+    misses: _cacheMisses,
+    hitRate: (_cacheHits + _cacheMisses) > 0
+      ? (_cacheHits / (_cacheHits + _cacheMisses) * 100).toFixed(1) + '%'
+      : '0%',
+  };
+}
 
 // ── 임베딩 모델 정의 ──
 const EMBEDDING_MODELS = {
@@ -181,7 +241,30 @@ async function generateEmbeddings(chunks, modelId, inputType = 'search_document'
   const resolvedId = modelId || _activeModelId || 'openai';
   const config = getModelConfig(resolvedId);
 
-  // API 키 비활성/한도 체크
+  // ── 캐시 조회: 이미 임베딩된 청크는 API 호출 생략 ──
+  const results = new Array(chunks.length);
+  const uncachedIndices = []; // API 호출이 필요한 청크의 원본 인덱스
+  const uncachedTexts = [];  // API 호출이 필요한 청크 텍스트
+
+  for (let i = 0; i < chunks.length; i++) {
+    const cached = getCachedEmbedding(chunks[i], resolvedId);
+    if (cached) {
+      results[i] = cached; // 캐시 히트 → 바로 결과에 넣기
+    } else {
+      uncachedIndices.push(i);
+      uncachedTexts.push(chunks[i]);
+    }
+  }
+
+  // 모두 캐시에서 찾았으면 API 호출 없이 반환
+  if (uncachedTexts.length === 0) {
+    console.log(`[Embeddings] 배치 ${chunks.length}건 전체 캐시 히트`);
+    return results;
+  }
+
+  console.log(`[Embeddings] 배치 ${chunks.length}건 중 캐시 히트 ${chunks.length - uncachedTexts.length}건, API 호출 ${uncachedTexts.length}건`);
+
+  // API 키 비활성/한도 체크 (캐시 미스가 있을 때만)
   const limitCheck = await checkDailyLimit(config.provider);
   if (!limitCheck.allowed) {
     const msg = limitCheck.reason === 'key_disabled'
@@ -190,40 +273,49 @@ async function generateEmbeddings(chunks, modelId, inputType = 'search_document'
     throw new Error(msg);
   }
 
+  // ── 캐시 미스 청크만 API 호출 ──
+  let apiEmbeddings;
+
   if (config.provider === 'cohere') {
-    // Cohere: 배치 크기 제한
-    const allEmbeddings = [];
-    for (let i = 0; i < chunks.length; i += config.maxBatch) {
-      const batch = chunks.slice(i, i + config.maxBatch);
+    apiEmbeddings = [];
+    for (let i = 0; i < uncachedTexts.length; i += config.maxBatch) {
+      const batch = uncachedTexts.slice(i, i + config.maxBatch);
       const embeddings = await cohereEmbed(batch, inputType);
-      allEmbeddings.push(...embeddings);
+      apiEmbeddings.push(...embeddings);
     }
     trackUsage({
       provider: 'cohere', model: config.model, endpoint: 'embeddings-batch',
-      tokensIn: chunks.join('').length, tokensOut: 0, status: 'success',
+      tokensIn: uncachedTexts.join('').length, tokensOut: 0, status: 'success',
     }).catch(() => {});
-    return allEmbeddings;
+  } else {
+    // OpenAI / Upstage: OpenAI SDK 호환
+    const client = getOpenAIClient(config);
+    const modelName = (config.provider === 'upstage' && inputType === 'search_query' && config.queryModel)
+      ? config.queryModel
+      : config.model;
+    const response = await client.embeddings.create({
+      model: modelName,
+      input: uncachedTexts,
+    });
+
+    trackUsage({
+      provider: config.provider, model: modelName, endpoint: 'embeddings-batch',
+      tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
+    }).catch(() => {});
+
+    apiEmbeddings = response.data
+      .sort((a, b) => a.index - b.index)
+      .map(item => item.embedding);
   }
 
-  // OpenAI / Upstage: OpenAI SDK 호환
-  const client = getOpenAIClient(config);
-  // Upstage: inputType에 따라 query/passage 모델 분기
-  const modelName = (config.provider === 'upstage' && inputType === 'search_query' && config.queryModel)
-    ? config.queryModel
-    : config.model;
-  const response = await client.embeddings.create({
-    model: modelName,
-    input: chunks,
-  });
+  // ── API 결과를 캐시에 저장하고 results 배열에 채우기 ──
+  for (let i = 0; i < uncachedIndices.length; i++) {
+    const origIdx = uncachedIndices[i];
+    results[origIdx] = apiEmbeddings[i];
+    setCachedEmbedding(chunks[origIdx], resolvedId, apiEmbeddings[i]);
+  }
 
-  trackUsage({
-    provider: config.provider, model: modelName, endpoint: 'embeddings-batch',
-    tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
-  }).catch(() => {});
-
-  return response.data
-    .sort((a, b) => a.index - b.index)
-    .map(item => item.embedding);
+  return results;
 }
 
 /**
@@ -237,6 +329,13 @@ async function generateEmbedding(text, modelId, inputType = 'search_query') {
   const resolvedId = modelId || _activeModelId || 'openai';
   const config = getModelConfig(resolvedId);
 
+  // ── 캐시 조회 ──
+  const cached = getCachedEmbedding(text, resolvedId);
+  if (cached) {
+    console.log(`[Embeddings] 단일 임베딩 캐시 히트 (${text.slice(0, 30)}...)`);
+    return cached;
+  }
+
   // API 키 비활성/한도 체크
   const limitCheck = await checkDailyLimit(config.provider);
   if (!limitCheck.allowed) {
@@ -246,32 +345,36 @@ async function generateEmbedding(text, modelId, inputType = 'search_query') {
     throw new Error(msg);
   }
 
+  let embedding;
+
   if (config.provider === 'cohere') {
     const embeddings = await cohereEmbed([text], inputType);
     trackUsage({
       provider: 'cohere', model: config.model, endpoint: 'embedding-single',
       tokensIn: text.length, tokensOut: 0, status: 'success',
     }).catch(() => {});
-    return embeddings[0];
+    embedding = embeddings[0];
+  } else {
+    // OpenAI / Upstage
+    const client = getOpenAIClient(config);
+    const modelName = (config.provider === 'upstage' && inputType === 'search_query' && config.queryModel)
+      ? config.queryModel
+      : config.model;
+    const response = await client.embeddings.create({
+      model: modelName,
+      input: text,
+    });
+
+    trackUsage({
+      provider: config.provider, model: modelName, endpoint: 'embedding-single',
+      tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
+    }).catch(() => {});
+    embedding = response.data[0].embedding;
   }
 
-  // OpenAI / Upstage
-  const client = getOpenAIClient(config);
-  // Upstage: inputType에 따라 query/passage 모델 분기
-  const modelName = (config.provider === 'upstage' && inputType === 'search_query' && config.queryModel)
-    ? config.queryModel
-    : config.model;
-  const response = await client.embeddings.create({
-    model: modelName,
-    input: text,
-  });
-
-  trackUsage({
-    provider: config.provider, model: modelName, endpoint: 'embedding-single',
-    tokensIn: response.usage?.total_tokens || 0, tokensOut: 0, status: 'success',
-  }).catch(() => {});
-
-  return response.data[0].embedding;
+  // ── 캐시에 저장 ──
+  setCachedEmbedding(text, resolvedId, embedding);
+  return embedding;
 }
 
 /**
@@ -672,4 +775,6 @@ module.exports = {
   getModelConfig,
   resetModelCache,
   migrateVectorDimension,
+  // 임베딩 캐시
+  getEmbeddingCacheStats,
 };
