@@ -1,6 +1,6 @@
 // 멀티홉 RAG 검색 엔진
 // 쿼리 리라이팅 → HyDE → 1차 하이브리드 검색 → 참조 추출 → 2차 벡터 검색 → 병합/중복제거/재순위화
-const { generateEmbedding } = require('./embeddings');
+const { generateEmbedding, getActiveModelId } = require('./embeddings');
 const { hybridSearch, vectorSearch: hvVectorSearch, ftsSearch } = require('./hybrid-search');
 const { rerankResults } = require('./reranker');
 const { rewriteQuery, generateHyDE, blendEmbeddings } = require('./query-enhancer');
@@ -59,6 +59,9 @@ async function multiHopSearch(dbQuery, question, options = {}) {
     queryRewrite: null,
     hyde: null,
   };
+
+  // 서버리스 인스턴스 간 임베딩 모델 동기화
+  await getActiveModelId(dbQuery);
 
   // ── Phase 0: 쿼리 강화 (리라이팅 + HyDE 병렬 실행) ──
   let searchQueries = [question]; // 검색에 사용할 쿼리 목록

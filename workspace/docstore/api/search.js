@@ -1,7 +1,7 @@
 // 텍스트 검색 + 벡터 유사도 검색 + 하이브리드 검색 API
 // GET /api/search?q=검색어&type=text|vector|hybrid&limit=10&chapter=제1장&docId=5
 const { query } = require('../lib/db');
-const { generateEmbedding } = require('../lib/embeddings');
+const { generateEmbedding, getActiveModelId } = require('../lib/embeddings');
 const { hybridSearch, deduplicateParentChunks } = require('../lib/hybrid-search');
 const { requireAuth, orgFilter } = require('../lib/auth');
 const { setCors } = require('../lib/cors');
@@ -109,10 +109,20 @@ module.exports = async function handler(req, res) {
         // 태그 필터는 추가 쿼리 필요 → 간단히 후처리 생략 (docIds 필터로 대체 권장)
       }
 
+      // 임베딩이 전혀 없으면 사용자에게 안내
+      let embeddingWarning = undefined;
+      if (filtered.length === 0) {
+        const embCheck = await query('SELECT COUNT(*) as cnt FROM document_chunks WHERE embedding IS NOT NULL LIMIT 1');
+        if (parseInt(embCheck.rows[0].cnt) === 0) {
+          embeddingWarning = '문서 임베딩이 없습니다. 임베딩 모델 변경 후 문서별 "임베딩 재생성"을 실행해주세요.';
+        }
+      }
+
       return res.json({
         type: 'hybrid',
         query: q,
         count: filtered.length,
+        warning: embeddingWarning,
         parentRetriever: useParentRetriever || undefined,
         results: filtered.map(row => {
           const meta = row.section_metadata || {};
@@ -137,6 +147,7 @@ module.exports = async function handler(req, res) {
       });
     } else if (type === 'vector') {
       // ── 벡터 유사도 검색 ──
+      await getActiveModelId(query); // 서버리스 인스턴스 간 모델 동기화
       const embedding = await generateEmbedding(q.trim());
       const vecStr = `[${embedding.join(',')}]`;
 

@@ -352,10 +352,12 @@ module.exports = async function handler(req, res) {
         // 상태를 pending으로 변경
         await query('UPDATE documents SET embedding_status = $1 WHERE id = $2', ['pending', id]);
         try {
-          const totalChunks = await createEmbeddingsForDocument({ query }, id);
-          await query('UPDATE documents SET embedding_status = $1 WHERE id = $2', ['done', id]);
-          console.log(`[Embeddings] 문서 ${id} 임베딩 재생성 완료: ${totalChunks}개 청크`);
-          return res.json({ success: true, documentId: id, totalChunks, embedding_status: 'done' });
+          const result = await createEmbeddingsForDocument({ query }, id);
+          if (result.status === 'failed') {
+            throw new Error(result.error || '임베딩 생성 실패');
+          }
+          console.log(`[Embeddings] 문서 ${id} 임베딩 재생성 완료: ${result.totalChunks}개 청크`);
+          return res.json({ success: true, documentId: id, totalChunks: result.totalChunks, embedding_status: 'done' });
         } catch (embErr) {
           await query('UPDATE documents SET embedding_status = $1 WHERE id = $2', ['failed', id]);
           console.error(`[Embeddings] 문서 ${id} 재생성 실패:`, embErr.message);

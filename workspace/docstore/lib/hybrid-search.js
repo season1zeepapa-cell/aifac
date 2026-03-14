@@ -26,7 +26,7 @@
 //   K = 60 (업계 표준 상수)
 //   rank_i = 각 검색 방식에서의 순위 (1부터 시작)
 
-const { generateEmbedding } = require('./embeddings');
+const { generateEmbedding, getActiveModelId } = require('./embeddings');
 const { rerankResults } = require('./reranker');
 const { buildTsquery, buildMorphemeTsquery } = require('./korean-tokenizer');
 
@@ -399,6 +399,9 @@ function rrfFusion(vectorResults, ftsResults, topK = 10) {
  */
 async function hybridSearch(dbQuery, question, options = {}) {
   const { topK = 10, docIds = [], orgId = null, useMorpheme = false } = options;
+
+  // 활성 모델을 DB에서 최신으로 확인 (서버리스 인스턴스 간 동기화)
+  await getActiveModelId(dbQuery);
 
   // 임베딩 생성
   const embedding = await generateEmbedding(question.trim());

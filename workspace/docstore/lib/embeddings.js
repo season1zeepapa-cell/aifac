@@ -52,8 +52,10 @@ const EMBEDDING_MODELS = {
   },
 };
 
-// 현재 활성 모델 (런타임 캐시)
+// 현재 활성 모델 (TTL 캐시 — 서버리스 인스턴스 간 동기화 문제 방지)
 let _activeModelId = null;
+let _activeModelCachedAt = 0;
+const MODEL_CACHE_TTL_MS = 10000; // 10초 TTL (서버리스 환경에서 빠른 갱신)
 
 // OpenAI 호환 클라이언트 캐시 (provider별)
 const _clients = {};
@@ -63,10 +65,14 @@ let DB_VECTOR_DIMENSIONS = 1536;
 
 /**
  * 현재 활성 임베딩 모델 ID 조회
- * DB app_settings에서 읽되, 캐시하여 매번 DB를 치지 않음
+ * DB app_settings에서 읽되, 10초 TTL 캐시 사용
+ * (Vercel 서버리스에서는 인스턴스별 메모리가 분리되므로 짧은 TTL 필수)
  */
 async function getActiveModelId(dbQuery) {
-  if (_activeModelId) return _activeModelId;
+  // TTL 이내면 캐시 반환
+  if (_activeModelId && (Date.now() - _activeModelCachedAt) < MODEL_CACHE_TTL_MS) {
+    return _activeModelId;
+  }
 
   if (dbQuery) {
     try {
@@ -79,6 +85,7 @@ async function getActiveModelId(dbQuery) {
         const modelId = typeof val === 'string' ? val : val?.id || 'openai';
         if (EMBEDDING_MODELS[modelId]) {
           _activeModelId = modelId;
+          _activeModelCachedAt = Date.now();
           // DB 벡터 차원을 현재 모델에 맞춤
           DB_VECTOR_DIMENSIONS = EMBEDDING_MODELS[modelId].dimensions;
           return modelId;
@@ -96,6 +103,7 @@ async function getActiveModelId(dbQuery) {
  */
 function resetModelCache() {
   _activeModelId = null;
+  _activeModelCachedAt = 0;
 }
 
 /**
@@ -319,10 +327,28 @@ function buildEnrichedText({
 async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onProgress = null, chunkStrategy = 'sentence', chunkOptions = {}) {
   const { title = '', summary = '', category = '', tags = [], keywords = [] } = docContext;
 
-  // 활성 임베딩 모델 확인
+  // 캐시를 무시하고 DB에서 최신 모델 정보를 확인 (서버리스 인스턴스 간 동기화)
+  resetModelCache();
   const modelId = await getActiveModelId(db.query);
   const config = getModelConfig(modelId);
   console.log(`[Embeddings] 모델: ${config.label} (${config.model}, ${config.dimensions}차원)`);
+
+  // DB 벡터 컬럼 차원 확인 (불일치 시 자동 마이그레이션)
+  try {
+    const dimCheck = await db.query(
+      `SELECT atttypmod FROM pg_attribute
+       WHERE attrelid = 'document_chunks'::regclass AND attname = 'embedding'`
+    );
+    if (dimCheck.rows.length > 0) {
+      const dbDim = dimCheck.rows[0].atttypmod;
+      if (dbDim > 0 && dbDim !== config.dimensions) {
+        console.warn(`[Embeddings] DB 벡터 차원(${dbDim}) ≠ 모델 차원(${config.dimensions}), 자동 마이그레이션 실행`);
+        await migrateVectorDimension(db.query, config.dimensions);
+      }
+    }
+  } catch (dimErr) {
+    console.warn(`[Embeddings] 벡터 차원 확인 건너뜀:`, dimErr.message);
+  }
 
   const savedSections = await db.query(
     'SELECT id, raw_text, summary, metadata FROM document_sections WHERE document_id = $1 ORDER BY id',
@@ -501,9 +527,35 @@ async function generateEnrichedEmbeddings(db, documentId, docContext = {}, onPro
  */
 async function createEmbeddingsForDocument(db, documentId, label = 'Embed', chunkStrategy = 'sentence', chunkOptions = {}) {
   try {
+    // 캐시를 무시하고 DB에서 최신 모델 정보를 확인 (서버리스 인스턴스 간 동기화)
+    resetModelCache();
     const modelId = await getActiveModelId(db.query);
     const config = getModelConfig(modelId);
-    console.log(`[${label}] 임베딩 모델: ${config.label} (${config.model})`);
+    console.log(`[${label}] 임베딩 모델: ${config.label} (${config.model}, ${config.dimensions}차원)`);
+
+    // DB 벡터 컬럼 차원 확인 (불일치 시 자동 마이그레이션)
+    try {
+      const dimCheck = await db.query(
+        `SELECT atttypmod FROM pg_attribute
+         WHERE attrelid = 'document_chunks'::regclass AND attname = 'embedding'`
+      );
+      if (dimCheck.rows.length > 0) {
+        const dbDim = dimCheck.rows[0].atttypmod;
+        if (dbDim > 0 && dbDim !== config.dimensions) {
+          console.warn(`[${label}] DB 벡터 차원(${dbDim}) ≠ 모델 차원(${config.dimensions}), 자동 마이그레이션 실행`);
+          await migrateVectorDimension(db.query, config.dimensions);
+        }
+      }
+    } catch (dimErr) {
+      console.warn(`[${label}] 벡터 차원 확인 건너뜀:`, dimErr.message);
+    }
+
+    // 기존 청크 삭제 (재생성 시 중복 방지)
+    await db.query(
+      `DELETE FROM document_chunks WHERE section_id IN
+       (SELECT id FROM document_sections WHERE document_id = $1)`,
+      [documentId]
+    );
 
     let totalChunks = 0;
     const savedSections = await db.query(
@@ -518,6 +570,12 @@ async function createEmbeddingsForDocument(db, documentId, label = 'Embed', chun
       if (chunks.length === 0) continue;
 
       const embeddings = await generateEmbeddings(chunks, modelId, 'search_document');
+
+      // 임베딩 차원 검증
+      if (embeddings.length > 0 && embeddings[0].length !== config.dimensions) {
+        throw new Error(`임베딩 차원 불일치: API 반환 ${embeddings[0].length}차원, 기대값 ${config.dimensions}차원`);
+      }
+
       for (let i = 0; i < chunks.length; i++) {
         const vecStr = `[${embeddings[i].join(',')}]`;
         await db.query(

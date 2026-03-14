@@ -6297,8 +6297,13 @@
                 </div>
               )}
 
+              {results.warning && (
+                <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
+                  {results.warning}
+                </div>
+              )}
               {results.count === 0 ? (
-                <EmptyState icon="🔍" title="검색 결과가 없습니다" description="다른 검색어로 시도해보세요." />
+                <EmptyState icon="🔍" title="검색 결과가 없습니다" description={results.warning || "다른 검색어로 시도해보세요."} />
               ) : results.type === 'hybrid' ? (
                 <>
                   {results.results.slice(0, visibleCount).map((r, idx) => {
