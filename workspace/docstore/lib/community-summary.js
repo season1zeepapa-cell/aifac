@@ -1,8 +1,10 @@
 // 커뮤니티 요약 생성 엔진
 // 각 커뮤니티의 엔티티+트리플을 LLM으로 요약하고 DB에 저장
 // Global Search에서 커뮤니티 요약을 컨텍스트로 활용
+// Map-Reduce 패턴: Map(커뮤니티별 요약) → Reduce(LLM 재합성)
 
 const { callGemini } = require('./gemini');
+const { generateEmbedding } = require('./embeddings');
 
 /**
  * 단일 커뮤니티의 요약을 생성
@@ -148,7 +150,7 @@ async function generateAllSummaries(dbQuery, documentId, communities, options = 
  * @returns {Promise<{ communities: object[], contextText: string }>}
  */
 async function globalSearch(dbQuery, question, options = {}) {
-  const { docIds, maxCommunities = 5 } = options;
+  const { docIds, maxCommunities = 5, useReduce = false } = options;
 
   // 1) 요약이 있는 커뮤니티 조회
   let sql = `SELECT c.id, c.document_id, c.community_index, c.summary, c.entity_ids, c.size, c.metadata,
@@ -167,10 +169,10 @@ async function globalSearch(dbQuery, question, options = {}) {
 
   const commResult = await dbQuery(sql, params);
   if (commResult.rows.length === 0) {
-    return { communities: [], contextText: '' };
+    return { communities: [], contextText: '', reducedAnswer: null };
   }
 
-  // 2) 질문과 커뮤니티 요약의 관련성 점수 계산 (키워드 매칭)
+  // 2) 키워드 매칭 점수 계산
   const questionWords = question
     .replace(/[^\w가-힣]/g, ' ')
     .split(/\s+/)
@@ -178,11 +180,11 @@ async function globalSearch(dbQuery, question, options = {}) {
 
   const scored = commResult.rows.map(comm => {
     const summaryLower = (comm.summary || '').toLowerCase();
-    let score = 0;
+    let keywordScore = 0;
 
     for (const word of questionWords) {
       if (summaryLower.includes(word.toLowerCase())) {
-        score += 1;
+        keywordScore += 1;
       }
     }
 
@@ -191,29 +193,97 @@ async function globalSearch(dbQuery, question, options = {}) {
       const meta = typeof comm.metadata === 'string' ? JSON.parse(comm.metadata) : comm.metadata;
       const nodeNames = (meta?.nodes || []).map(n => n.name).join(' ').toLowerCase();
       for (const word of questionWords) {
-        if (nodeNames.includes(word.toLowerCase())) score += 0.5;
+        if (nodeNames.includes(word.toLowerCase())) keywordScore += 0.5;
       }
     } catch {}
 
-    return { ...comm, relevanceScore: score };
+    return { ...comm, keywordScore, vectorScore: 0, relevanceScore: keywordScore };
   });
 
-  // 관련성 점수 내림차순 정렬, 0점은 제외
+  // 3) 벡터 유사도 점수 추가 (임베딩 기반)
+  try {
+    const questionEmb = await generateEmbedding(question);
+
+    // 키워드 매칭 상위 후보 + 대형 커뮤니티만 벡터 비교 (비용 절감)
+    const candidates = scored
+      .filter(c => c.keywordScore > 0 || c.size >= 3)
+      .slice(0, 15);
+
+    for (const comm of candidates) {
+      try {
+        const summaryEmb = await generateEmbedding(comm.summary.substring(0, 500));
+        // 코사인 유사도 계산
+        let dot = 0, normA = 0, normB = 0;
+        for (let i = 0; i < questionEmb.length; i++) {
+          dot += questionEmb[i] * summaryEmb[i];
+          normA += questionEmb[i] ** 2;
+          normB += summaryEmb[i] ** 2;
+        }
+        const cosine = dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
+        comm.vectorScore = cosine;
+        // 최종 점수: 키워드 50% + 벡터 50% (벡터 점수를 키워드 스케일로 변환)
+        const maxKeyword = Math.max(...scored.map(s => s.keywordScore), 1);
+        comm.relevanceScore = 0.5 * comm.keywordScore + 0.5 * (cosine * maxKeyword);
+      } catch {
+        // 임베딩 실패 시 키워드 점수만 사용
+      }
+    }
+  } catch (embErr) {
+    console.warn('[GlobalSearch] 벡터 검색 실패, 키워드 매칭만 사용:', embErr.message);
+  }
+
+  // 4) 관련성 점수 내림차순 정렬, 0점은 제외
   const relevant = scored
     .filter(c => c.relevanceScore > 0)
     .sort((a, b) => b.relevanceScore - a.relevanceScore)
     .slice(0, maxCommunities);
 
   if (relevant.length === 0) {
-    return { communities: [], contextText: '' };
+    return { communities: [], contextText: '', reducedAnswer: null };
   }
 
-  // 3) 컨텍스트 텍스트 생성
+  // 5) 컨텍스트 텍스트 생성 (Map 결과)
   const contextLines = relevant.map((c, i) =>
     `[커뮤니티 ${i + 1} - ${c.doc_title}] (관련도: ${c.relevanceScore.toFixed(1)})\n${c.summary}`
   );
 
   const contextText = `--- 커뮤니티 요약 기반 전역 컨텍스트 ---\n${contextLines.join('\n\n')}`;
+
+  // 6) Reduce 단계: 선택된 요약들을 LLM으로 재합성 (옵션)
+  let reducedAnswer = null;
+  if (useReduce && relevant.length > 0) {
+    try {
+      const summaryBlock = relevant.map((c, i) =>
+        `### 커뮤니티 ${i + 1}: ${c.doc_title} (${c.size}개 개체)\n${c.summary}`
+      ).join('\n\n');
+
+      const reducePrompt = `당신은 법률 문서 분석 전문가입니다. 아래는 문서에서 추출한 ${relevant.length}개 커뮤니티의 요약입니다.
+사용자의 질문에 대해 이 요약들을 종합하여 체계적인 답변을 작성하세요.
+
+## 사용자 질문
+${question}
+
+## 커뮤니티 요약 (Map 결과)
+${summaryBlock}
+
+## 답변 작성 지침
+1. 각 커뮤니티의 핵심 내용을 통합하여 하나의 일관된 답변 생성
+2. 서로 다른 커뮤니티 간의 관계나 공통점이 있으면 명시
+3. 질문에 직접 관련되지 않는 커뮤니티 내용은 제외
+4. 구조화된 형식 (번호 매기기, 소제목)으로 작성
+5. 한국어로 작성`;
+
+      reducedAnswer = await callGemini(reducePrompt, {
+        model: 'gemini-2.0-flash',
+        temperature: 0.3,
+        maxTokens: 1500,
+      });
+      reducedAnswer = reducedAnswer?.trim() || null;
+      console.log(`[GlobalSearch] Reduce 완료: ${relevant.length}개 요약 → 종합 답변 생성`);
+    } catch (reduceErr) {
+      console.warn('[GlobalSearch] Reduce 단계 실패:', reduceErr.message);
+    }
+  }
 
   return {
     communities: relevant.map(c => ({
@@ -224,8 +294,10 @@ async function globalSearch(dbQuery, question, options = {}) {
       summary: c.summary,
       size: c.size,
       relevanceScore: c.relevanceScore,
+      vectorScore: c.vectorScore,
     })),
     contextText,
+    reducedAnswer,
   };
 }
 

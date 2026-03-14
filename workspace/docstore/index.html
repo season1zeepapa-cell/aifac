@@ -9675,6 +9675,7 @@
       const [globalQuery, setGlobalQuery] = useState('');
       const [globalResult, setGlobalResult] = useState(null);
       const [globalLoading, setGlobalLoading] = useState(false);
+      const [useReduce, setUseReduce] = useState(false); // Map-Reduce Reduce 단계
 
       // 문서 목록 로드
       useEffect(() => {
@@ -9753,7 +9754,7 @@
           const res = await authFetch(`${API_BASE_URL}/communities`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ globalSearch: true, question: globalQuery.trim() }),
+            body: JSON.stringify({ globalSearch: true, question: globalQuery.trim(), useReduce }),
           });
           setGlobalResult(await res.json());
         } catch (err) {
@@ -9879,13 +9880,20 @@
           {/* 글로벌 검색 */}
           <Card>
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold">글로벌 검색 (커뮤니티 요약 기반)</h3>
-              <p className="text-xs text-text-secondary">모든 문서의 커뮤니티 요약을 활용하여 관련 컨텍스트를 찾습니다.</p>
+              <h3 className="text-sm font-semibold">글로벌 검색 (Map-Reduce)</h3>
+              <p className="text-xs text-text-secondary">커뮤니티 요약을 벡터+키워드 검색하고, Reduce 시 LLM이 종합 답변을 생성합니다.</p>
               <div className="flex gap-2">
                 <input type="text" value={globalQuery} onChange={e => setGlobalQuery(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleGlobalSearch()}
                   placeholder="질문을 입력하세요..."
                   className="flex-1 px-3 py-2 rounded-lg bg-background border border-border text-sm" />
+                <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                  <div className={`relative w-9 h-5 rounded-full transition-colors ${useReduce ? 'bg-violet-500' : 'bg-border'}`}
+                    onClick={() => setUseReduce(v => !v)}>
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useReduce ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className="text-[11px] text-text-secondary">Reduce</span>
+                </label>
                 <button onClick={handleGlobalSearch} disabled={globalLoading || !globalQuery.trim()}
                   className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50">
                   {globalLoading ? '검색 중...' : '검색'}
@@ -9893,19 +9901,39 @@
               </div>
               {/* 글로벌 검색 결과 */}
               {globalResult && (
-                <div className="space-y-2">
+                <div className="space-y-3">
+                  {/* Reduce 종합 답변 (있으면 최상단에 표시) */}
+                  {globalResult.reducedAnswer && (
+                    <div className="p-4 rounded-lg bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-700 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-800 dark:text-violet-200">Reduce 종합 답변</span>
+                        <span className="text-[10px] text-text-secondary">{globalResult.communities?.length}개 커뮤니티 합성</span>
+                      </div>
+                      <div className="text-sm text-text whitespace-pre-wrap leading-relaxed">{globalResult.reducedAnswer}</div>
+                    </div>
+                  )}
                   {globalResult.communities?.length === 0 ? (
                     <p className="text-xs text-text-secondary">관련 커뮤니티를 찾지 못했습니다. 먼저 커뮤니티 탐지와 요약을 실행하세요.</p>
                   ) : (
-                    globalResult.communities?.map((c, i) => (
-                      <div key={i} className="p-3 rounded-lg bg-background border border-border/50 space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium">{c.docTitle}</span>
-                          <span className="text-xs text-text-secondary">관련도: {c.relevanceScore?.toFixed(1)}</span>
-                        </div>
-                        <p className="text-xs text-text-secondary">{c.summary}</p>
+                    <details open={!globalResult.reducedAnswer}>
+                      <summary className="text-xs font-medium text-text-secondary cursor-pointer hover:text-text">
+                        Map 결과: {globalResult.communities?.length}개 커뮤니티 요약
+                      </summary>
+                      <div className="space-y-2 mt-2">
+                        {globalResult.communities?.map((c, i) => (
+                          <div key={i} className="p-3 rounded-lg bg-background border border-border/50 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium">{c.docTitle}</span>
+                              <div className="flex items-center gap-2">
+                                {c.vectorScore > 0 && <span className="text-[10px] text-emerald-600">벡터: {c.vectorScore?.toFixed(2)}</span>}
+                                <span className="text-xs text-text-secondary">관련도: {c.relevanceScore?.toFixed(1)}</span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-text-secondary">{c.summary}</p>
+                          </div>
+                        ))}
                       </div>
-                    ))
+                    </details>
                   )}
                 </div>
               )}

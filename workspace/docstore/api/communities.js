@@ -31,11 +31,13 @@ module.exports = async (req, res) => {
     if (req.method === 'POST') {
       const { docId, algorithm, summarize, globalSearch: isGlobalSearch, question, docIds } = req.body;
 
-      // 글로벌 검색 모드
+      // 글로벌 검색 모드 (Map-Reduce)
       if (isGlobalSearch) {
         if (!question) return res.status(400).json({ error: 'question이 필요합니다.' });
+        const { useReduce } = req.body; // Reduce 단계 활성화 여부
         const result = await globalSearch(query, question, {
           docIds: docIds?.map(id => parseInt(id, 10)),
+          useReduce: !!useReduce,
         });
         return res.json(result);
       }
