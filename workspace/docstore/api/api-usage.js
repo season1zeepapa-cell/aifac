@@ -42,9 +42,22 @@ module.exports = async function handler(req, res) {
       ];
       for (const [prov, limit] of allProviders) {
         await query(
-          `INSERT INTO api_key_status (provider, daily_limit) VALUES ($1, $2) ON CONFLICT (provider) DO NOTHING`,
+          `INSERT INTO api_key_status (provider, daily_limit, is_active) VALUES ($1, $2, true) ON CONFLICT (provider) DO NOTHING`,
           [prov, limit]
         );
+      }
+      // 환경변수가 설정된 키는 항상 활성화 + 무제한(0)으로 보장
+      const envMap = {
+        openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY',
+        cohere: 'COHERE_API_KEY', upstage: 'UPSTAGE_API_KEY', 'law-api': 'LAW_API_OC',
+      };
+      for (const [prov, envKey] of Object.entries(envMap)) {
+        if (process.env[envKey]) {
+          await query(
+            `UPDATE api_key_status SET is_active = true, daily_limit = 0 WHERE provider = $1 AND (is_active = false OR daily_limit > 0)`,
+            [prov]
+          );
+        }
       }
       const keyStatus = await query('SELECT * FROM api_key_status ORDER BY provider');
 
