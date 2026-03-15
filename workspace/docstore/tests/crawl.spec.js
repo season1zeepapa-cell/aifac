@@ -157,10 +157,10 @@ test.describe('키워드 관리', () => {
     await expect(page.getByText('새 키워드 추가')).toBeVisible({ timeout: 5000 });
   });
 
-  test('키워드 추가 폼에 필드가 표시된다 (키워드, 최대 건수, 가중치)', async ({ page }) => {
+  test('키워드 추가 폼에 필드가 표시된다 (키워드, 가중치)', async ({ page }) => {
     await expect(page.getByPlaceholder('예: 개인정보보호')).toBeVisible();
     const labels = await page.locator('label').allTextContents();
-    expect(labels.some(l => l.includes('최대 건수'))).toBeTruthy();
+    expect(labels.some(l => l.includes('키워드'))).toBeTruthy();
     expect(labels.some(l => l.includes('제목 가중치'))).toBeTruthy();
     expect(labels.some(l => l.includes('내용 가중치'))).toBeTruthy();
   });
@@ -387,9 +387,9 @@ test.describe('키워드 선택과 가중치 연동', () => {
     await page.getByRole('button', { name: '실행', exact: true }).click();
     await expect(page.getByRole('button', { name: '크롤링 실행' })).toBeVisible({ timeout: 5000 });
 
-    // 3) 키워드 드롭다운에서 추가한 키워드 선택 가능 확인
-    const kwOption = page.locator('option').filter({ hasText: testKw });
-    await expect(kwOption).toBeAttached({ timeout: 5000 });
+    // 3) 키워드 체크박스 목록에서 추가한 키워드 확인 (체크박스+label 방식)
+    const kwLabel = page.locator('label').filter({ hasText: testKw });
+    await expect(kwLabel).toBeAttached({ timeout: 5000 });
 
     // 4) 정리: 키워드 삭제
     await page.getByRole('button', { name: '키워드' }).click();
