@@ -9,7 +9,7 @@ test.describe('AI 채팅', () => {
     await page.goto('/');
     await expect(page.locator('nav')).toBeVisible({ timeout: 15000 });
     // AI 채팅 탭으로 이동 (실제 라벨: 'AI 채팅')
-    await page.locator('nav button').filter({ hasText: 'AI 채팅' }).click();
+    await page.locator('nav button').filter({ hasText: '채팅' }).click();
     // 채팅 UI 로드 대기
     await expect(page.getByPlaceholder('질문을 입력하세요...')).toBeVisible({ timeout: 10000 });
   });

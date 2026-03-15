@@ -6,7 +6,7 @@ const { test, expect } = require('@playwright/test');
 async function goToDocumentList(page) {
   await page.goto('/');
   await expect(page.locator('nav')).toBeVisible({ timeout: 15000 });
-  await page.locator('nav button').filter({ hasText: '문서 목록' }).click();
+  await page.locator('nav button').filter({ hasText: '문서' }).click();
   await page.waitForResponse(
     resp => resp.url().includes('/api/documents') && resp.status() === 200,
     { timeout: 15000 }

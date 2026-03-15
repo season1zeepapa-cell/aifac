@@ -1767,3 +1767,4 @@ import ChunkPresetPanel from './ChunkPresetPanel';
 
 
 export default TuningTab;
+export { DeidentifyPanel };

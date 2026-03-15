@@ -2,6 +2,7 @@ import { Fragment, useCallback, useContext, useEffect, useState } from 'react';
 import { CategoriesContext, getCategoriesWithAll } from '../../contexts/CategoriesContext';
 import { API_BASE_URL, authFetch } from '../../lib/api';
 import { formatDate, formatFileSize } from '../../utils/format';
+import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import EmptyState from '../../components/ui/EmptyState';

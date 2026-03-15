@@ -2,6 +2,9 @@ import { Fragment, createElement, useCallback, useContext, useEffect, useRef, us
 import { API_BASE_URL, authFetch } from '../lib/api';
 import { ApiKeyStatusContext } from '../contexts/ApiKeyStatusContext';
 import { marked } from 'marked';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+import DocumentDetailModal from './DocumentsTab/DocumentDetailModal';
 import Card from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';

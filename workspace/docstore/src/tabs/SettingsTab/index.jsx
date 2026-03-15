@@ -8,6 +8,9 @@ import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
 import ChunkPresetPanel from './ChunkPresetPanel';
 import CategoryPanel from './CategoryPanel';
+import TuningTab, { DeidentifyPanel } from './TuningTab';
+import LlmSettingsPanel from '../ChatTab/LlmSettingsPanel';
+import EmbeddingModelPanel from '../ChatTab/EmbeddingModelPanel';
 
 
     function SettingsTab() {

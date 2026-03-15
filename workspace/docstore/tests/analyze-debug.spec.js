@@ -18,7 +18,7 @@ test.fixme('AI 분석 버튼 동작 확인', async ({ page }) => {
   await expect(page.locator('nav')).toBeVisible({ timeout: 10000 });
 
   // 문서 목록 탭으로 이동
-  await page.locator('nav button').filter({ hasText: '문서 목록' }).click();
+  await page.locator('nav button').filter({ hasText: '문서' }).click();
   await page.waitForResponse(
     resp => resp.url().includes('/api/documents'),
     { timeout: 15000 }

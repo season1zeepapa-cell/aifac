@@ -13,15 +13,15 @@ test.describe('탭 네비게이션', () => {
   test('하단 네비게이션에 6개 탭이 표시된다', async ({ page }) => {
     const nav = page.locator('nav');
     await expect(nav.locator('button').filter({ hasText: '등록' })).toBeVisible();
-    await expect(nav.locator('button').filter({ hasText: '문서 목록' })).toBeVisible();
+    await expect(nav.locator('button').filter({ hasText: '문서' })).toBeVisible();
     await expect(nav.locator('button').filter({ hasText: '검색' })).toBeVisible();
-    await expect(nav.locator('button').filter({ hasText: 'AI 채팅' })).toBeVisible();
+    await expect(nav.locator('button').filter({ hasText: '채팅' })).toBeVisible();
     await expect(nav.locator('button').filter({ hasText: '설정' })).toBeVisible();
     await expect(nav.locator('button').filter({ hasText: '튜닝' })).toBeVisible();
   });
 
   test('문서 목록 탭으로 전환된다', async ({ page }) => {
-    await page.locator('nav button').filter({ hasText: '문서 목록' }).click();
+    await page.locator('nav button').filter({ hasText: '문서' }).click();
     await page.waitForResponse(
       resp => resp.url().includes('/api/documents'),
       { timeout: 15000 }
@@ -34,7 +34,7 @@ test.describe('탭 네비게이션', () => {
   });
 
   test('AI 채팅 탭으로 전환된다', async ({ page }) => {
-    await page.locator('nav button').filter({ hasText: 'AI 채팅' }).click();
+    await page.locator('nav button').filter({ hasText: '채팅' }).click();
     await expect(page.getByText(/Gemini/).first()).toBeVisible({ timeout: 10000 });
   });
 

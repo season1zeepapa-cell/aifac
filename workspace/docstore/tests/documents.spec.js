@@ -8,7 +8,7 @@ test.describe('문서 목록', () => {
     await page.goto('/');
     await expect(page.locator('nav')).toBeVisible({ timeout: 15000 });
     // 문서 목록 탭으로 이동
-    await page.locator('nav button').filter({ hasText: '문서 목록' }).click();
+    await page.locator('nav button').filter({ hasText: '문서' }).click();
     await page.waitForResponse(
       resp => resp.url().includes('/api/documents'),
       { timeout: 15000 }
