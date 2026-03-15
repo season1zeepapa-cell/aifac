@@ -1,6 +1,7 @@
 import { Fragment, createElement, useCallback, useContext, useEffect, useState } from 'react';
 import { ApiKeyStatusContext } from '../../contexts/ApiKeyStatusContext';
 import { API_BASE_URL, authFetch } from '../../lib/api';
+import { formatDate } from '../../utils/format';
 import { GEMINI_CATALOG, OPENAI_CATALOG, CLAUDE_CATALOG, TIER_COLORS } from '../../constants/models';
 import { DEFAULT_LLM_SETTINGS, loadLlmSettings, saveLlmSettings } from '../../constants/llm';
 import Card from '../../components/ui/Card';
