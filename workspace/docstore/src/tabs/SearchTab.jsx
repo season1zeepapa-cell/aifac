@@ -1,10 +1,12 @@
 import { Fragment, createElement, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { API_BASE_URL, authFetch } from '../lib/api';
+import { ApiKeyStatusContext } from '../contexts/ApiKeyStatusContext';
 import { marked } from 'marked';
 import Card from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import MultiSelect from '../components/ui/MultiSelect';
+import DisabledApiBanner from '../components/ui/DisabledApiBanner';
 
 
     function SearchTab({ onNavigateToDoc }) {

@@ -57,7 +57,7 @@ module.exports = async function globalSetup(config) {
   }, { token, loginData });
 
   // 페이지 새로고침 → 로그인된 상태로 진입
-  await page.reload({ waitUntil: 'networkidle', timeout: 30000 });
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForSelector('nav', { timeout: 15000 }).catch(() => {
     console.log('[global-setup] nav 표시 대기 실패 - 토큰 주입 후에도 로그인 안 됨');
   });

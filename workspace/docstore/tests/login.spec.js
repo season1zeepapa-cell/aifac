@@ -6,12 +6,12 @@ test.describe('로그인 화면', () => {
 
   test.beforeEach(async ({ page }) => {
     // 인증 상태 초기화 (로그아웃 상태에서 시작)
-    await page.goto('/', { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.evaluate(() => {
       localStorage.removeItem('docstore_token');
       localStorage.removeItem('docstore_user');
     });
-    await page.reload({ waitUntil: 'networkidle', timeout: 30000 });
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
   });
 
   test('로그인 페이지가 정상 로드된다', async ({ page }) => {

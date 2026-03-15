@@ -1,5 +1,6 @@
 import { createElement, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { API_BASE_URL, authFetch, getAuthToken } from '../../lib/api';
+import { ApiKeyStatusContext } from '../../contexts/ApiKeyStatusContext';
 import { loadLlmSettings, saveLlmSettings } from '../../constants/llm';
 import { marked } from 'marked';
 import Card from '../../components/ui/Card';
